@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -590,6 +591,7 @@ func TestCodexUnsureNeitherKillsNorDuplicates(t *testing.T) {
 	j := e.jobByTitle(title)
 	waitExit(t, j.PID, 10*time.Second)
 	sleep := exec.Command("/bin/sleep", "30")
+	sleep.Env = append(os.Environ(), "AGENTQ_ENV_PROBE=1")
 	if err := sleep.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -597,6 +599,10 @@ func TestCodexUnsureNeitherKillsNorDuplicates(t *testing.T) {
 		_ = sleep.Process.Kill()
 		_ = sleep.Wait()
 	}()
+	time.Sleep(100 * time.Millisecond)
+	if out, err := exec.Command("ps", "-E", "-ww", "-p", strconv.Itoa(sleep.Process.Pid), "-o", "command=").CombinedOutput(); err == nil && strings.Contains(string(out), "AGENTQ_ENV_PROBE=1") {
+		t.Skip("这台机器读得到系统程序的环境（比如 SIP 关着的 CI），测不了读不到的情况")
+	}
 	e.editState(func(st *State) {
 		for _, x := range st.Jobs {
 			if x.ID == j.ID {

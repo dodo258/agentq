@@ -107,7 +107,7 @@ func TestJobLivenessEnvHidden(t *testing.T) {
 	pid := sleep.Process.Pid
 	time.Sleep(100 * time.Millisecond)
 	if found, readable := procEnvHas(pid, JobEnv+"=job-a"); found || readable {
-		t.Fatalf("/bin/sleep 的环境应该读不到：%v %v", found, readable)
+		t.Skip("这台机器读得到系统程序的环境（比如 SIP 关着的 CI），测不了读不到的情况")
 	}
 	if got := JobLiveness(pid, "job-a", "_job /tmp/没有这个外壳-"+strconv.Itoa(pid)+" "); got != ProcUnsure {
 		t.Errorf("认不出：%v", got)
