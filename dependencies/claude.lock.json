@@ -1,0 +1,491 @@
+{
+  "formatVersion": 1,
+  "scope": "Claude Code assets for agentq",
+  "installLayout": {
+    "bundledSkillSource": "skills/<name>/",
+    "bundledSkillTarget": "~/.claude/skills/<name>/",
+    "templateSource": "templates/",
+    "templateTarget": "~/.local/share/agentq/templates/",
+    "supportSource": "support/scripts/",
+    "supportTarget": "~/.local/share/agentq/support/scripts/",
+    "conflictPolicy": "compare and preserve existing user customizations; never replace unknown content silently",
+    "thirdPartyLicenseTarget": "~/.local/share/agentq/licenses/<dependency>-LICENSE"
+  },
+  "bundledAssets": {
+    "skills": [
+      {
+        "name": "agent-task",
+        "sourcePath": "skills/agent-task",
+        "target": "~/.claude/skills/agent-task",
+        "installPolicy": "required"
+      },
+      {
+        "name": "dispatch",
+        "sourcePath": "skills/dispatch",
+        "target": "~/.claude/skills/dispatch",
+        "installPolicy": "required"
+      },
+      {
+        "name": "nightly-review",
+        "sourcePath": "skills/nightly-review",
+        "target": "~/.claude/skills/nightly-review",
+        "installPolicy": "required"
+      },
+      {
+        "name": "new-project",
+        "sourcePath": "skills/new-project",
+        "target": "~/.claude/skills/new-project",
+        "installPolicy": "required"
+      },
+      {
+        "name": "project-status",
+        "sourcePath": "skills/project-status",
+        "target": "~/.claude/skills/project-status",
+        "installPolicy": "required"
+      },
+      {
+        "name": "no-ai-look",
+        "sourcePath": "skills/no-ai-look",
+        "target": "~/.claude/skills/no-ai-look",
+        "installPolicy": "required"
+      },
+      {
+        "name": "prior-art",
+        "sourcePath": "skills/prior-art",
+        "target": "~/.claude/skills/prior-art",
+        "installPolicy": "required"
+      },
+      {
+        "name": "feedback-triage",
+        "sourcePath": "skills/feedback-triage",
+        "target": "~/.claude/skills/feedback-triage",
+        "installPolicy": "required"
+      }
+    ],
+    "templates": [
+      "templates/AGENTS.md",
+      "templates/BACKLOG.md",
+      "templates/DECISIONS.md",
+      "templates/LESSONS.md",
+      "templates/PROGRESS.md",
+      "templates/gates/smoke.sh",
+      "templates/gates/ui-playwright.sh",
+      "templates/gates/ui-simctl.sh"
+    ],
+    "supportScripts": [
+      "support/scripts/with-lock.sh",
+      "support/scripts/ask-rule-scan.sh"
+    ]
+  },
+  "thirdPartySources": [
+    {
+      "id": "waza",
+      "type": "git",
+      "url": "https://github.com/tw93/Waza.git",
+      "commit": "318d6c2c219894798b09c2b39d7f83d0be1a313c",
+      "rootTreeSha": "c39e551af8663a0538c04daae3db3bf74521701e",
+      "license": {
+        "spdx": "MIT",
+        "path": "LICENSE",
+        "blobSha": "503d8bf23223daae639db7375e3f5cffe16314a9",
+        "sourceUrl": "https://github.com/tw93/Waza/blob/318d6c2c219894798b09c2b39d7f83d0be1a313c/LICENSE",
+        "target": "~/.local/share/agentq/licenses/Waza-LICENSE"
+      },
+      "copyPolicy": "fetch only the declared skill directories at the exact commit; keep the upstream license; do not copy plugin mirrors, caches, rules, or unrelated repository files",
+      "modules": [
+        {
+          "name": "check",
+          "installPolicy": "required",
+          "reason": "agent-task 的同步独立审查硬依赖",
+          "sourcePath": "skills/check",
+          "sourceTreeSha": "6c037b69396caabd637f41fbd23b184f87d84c39",
+          "target": "~/.claude/skills/check",
+          "files": [
+            {
+              "path": "skills/check/SKILL.md",
+              "blobSha": "d541ac9eb1936f78f9d746b324e5dbcaea01d75e"
+            },
+            {
+              "path": "skills/check/agents/reviewer-architecture.md",
+              "blobSha": "0505884c3f72476cf4a0b0160dac2f417d1aef4b"
+            },
+            {
+              "path": "skills/check/agents/reviewer-security.md",
+              "blobSha": "51d11225f286e49feb5b64d75ab0083ebc12ae9b"
+            },
+            {
+              "path": "skills/check/references/durable-context.md",
+              "blobSha": "ac9aa5dc92f958f1785dce99aee6c941d71f0144"
+            },
+            {
+              "path": "skills/check/references/mode-audit.md",
+              "blobSha": "143058d3a30310c25b07bc123be65f515d48f209"
+            },
+            {
+              "path": "skills/check/references/mode-ship.md",
+              "blobSha": "7a3e184e4698ae4ad064c1a59df0220514e9653b"
+            },
+            {
+              "path": "skills/check/references/mode-triage.md",
+              "blobSha": "5fafb320cfbf4ae3c6065df4a7ffec282ac15964"
+            },
+            {
+              "path": "skills/check/references/persona-catalog.md",
+              "blobSha": "2f84a9c855d4eac62285b96b63dfdeef009ff435"
+            },
+            {
+              "path": "skills/check/references/project-context.md",
+              "blobSha": "4c5722e66a29360e241308bfdf31f5625a23e79a"
+            },
+            {
+              "path": "skills/check/references/public-reply.md",
+              "blobSha": "f6a82e36e081858e42e5635ff83b9b3770845d1d"
+            },
+            {
+              "path": "skills/check/references/release-surfaces.md",
+              "blobSha": "ea575c1c0da6d6cdfbed4b1639e958a59b15c10b"
+            },
+            {
+              "path": "skills/check/references/review-patterns.md",
+              "blobSha": "63407729dd9ab8328d8162cfe6f49c0e2743ac71"
+            },
+            {
+              "path": "skills/check/scripts/audit_signals.py",
+              "blobSha": "e959ecbffc3b07f9a97c1862fd23662f6eda153a"
+            },
+            {
+              "path": "skills/check/scripts/release_gate.py",
+              "blobSha": "ef293a9f906aed2d91a7a6ae039a150988c5ef24"
+            },
+            {
+              "path": "skills/check/scripts/run-tests.sh",
+              "blobSha": "c03f98ba75b0aba5206e8b6d14e5126a4be4cd2b"
+            }
+          ]
+        },
+        {
+          "name": "think",
+          "installPolicy": "required",
+          "reason": "agent-task/new-project 的大需求方案依赖",
+          "sourcePath": "skills/think",
+          "sourceTreeSha": "8df90ff2ccd7a95d378d9e6985f439628030adb9",
+          "target": "~/.claude/skills/think",
+          "files": [
+            {
+              "path": "skills/think/SKILL.md",
+              "blobSha": "bd58c9f3f11595c7b1a342c37b330b51bfad9593"
+            },
+            {
+              "path": "skills/think/references/durable-context.md",
+              "blobSha": "ac9aa5dc92f958f1785dce99aee6c941d71f0144"
+            },
+            {
+              "path": "skills/think/references/mode-evaluation.md",
+              "blobSha": "08075d383371199c2bdb259777fe003edb4fd96d"
+            },
+            {
+              "path": "skills/think/references/mode-triage.md",
+              "blobSha": "a7f8471896b52a68fca8c1ec8823251b3b81a300"
+            }
+          ]
+        },
+        {
+          "name": "hunt",
+          "installPolicy": "required",
+          "reason": "think 遇到错误或回归时的条件依赖",
+          "sourcePath": "skills/hunt",
+          "sourceTreeSha": "d62b8a89b441d0aa0e48ebf17b0fa8ead0e5faf6",
+          "target": "~/.claude/skills/hunt",
+          "files": [
+            {
+              "path": "skills/hunt/SKILL.md",
+              "blobSha": "4b1c77a5a530aec3f51f70be3e28a1b2a82f69be"
+            },
+            {
+              "path": "skills/hunt/references/durable-context.md",
+              "blobSha": "ac9aa5dc92f958f1785dce99aee6c941d71f0144"
+            },
+            {
+              "path": "skills/hunt/references/failure-patterns.md",
+              "blobSha": "c7b330c8878b458f24f32693c42dac374e0ad70a"
+            },
+            {
+              "path": "skills/hunt/references/ime-unicode.md",
+              "blobSha": "0711293797233ddf0bd2a9a73a08edc6c7074efd"
+            },
+            {
+              "path": "skills/hunt/references/logging-techniques.md",
+              "blobSha": "7f242b28d868ea3e5224b70b56ed233f156711b5"
+            },
+            {
+              "path": "skills/hunt/references/rendering-debug.md",
+              "blobSha": "b279780896f7a49ab16f04f05ee89c8d866226a4"
+            }
+          ]
+        },
+        {
+          "name": "ui",
+          "installPolicy": "required",
+          "reason": "no-ai-look 的界面实现依赖",
+          "sourcePath": "skills/ui",
+          "sourceTreeSha": "55b8655a19cdf46fadf67dc68f1a74b38fd4666a",
+          "target": "~/.claude/skills/ui",
+          "files": [
+            {
+              "path": "skills/ui/SKILL.md",
+              "blobSha": "3b434b6f2bbe0b119b36d5e17c2ca3537ef08953"
+            },
+            {
+              "path": "skills/ui/references/design-data-viz.md",
+              "blobSha": "221ff7725368173239a58c0114a410b01d7a2ac6"
+            },
+            {
+              "path": "skills/ui/references/design-native-motion.md",
+              "blobSha": "1c0ae120182e52e41354357c54ff7524e65c7113"
+            },
+            {
+              "path": "skills/ui/references/design-reference.md",
+              "blobSha": "3d455448b0c299b74f610f79551c04ba79ce8531"
+            },
+            {
+              "path": "skills/ui/references/durable-context.md",
+              "blobSha": "ac9aa5dc92f958f1785dce99aee6c941d71f0144"
+            },
+            {
+              "path": "skills/ui/references/mode-generated-asset.md",
+              "blobSha": "972bbee305d5e06369fe0c38b00daa9eab1e9f14"
+            },
+            {
+              "path": "skills/ui/references/mode-quick-fix.md",
+              "blobSha": "92c919e7f0d92d45b641a57bfe58c52cf74b39d4"
+            },
+            {
+              "path": "skills/ui/references/mode-screenshot-iteration.md",
+              "blobSha": "13d8b94722c7eeae677459537ae1d1f40e8845ea"
+            }
+          ]
+        },
+        {
+          "name": "read",
+          "installPolicy": "optional",
+          "reason": "网页、URL 与 PDF 读取能力",
+          "sourcePath": "skills/read",
+          "sourceTreeSha": "2ad0970ce7abc3d3d48002f01026999a08cbe231",
+          "target": "~/.claude/skills/read",
+          "files": [
+            {
+              "path": "skills/read/SKILL.md",
+              "blobSha": "0db62f5a9cb76d725aaac5c47640b15eb228b1d3"
+            },
+            {
+              "path": "skills/read/references/read-methods.md",
+              "blobSha": "ac18673d263ce05dbab88b4378c0f831393df7e1"
+            },
+            {
+              "path": "skills/read/scripts/fetch.sh",
+              "blobSha": "67382c393e006b8e979f6153ae86315a005e938f"
+            },
+            {
+              "path": "skills/read/scripts/fetch_feishu.py",
+              "blobSha": "bfe49d13ebb311ceb78c963b26d1efa148b33e2d"
+            },
+            {
+              "path": "skills/read/scripts/fetch_local.py",
+              "blobSha": "f061c650d50eb4f53787578f9ba66e61ce63db4a"
+            },
+            {
+              "path": "skills/read/scripts/fetch_weixin.py",
+              "blobSha": "ab35b440cec97b6475451aae6a9fb07e8dfce108"
+            }
+          ]
+        },
+        {
+          "name": "write",
+          "installPolicy": "optional",
+          "reason": "文案、技术写作与本地化能力",
+          "sourcePath": "skills/write",
+          "sourceTreeSha": "5e97a65e9be3a1943cbf1b1b27fbc79cad3e7da6",
+          "target": "~/.claude/skills/write",
+          "files": [
+            {
+              "path": "skills/write/SKILL.md",
+              "blobSha": "b455c3dae752f53d53dd4d13c9d2bc91fbf0bf4f"
+            },
+            {
+              "path": "skills/write/references/durable-context.md",
+              "blobSha": "ac9aa5dc92f958f1785dce99aee6c941d71f0144"
+            },
+            {
+              "path": "skills/write/references/mode-long-form.md",
+              "blobSha": "fe409d8ddf9ef66e5943e00b254a7f27f73ea366"
+            },
+            {
+              "path": "skills/write/references/mode-public-reply.md",
+              "blobSha": "169ec16c61bd0e740bac806b137cf167cbb49569"
+            },
+            {
+              "path": "skills/write/references/mode-release-notes.md",
+              "blobSha": "745a222a63d74e9fd37b09a90526eb82c2e90f86"
+            },
+            {
+              "path": "skills/write/references/write-en.md",
+              "blobSha": "4676f47b5fafb5edb3a6c1863ee7cdef6c934230"
+            },
+            {
+              "path": "skills/write/references/write-product-localization.md",
+              "blobSha": "debf928547a7047e5c2d65ee50ca77689fabf8b3"
+            },
+            {
+              "path": "skills/write/references/write-technical.md",
+              "blobSha": "fccb7ed692ad3a79429f69a645ee801e5e9a09d2"
+            },
+            {
+              "path": "skills/write/references/write-zh-bilingual.md",
+              "blobSha": "88e1e4718ad3240d0732496084d56762d4a4b26e"
+            },
+            {
+              "path": "skills/write/references/write-zh-release-notes.md",
+              "blobSha": "5fdef7c335a6d632e8432029958e15e569f78d4e"
+            },
+            {
+              "path": "skills/write/references/write-zh.md",
+              "blobSha": "91db9173aeefbefc7d9d553c9455566cf1552ec9"
+            },
+            {
+              "path": "skills/write/scripts/check-punctuation.sh",
+              "blobSha": "67555514a8891b323304893a4bb60ba56d07c152"
+            },
+            {
+              "path": "skills/write/scripts/check_punctuation.py",
+              "blobSha": "a3d247240e096d50c4a193fe462843f3d28f686f"
+            }
+          ]
+        },
+        {
+          "name": "health",
+          "installPolicy": "optional",
+          "reason": "Agent 配置与可维护性检查",
+          "sourcePath": "skills/health",
+          "sourceTreeSha": "fa3ea8cbedd283c11d6ddcd1ba65ddf8a8456c1a",
+          "target": "~/.claude/skills/health",
+          "files": [
+            {
+              "path": "skills/health/SKILL.md",
+              "blobSha": "d01bf95490b0624f4c8b01f25cc98dda05151586"
+            },
+            {
+              "path": "skills/health/agents/inspector-context.md",
+              "blobSha": "fd60131b12c13603b61fbbc590703be7fc7e4c0f"
+            },
+            {
+              "path": "skills/health/agents/inspector-control.md",
+              "blobSha": "84ce95191a0c4013c49db8676f28f78483c1541a"
+            },
+            {
+              "path": "skills/health/agents/inspector-maintainability.md",
+              "blobSha": "831dd99aae6c01014fa4d32d8f2add5a7b6e2ce9"
+            },
+            {
+              "path": "skills/health/references/durable-context.md",
+              "blobSha": "ac9aa5dc92f958f1785dce99aee6c941d71f0144"
+            },
+            {
+              "path": "skills/health/references/long-running-agents.md",
+              "blobSha": "e3729bb43fa9d57847bb08e44578373ccd1cffbb"
+            },
+            {
+              "path": "skills/health/references/maintainability-findings.md",
+              "blobSha": "1e89e246b0c63940069cb6d07d5884a348d76786"
+            },
+            {
+              "path": "skills/health/scripts/block-pipe-to-shell.py",
+              "blobSha": "8a04520f953815b4d9718ef6fcfb01f894598ab6"
+            },
+            {
+              "path": "skills/health/scripts/check-agent-context.sh",
+              "blobSha": "69c0374bb5304145892bf5edc02c65a2d8efbc63"
+            },
+            {
+              "path": "skills/health/scripts/check-doc-refs.sh",
+              "blobSha": "e616eca343f392ab4694ff7aecbe7faaa03cafb6"
+            },
+            {
+              "path": "skills/health/scripts/check-maintainability.sh",
+              "blobSha": "f308c045f14a2f581c9ea63c3bf4124599ae82a6"
+            },
+            {
+              "path": "skills/health/scripts/check-verifier-output.sh",
+              "blobSha": "0b68430c99d989007bdf2af9065c72139087d907"
+            },
+            {
+              "path": "skills/health/scripts/check_agent_context.py",
+              "blobSha": "e63bb4392259a77f6a15069d2f9d60f40c1e43a7"
+            },
+            {
+              "path": "skills/health/scripts/check_doc_refs.py",
+              "blobSha": "92fee3089854449ad1441cc4d65afad390c5b642"
+            },
+            {
+              "path": "skills/health/scripts/check_maintainability.py",
+              "blobSha": "507c869a5969d18dbf2338fd9b4ae6af92f2d1b0"
+            },
+            {
+              "path": "skills/health/scripts/check_verifier_output.py",
+              "blobSha": "ada3aaf3615c601d587823fa9cbcea8546c63e0c"
+            },
+            {
+              "path": "skills/health/scripts/collect-data.sh",
+              "blobSha": "d51fa9fcee2efe0f765d1dc58fc7e36279dda1b1"
+            },
+            {
+              "path": "skills/health/scripts/conversation_audit.py",
+              "blobSha": "8580374b17d56aef27f40f0be073ba163547f111"
+            },
+            {
+              "path": "skills/health/scripts/read_skill_description.py",
+              "blobSha": "040ba33fcddb5854830b0198eb33f4aed1d9357f"
+            },
+            {
+              "path": "skills/health/scripts/run-health.ps1",
+              "blobSha": "ebf0d8bc7aaf399cef202a73d2daacb6d5878b44"
+            },
+            {
+              "path": "skills/health/scripts/scan_skill_security.py",
+              "blobSha": "d666e3631455d63e698cf6817ddf59d8bcd5a0f4"
+            }
+          ]
+        },
+        {
+          "name": "learn",
+          "installPolicy": "optional",
+          "reason": "多来源研究编排能力",
+          "sourcePath": "skills/learn",
+          "sourceTreeSha": "494f6574a07645561156222a0c98364ce81b94e4",
+          "target": "~/.claude/skills/learn",
+          "files": [
+            {
+              "path": "skills/learn/SKILL.md",
+              "blobSha": "6959a833889d42b314e371dcebb272c94eaf6c69"
+            }
+          ]
+        }
+      ],
+      "requiredArtifacts": [
+        {
+          "sourcePath": "LICENSE",
+          "blobSha": "503d8bf23223daae639db7375e3f5cffe16314a9",
+          "target": "~/.local/share/agentq/licenses/Waza-LICENSE",
+          "reason": "retain the complete MIT copyright and permission notice with every installed Waza skill set"
+        }
+      ]
+    }
+  ],
+  "policy": {
+    "unknownSourcesAutoInstall": false,
+    "copyVendorTrees": false,
+    "copyPluginCaches": false,
+    "copyCredentialsOrIdentity": false,
+    "userCustomizationLayer": "project instructions or user configuration outside the distributed source",
+    "authorization": "installing assets does not grant remote push, release, publishing, payment, account, or external messaging permission"
+  }
+}

@@ -1,0 +1,47 @@
+agentq：后台调度器，把各项目 docs/BACKLOG.md「待做」交给 claude -p 做到合并
+
+上手：
+  agentq init [目录]              把项目接入：检查目录，生成缺的 docs/BACKLOG.md、AGENTS.md 等并提交（默认当前目录）
+  agentq add "<需求>" [--project 名字]  往当前项目（或 --project）的「待做」末尾加一条并提交
+  agentq start [--accept-bypass]  打开后台：检查、确认权限、装调度服务、取消暂停，立刻接活（可重复运行）
+  agentq start --welcome [--assume-yes]  一键脚本用的第一次启动：讲清楚，按回车同意才启动
+  agentq env status|on|off        通用工程规则：看状态、装上、关掉（只删没改过的文件）
+  agentq version                  版本号（--version 同义）
+
+其他命令：
+  agentq tick                     一次调度：收尾、超时处理、挑活启动（launchd 每 5 分钟调用，每个任务结束时也会调用一次）
+  agentq run <项目名> [条目关键字]  立刻为该项目启动一个任务（不看暂停，仍遵守上限；订阅额度 ≥98% 时拒绝）
+  agentq new [--direction "方向"] "<一句话>"  从零做出新项目第一版：按 new-project 建项目，把第一条待做做到合并，结果写当天汇总并推送（配了 Telegram 先问一次大方向，等 discuss_wait 没回按默认，--direction 已经定了就不问；不看暂停，占名额；一句话不超过 500 字；额度 ≥98% 时拒绝）
+  agentq discuss [answer <编号> "<回答>"]  在商量大方向的条目：列出问题和默认答案，或回答（回「随便」就按默认）；标了（大方向）的条目开工前问一次，配 discuss_enabled、discuss_wait
+  agentq status                   订阅额度、运行中的任务、任务箱和各项目待做条数、最近结束的任务
+  agentq projects                 列出所有项目（projects_root 下的和 extra_projects 登记的），每行：目录名、路径，被排除的多一列
+  agentq inbox [add "<内容>"]      通用任务箱：列出，或放一条不属于任何项目的活（调研、写东西、查资料、整理文件）；项目待做之后、有名额时接，产出写到 ~/.agentq/outbox/
+  agentq suggest [项目名]          手动跑一次闲时找活：只读地看各项目（或指定的一个）找值得做的活，低风险的写进「待做」、会改产品的写进「## 建议」并推送一条，回「做 1 3」移进「待做」（不看 suggest_enabled、暂停和当天次数，占用当天记录；额度 ≥98% 时拒绝）
+  agentq sense [--dry-run]         手动跑一次主动感知：读 App Store 评价、TestFlight 反馈和 GitHub issue，有新内容才起模型判断，真问题写进「## 建议」，回「做 N」移进「待做」（--dry-run 只读、列读到多少条，不写文件不调模型；不看 sense_enabled；额度 ≥98% 时不判断）
+  agentq release check [项目名]    只读显示发版条件：最新构建已处理且满 3 天、之后没有崩溃反馈、没有未处理的验收意见、距上次提交 ≥14 天、没有进行中的审核提交（提交审核只能回复那条 📦 提示消息说「发」，没有命令能提交）
+  agentq quality                  最近 7 天的一次满意率、返工率和每条的依据（扫各项目 BACKLOG「已完成」和 git 历史）
+  agentq stats [天数]              最近 N 天（默认 7）按任务种类、项目、模型统计次数、成败、token 和折算费用，按门统计通过、失败、判不了、warn 档会挡下多少、退回和放行（只读）
+  agentq backlog archive <项目名|--all> [--dry-run]  把 BACKLOG「已完成」的旧条目移到 docs/BACKLOG-archive.md（前 20 条和 14 天内合并的留下；不自动提交）
+  agentq patrol                   立刻巡逻一次：launchd 服务、备份推送、任务失败和卡住、额度、早报和夜班报告、等拍板条目、磁盘（tick 每小时自动巡逻一次）
+  agentq gate report|pass|rerun|abandon <任务id> [--reason "原因"]  过门：看报告；放行这一次卡在门上的任务（原因必写）；再审一次（不改代码重新跑门，不算退回轮数，同一提交最多 2 次）；放弃卡住的任务或新项目的第一版，分支留着
+  agentq eval list|run|baseline|compare  评测集：给 agentq 自己打分。run 默认只跑不调模型的程序题，--fake 用假 CLI，--real 才调模型（周额度 ≥85% 拒绝）；compare 和基线比，任一题或任一领域变差就报（agentq eval 看详细用法）
+  agentq health [项目名]           最近 30 天每个模块的改动次数、修复次数、行数，反复修的模块，两周返工率（只读，只看 git，不调模型）
+  agentq logs <任务id>             结果摘要和 stderr 末尾
+  agentq stop <任务id>             杀掉该任务的进程组
+  agentq pause | resume           暂停 / 恢复自动接活
+  agentq night                    立刻执行一次夜班（prompts/night.md）；launchd 每天 01:00 叫醒，night_enabled=true 才执行
+  agentq review                   立刻执行一次复盘（prompts/review.md）；launchd 每天 06:30 叫醒，review_enabled=true 才执行
+  agentq notify setup|test|send|file|status  推送：配 Telegram、发测试消息、记一条要推的消息、马上发一个文件、看推送情况（agentq notify 看详细用法）
+  agentq listen                   常驻收你的 Telegram 消息（长轮询，随到随回；launchd 的 KeepAlive 服务调用）
+  agentq install | uninstall      装上 / 卸下 launchd 服务（每 5 分钟 tick 一次、夜班和复盘两个定点任务、常驻的 Telegram 监听）
+
+安装与维护：
+  agentq setup [--yes] [--scope full|skills] [--services] [--listen] [--backup] [--watchdog] [--extras]
+  agentq update [--version 版本] [--proxy 地址] [--mirror 前缀]  升级：取发布地址上的 install.sh，校验后运行
+  agentq doctor                  只读安装、CLI 和配置检查
+  agentq rollback --yes           回到上一完整安装代，不回滚运行数据
+  agentq remove --yes             卸载受管入口和服务，保留数据及恢复材料
+  agentq restore --yes            恢复中断事务或最近一次卸载
+
+自然语言需求：在项目目录运行 claude，按 dispatch 派活；agentq 不是自然语言聊天命令。
+配置 ~/.agentq/config.json，任务记录 ~/.agentq/jobs/<id>/，每日汇总 ~/.claude/nightly/<日期>-agentq.md

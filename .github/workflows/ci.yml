@@ -1,0 +1,82 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+      - 'ci/**'
+  workflow_dispatch:
+    inputs:
+      stress:
+        description: 再在 Linux 跑一次暴力测试（1 个种子，20 轮）
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    if: github.event_name == 'workflow_dispatch' && inputs.stress
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Git identity for test repositories
+        run: |
+          sudo git config --system user.name ci
+          sudo git config --system user.email ci
+      # 真的磁盘满那个场景要 hdiutil，Linux 上自己跳过。
+      - name: Stress test
+        env:
+          AGENTQ_STRESS: '1'
+          AGENTQ_STRESS_SEED: '1'
+          AGENTQ_STRESS_ROUNDS: '20'
+        run: go test -race -count=1 -v -timeout 110m -run '^TestStress$' ./tests
+
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # 测试用临时 HOME，读不到 --global；runner 的主机名也推不出身份。
+      - name: Git identity for test repositories
+        run: |
+          sudo git config --system user.name ci
+          sudo git config --system user.email ci
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test -race -count=1 -timeout 900s ./...
+      - name: Start the systemd user instance
+        run: |
+          sudo loginctl enable-linger "$(id -un)"
+          runtime_dir="/run/user/$(id -u)"
+          for _ in $(seq 1 30); do
+            [ -S "$runtime_dir/bus" ] && break
+            sleep 1
+          done
+          echo "XDG_RUNTIME_DIR=$runtime_dir" >> "$GITHUB_ENV"
+          XDG_RUNTIME_DIR="$runtime_dir" systemctl --user --version
+          XDG_RUNTIME_DIR="$runtime_dir" systemctl --user is-system-running || true
+      - name: Real systemd user service acceptance
+        env:
+          AGENTQ_SYSTEMD_ACCEPTANCE: '1'
+        run: go test -count=1 -v -timeout 600s -run '^TestSystemdAcceptance$' ./...
+      - name: Bootstrap entry acceptance
+        env:
+          AGENTQ_BOOTSTRAP_ACCEPTANCE: '1'
+        run: go test -count=1 -v -timeout 300s -run '^(TestBootstrapAcceptance|TestInstallShReleaseAcceptance)$' ./...
+      - name: Service logs on failure
+        if: failure()
+        run: |
+          journalctl --user --no-pager -n 200 || true
+          cat "$HOME/.agentq/launchd.log" 2>/dev/null || true

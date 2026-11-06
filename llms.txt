@@ -1,0 +1,45 @@
+# agentq
+
+> Background scheduler for the official Claude CLI: tasks written to docs/BACKLOG.md run in independent processes, with verification, review and a local merge.
+
+## Install for a user
+
+Starting needs the user's own consent at their terminal, so install only and leave starting to the user. `NONINTERACTIVE=1` keeps the script from asking, even if your shell has a terminal attached.
+
+
+    curl -fsSL https://github.com/dodo258/agentq/releases/latest/download/install.sh | NONINTERACTIVE=1 sh
+
+The script installs and does not start. It exits 0, and does not install the Claude CLI or log in. Then tell the user to run these themselves in a terminal, because they use the user's account and grant full permissions. Skip the first two if the script did not ask for them:
+
+    curl -fsSL https://claude.ai/install.sh | bash
+    claude auth login
+    agentq start
+
+Do not pass `--yes` or set `AGENTQ_ASSUME_YES=1` unless the user explicitly asked for that in this conversation: it counts as their consent. Do not edit `permission_mode` in `~/.agentq/config.json` for them.
+
+Tasks run as independent processes that can read and write every file this user can reach, including local keys, and run commands. Task content goes to the model service the user chose, on their own account. When nothing is pending nothing runs and no quota is used.
+
+## Rules
+
+- Do not edit the user's shell config. With the user's consent `agentq start --welcome` adds one marked line and `agentq remove --yes` takes it out.
+- Do not run as root or with sudo; the script refuses.
+- Network trouble: `--proxy <url>`, `--mirror <prefix>`. The checksum file and source clones still use the original address.
+- Do not overwrite an in-use binary, erase runtime state, copy identity or cache, delete duplicate user skills, or work around configuration conflicts. Unknown same-named skills stop the install; report them.
+- Prerequisites: Git. The background also needs the official Claude CLI, logged in; the Desktop app does not replace it. macOS (launchd) or Linux with `systemd --user`. Details: docs/install.en.md, docs/install.zh-CN.md.
+
+## After install
+
+Natural-language requests belong in a `claude` session using the dispatch skill. `agentq status`, `agentq run`, `agentq inbox` and `agentq logs` are management commands, not chat.
+
+## Recover
+
+- Check: `agentq doctor`
+- Previous generation: `agentq rollback --yes`
+- Uninstall, keeping data: `agentq remove --yes` (or `install.sh --uninstall`)
+- Undo an uninstall or an interrupted install: `sh scripts/bootstrap.sh restore --yes`
+
+These change code, skills and services; tasks, secrets and user configuration do not roll back. If there is no previous generation, or user changes or unknown state block it, report that; do not claim it recovered.
+
+## Maintaining the source
+
+Read AGENTS.md first. Provenance and licenses: dependencies/claude.lock.json.

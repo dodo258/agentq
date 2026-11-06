@@ -1,0 +1,154 @@
+==== /srv/agentq-home/.config/systemd/user/io.agentq.agentq.service
+# 由 agentq 生成，改了会被下次安装覆盖。
+[Unit]
+Description=agentq tick
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart="/bin/sh" "/srv/agentq-home/.agentq/tick-guard.sh"
+Environment="HOME=/srv/agentq-home"
+Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+StandardOutput=append:/srv/agentq-home/.agentq/launchd.log
+StandardError=append:/srv/agentq-home/.agentq/launchd.log
+KillMode=process
+
+==== /srv/agentq-home/.config/systemd/user/io.agentq.agentq.timer
+# 由 agentq 生成，改了会被下次安装覆盖。
+[Unit]
+Description=agentq tick timer
+
+[Timer]
+OnActiveSec=0
+OnCalendar=*:0/5
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
+
+==== /srv/agentq-home/.config/systemd/user/io.agentq.agentq.night.service
+# 由 agentq 生成，改了会被下次安装覆盖。
+[Unit]
+Description=agentq night
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart="/srv/agentq-home/.local/bin/agentq" "night" "--scheduled"
+Environment="HOME=/srv/agentq-home"
+Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+StandardOutput=append:/srv/agentq-home/.agentq/launchd.log
+StandardError=append:/srv/agentq-home/.agentq/launchd.log
+KillMode=process
+
+==== /srv/agentq-home/.config/systemd/user/io.agentq.agentq.night.timer
+# 由 agentq 生成，改了会被下次安装覆盖。
+[Unit]
+Description=agentq night timer
+
+[Timer]
+OnCalendar=*-*-* 01:00:00
+
+[Install]
+WantedBy=timers.target
+
+==== /srv/agentq-home/.config/systemd/user/io.agentq.agentq.review.service
+# 由 agentq 生成，改了会被下次安装覆盖。
+[Unit]
+Description=agentq review
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart="/srv/agentq-home/.local/bin/agentq" "review" "--scheduled"
+Environment="HOME=/srv/agentq-home"
+Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+StandardOutput=append:/srv/agentq-home/.agentq/launchd.log
+StandardError=append:/srv/agentq-home/.agentq/launchd.log
+KillMode=process
+
+==== /srv/agentq-home/.config/systemd/user/io.agentq.agentq.review.timer
+# 由 agentq 生成，改了会被下次安装覆盖。
+[Unit]
+Description=agentq review timer
+
+[Timer]
+OnCalendar=*-*-* 06:30:00
+
+[Install]
+WantedBy=timers.target
+
+==== /srv/agentq-home/.config/systemd/user/io.agentq.agentq.listen.service
+# 由 agentq 生成，改了会被下次安装覆盖。
+[Unit]
+Description=agentq listen
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10
+ExecStart="/srv/agentq-home/.local/bin/agentq" "listen"
+Environment="HOME=/srv/agentq-home"
+Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+StandardOutput=append:/srv/agentq-home/.agentq/launchd.log
+StandardError=append:/srv/agentq-home/.agentq/launchd.log
+KillMode=process
+
+[Install]
+WantedBy=default.target
+
+==== /srv/agentq-home/.config/systemd/user/io.agentq.agentq.backup.service
+# 由 agentq 生成，改了会被下次安装覆盖。
+[Unit]
+Description=agentq backup
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart="/srv/agentq-home/.local/bin/agentq" "maintenance" "backup"
+Environment="HOME=/srv/agentq-home"
+Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+StandardOutput=append:/srv/agentq-home/.agentq/backup.log
+StandardError=append:/srv/agentq-home/.agentq/backup.log
+KillMode=process
+
+==== /srv/agentq-home/.config/systemd/user/io.agentq.agentq.backup.timer
+# 由 agentq 生成，改了会被下次安装覆盖。
+[Unit]
+Description=agentq backup timer
+
+[Timer]
+OnActiveSec=3600s
+OnUnitActiveSec=3600s
+
+[Install]
+WantedBy=timers.target
+
+==== /srv/agentq-home/.config/systemd/user/io.agentq.agentq.watchdog.service
+# 由 agentq 生成，改了会被下次安装覆盖。
+[Unit]
+Description=agentq watchdog
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart="/bin/sh" "/srv/agentq-home/.local/share/agentq/support/scripts/watchdog.sh"
+Environment="HOME=/srv/agentq-home"
+Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+StandardOutput=append:/srv/agentq-home/.agentq/watchdog.log
+StandardError=append:/srv/agentq-home/.agentq/watchdog.log
+KillMode=process
+
+==== /srv/agentq-home/.config/systemd/user/io.agentq.agentq.watchdog.timer
+# 由 agentq 生成，改了会被下次安装覆盖。
+[Unit]
+Description=agentq watchdog timer
+
+[Timer]
+OnActiveSec=3600s
+OnUnitActiveSec=3600s
+
+[Install]
+WantedBy=timers.target
+

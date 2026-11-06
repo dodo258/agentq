@@ -1,0 +1,120 @@
+{
+  "id": "0315-100000-demo",
+  "project": "Job.Project-3",
+  "project_dir": "Job.ProjectDir-4",
+  "default_branch": "Job.DefaultBranch-5",
+  "item": "Job.Item-6",
+  "title": "Job.Title-7",
+  "fingerprint": "Job.Fingerprint-8",
+  "pid": 9,
+  "started_at": "2026-03-15T20:00:00Z",
+  "status": "Job.Status-11",
+  "ended_at": "2026-03-15T23:00:00Z",
+  "summary": "Job.Summary-14",
+  "session_id": "Job.SessionID-15",
+  "limit_hit": true,
+  "args": [
+    "Job.Args[]-18"
+  ],
+  "resume_pending": true,
+  "resumed_by": "Job.ResumedBy-20",
+  "resume_of": "Job.ResumeOf-21",
+  "boot_time": 22,
+  "rebooted": true,
+  "takeover": true,
+  "transient": true,
+  "stop_noted": true,
+  "stall_noted": true,
+  "progress_noted": [
+    "Job.ProgressNoted[]-29"
+  ],
+  "kind": "Job.Kind-30",
+  "output": "Job.Output-31",
+  "inbox_synced": true,
+  "projects_before": [
+    "Job.ProjectsBefore[]-34"
+  ],
+  "new_report": {
+    "path": "Job.NewReport.Path-37",
+    "assumptions": "Job.NewReport.Assumptions-38",
+    "view": "Job.NewReport.View-39",
+    "commit": "Job.NewReport.Commit-40",
+    "branch": "Job.NewReport.Branch-41",
+    "root": "Job.NewReport.Root-42"
+  },
+  "first_item": {
+    "project": "Job.FirstItem.Project-45",
+    "dir": "Job.FirstItem.Dir-46",
+    "fingerprint": "Job.FirstItem.Fingerprint-47",
+    "title": "Job.FirstItem.Title-48",
+    "branch": "Job.FirstItem.Branch-49",
+    "view": "Job.FirstItem.View-50",
+    "assumptions": "Job.FirstItem.Assumptions-51"
+  },
+  "first_note": "Job.FirstNote-52",
+  "held_projects": [
+    "Job.HeldProjects[]-54"
+  ],
+  "from_thread": true,
+  "thread_fp": "Job.ThreadFP-56",
+  "thread_dir": "Job.ThreadDir-57",
+  "budget_hit": true,
+  "auto_stop": "Job.AutoStop-59",
+  "stuck_pending": "Job.StuckPending-60",
+  "stuck_marked": true,
+  "handoff": true,
+  "still_listed": true,
+  "stuck_branch": "Job.StuckBranch-64",
+  "stuck_worktree": "Job.StuckWorktree-65",
+  "suggest_projects": [
+    "Job.SuggestProjects[]-67"
+  ],
+  "manual": true,
+  "suggest_snaps": {
+    "Job.SuggestSnaps.key-70": {
+      "head": "Job.SuggestSnaps.value.Head-72",
+      "later": "Job.SuggestSnaps.value.Later-73"
+    }
+  },
+  "suggest": {
+    "candidates": 76,
+    "todo": [
+      "Job.Suggest.Todo[]-78"
+    ],
+    "proposed": [
+      "Job.Suggest.Proposed[]-80"
+    ],
+    "skipped": [
+      "Job.Suggest.Skipped[]-82"
+    ],
+    "failed": [
+      "Job.Suggest.Failed[]-84"
+    ],
+    "new_failed": [
+      "Job.Suggest.NewFailed[]-86"
+    ]
+  },
+  "usage": {
+    "input_tokens": 89,
+    "output_tokens": 90,
+    "cache_read_tokens": 91,
+    "cache_write_tokens": 92,
+    "cost_usd": 93.5
+  },
+  "verify": {
+    "commit": "Job.Verify.Commit-96",
+    "on_main": "Job.Verify.OnMain-97",
+    "review": "Job.Verify.Review-98",
+    "script": "Job.Verify.Script-99",
+    "failed": true,
+    "note": "Job.Verify.Note-101",
+    "pid": 102,
+    "started_at": "2026-03-19T17:00:00Z",
+    "deadline": "2026-03-19T18:00:00Z",
+    "boot_time": 105,
+    "regression": "Job.Verify.Regression-106",
+    "regression_pending": "Job.Verify.RegressionPending-107",
+    "regression_err": "Job.Verify.RegressionErr-108",
+    "clean_err": "Job.Verify.CleanErr-109"
+  }
+}

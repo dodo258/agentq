@@ -1,0 +1,30 @@
+{
+  "pending": [
+    {
+      "cat": "done",
+      "text": "做完了",
+      "at": "2026-01-10T12:00:00Z"
+    }
+  ],
+  "last_sent": {
+    "done": "2026-01-10T11:00:00Z"
+  },
+  "day": "2026-01-10",
+  "count": 3,
+  "update_offset": 77,
+  "inbox": [
+    {
+      "id": 5,
+      "at": "2026-01-10T12:00:00Z",
+      "text": "你好"
+    }
+  ],
+  "threads": {
+    "12": {
+      "kind": "job",
+      "job_id": "1010-120000-demo",
+      "at": "2026-01-10T12:00:00Z"
+    }
+  },
+  "retired_key": true
+}

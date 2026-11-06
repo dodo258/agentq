@@ -1,0 +1,14 @@
+{
+  "launchd_label": "io.agentq.agentq",
+  "projects_root": "~/projects",
+  "claude_path": "claude",
+  "model": "opus",
+  "effort": "high",
+  "max_parallel": 3,
+  "per_project": 1,
+  "timeout": "2h",
+  "retry_after": "12h",
+  "limit_cooldown": "1h",
+  "paused": true,
+  "retired_key": "这个版本不认识"
+}

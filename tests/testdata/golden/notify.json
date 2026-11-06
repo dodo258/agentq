@@ -1,0 +1,112 @@
+{
+  "pending": [
+    {
+      "cat": "NotifyState.Pending[].Cat-4",
+      "key": "NotifyState.Pending[].Key-5",
+      "text": "NotifyState.Pending[].Text-6",
+      "lines": [
+        "NotifyState.Pending[].Lines[]-8"
+      ],
+      "security": true,
+      "at": "2026-03-15T20:00:00Z",
+      "files": [
+        "NotifyState.Pending[].Files[]-12"
+      ],
+      "mac_shown": true,
+      "job_id": "NotifyState.Pending[].JobID-14",
+      "project": "NotifyState.Pending[].Project-15",
+      "card": {
+        "id": "NotifyState.Pending[].Card.ID-18",
+        "project": "NotifyState.Pending[].Card.Project-19",
+        "fingerprint": "NotifyState.Pending[].Card.Fingerprint-20",
+        "text_fp": "NotifyState.Pending[].Card.TextFP-21",
+        "title": "NotifyState.Pending[].Card.Title-22",
+        "options": [
+          {
+            "label": "NotifyState.Pending[].Card.Options[].Label-25",
+            "text": "NotifyState.Pending[].Card.Options[].Text-26"
+          }
+        ],
+        "recommend": "NotifyState.Pending[].Card.Recommend-27",
+        "at": "2026-03-16T14:00:00Z",
+        "decided": "NotifyState.Pending[].Card.Decided-29"
+      }
+    }
+  ],
+  "last_sent": {
+    "NotifyState.LastSent.key-31": "2026-03-16T18:00:00Z"
+  },
+  "day": "NotifyState.Day-33",
+  "count": 34,
+  "morning_day": "NotifyState.MorningDay-35",
+  "decide_init": true,
+  "decide_seen": {
+    "NotifyState.DecideSeen.key-38": "NotifyState.DecideSeen.value-39"
+  },
+  "update_offset": 40,
+  "inbox": [
+    {
+      "id": 43,
+      "at": "2026-03-17T06:00:00Z",
+      "text": "NotifyState.Inbox[].Text-45",
+      "reply_to": "NotifyState.Inbox[].ReplyTo-46",
+      "reply_to_id": 47,
+      "note": "NotifyState.Inbox[].Note-48",
+      "queue_noted": true,
+      "files": [
+        "NotifyState.Inbox[].Files[]-51"
+      ],
+      "stop_job": "NotifyState.Inbox[].StopJob-52"
+    }
+  ],
+  "replies": [
+    {
+      "text": "NotifyState.Replies[].Text-55",
+      "reply_to": 56,
+      "at": "2026-03-17T19:00:00Z",
+      "job_id": "NotifyState.Replies[].JobID-58",
+      "thread": {
+        "kind": "NotifyState.Replies[].Thread.Kind-61",
+        "job_id": "NotifyState.Replies[].Thread.JobID-62",
+        "session_id": "NotifyState.Replies[].Thread.SessionID-63",
+        "project_dir": "NotifyState.Replies[].Thread.ProjectDir-64",
+        "project": "NotifyState.Replies[].Thread.Project-65",
+        "fingerprint": "NotifyState.Replies[].Thread.Fingerprint-66",
+        "at": "2026-03-18T05:00:00Z"
+      },
+      "file": "NotifyState.Replies[].File-68"
+    }
+  ],
+  "threads": {
+    "70": {
+      "kind": "NotifyState.Threads.value.Kind-72",
+      "job_id": "NotifyState.Threads.value.JobID-73",
+      "session_id": "NotifyState.Threads.value.SessionID-74",
+      "project_dir": "NotifyState.Threads.value.ProjectDir-75",
+      "project": "NotifyState.Threads.value.Project-76",
+      "fingerprint": "NotifyState.Threads.value.Fingerprint-77",
+      "at": "2026-03-18T16:00:00Z"
+    }
+  },
+  "cards": {
+    "NotifyState.Cards.key-80": {
+      "id": "NotifyState.Cards.value.ID-83",
+      "project": "NotifyState.Cards.value.Project-84",
+      "fingerprint": "NotifyState.Cards.value.Fingerprint-85",
+      "text_fp": "NotifyState.Cards.value.TextFP-86",
+      "title": "NotifyState.Cards.value.Title-87",
+      "options": [
+        {
+          "label": "NotifyState.Cards.value.Options[].Label-90",
+          "text": "NotifyState.Cards.value.Options[].Text-91"
+        }
+      ],
+      "recommend": "NotifyState.Cards.value.Recommend-92",
+      "at": "2026-03-19T07:00:00Z",
+      "decided": "NotifyState.Cards.value.Decided-94"
+    }
+  },
+  "local_retry_at": 95,
+  "last_error": "NotifyState.LastError-96",
+  "last_error_at": "2026-03-19T11:00:00Z"
+}

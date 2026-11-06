@@ -1,0 +1,39 @@
+{
+  "jobs": [
+    {
+      "id": "1010-120000-demo",
+      "project": "demo",
+      "project_dir": "/srv/agentq-home/projects/demo",
+      "item": "修登录",
+      "title": "修登录",
+      "fingerprint": "abc123",
+      "pid": 4242,
+      "started_at": "2026-01-10T12:00:00+08:00",
+      "status": "done",
+      "ended_at": "2026-01-10T13:00:00+08:00",
+      "summary": "做完了",
+      "session_id": "s-1",
+      "retired_field": "这个版本不认识"
+    },
+    {
+      "id": "1010-130000-demo",
+      "project": "demo",
+      "project_dir": "/srv/agentq-home/projects/demo",
+      "item": "改文案",
+      "title": "改文案",
+      "fingerprint": "def456",
+      "pid": 4243,
+      "started_at": "2026-01-10T13:00:00+08:00",
+      "status": "running",
+      "limit_hit": false,
+      "kind": ""
+    }
+  ],
+  "cooldown_until": "0001-01-01T00:00:00Z",
+  "breaker_until": "2026-01-11T00:00:00Z",
+  "fail_streak": 2,
+  "item_hold": {
+    "abc123": "2026-02-01T00:00:00Z"
+  },
+  "retired_top": 1
+}

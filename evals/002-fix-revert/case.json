@@ -1,0 +1,23 @@
+{
+  "domain": "backend",
+  "kind": "task",
+  "requires": [
+    "go"
+  ],
+  "request": "修 bug：折扣是 100 时 Total 应该返回 0，现在返回的是原价。修好，并加一条测试证明修好了",
+  "expect": {
+    "merged": true,
+    "item": [
+      "done"
+    ],
+    "verify_exit": 0,
+    "gates_ran": [
+      "test"
+    ],
+    "evidence": [
+      "撤掉修复后测试失败"
+    ],
+    "max_rounds": 2,
+    "human": false
+  }
+}

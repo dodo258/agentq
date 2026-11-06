@@ -1,0 +1,52 @@
+#!/bin/sh
+set -eu
+export GIT_NO_REPLACE_OBJECTS=1
+
+repo=$(git rev-parse --show-toplevel)
+scanner=$repo/scripts/privacy_scan.py
+if [ ! -f "$scanner" ]; then
+	echo "privacy-scan:error:scanner-missing" >&2
+	exit 2
+fi
+
+set -- --staged
+if git -C "$repo" cat-file -e :config/clean-source.json 2>/dev/null; then
+	set -- "$@" --manifest config/clean-source.json
+fi
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/agentq-privacy.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+set +e
+python3 -I "$scanner" "$@" >"$tmp/out" 2>"$tmp/err"
+code=$?
+set -e
+
+valid_findings() {
+	awk 'BEGIN { ok = 1; count = 0 } { count++; if ($0 !~ /^[^:]+:[1-9][0-9]*:[a-z][a-z0-9-]*$/) ok = 0 } END { exit !(ok && count > 0) }' "$1"
+}
+valid_error() {
+	awk 'BEGIN { ok = 1; count = 0 } { count++; if ($0 !~ /^privacy-scan:error:[a-z][a-z0-9-]*$/) ok = 0 } END { exit !(ok && count == 1) }' "$1"
+}
+
+case $code in
+	0)
+		if [ ! -s "$tmp/out" ] && [ ! -s "$tmp/err" ]; then
+			exit 0
+		fi
+		;;
+	1)
+		if [ ! -s "$tmp/err" ] && valid_findings "$tmp/out"; then
+			cat "$tmp/out"
+			exit 1
+		fi
+		;;
+	2)
+		if [ ! -s "$tmp/out" ] && valid_error "$tmp/err"; then
+			cat "$tmp/err" >&2
+			exit 2
+		fi
+		;;
+esac
+
+echo "privacy-scan:error:scanner-execution-failed" >&2
+exit 2

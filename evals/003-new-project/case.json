@@ -1,0 +1,19 @@
+{
+  "domain": "product",
+  "kind": "new",
+  "request": "做一个命令行小工具 wordcount：读标准输入，输出行数和单词数",
+  "expect": {
+    "merged": true,
+    "delivery": true,
+    "main_has": [
+      ".agentq/verify",
+      ".agentq/smoke"
+    ],
+    "gates_ran": [
+      "test",
+      "smoke"
+    ],
+    "human": false
+  },
+  "timeout_minutes": 30
+}

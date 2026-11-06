@@ -1,0 +1,27 @@
+{
+  "domain": "backend",
+  "kind": "task",
+  "requires": [
+    "go"
+  ],
+  "request": "在 greeting.go 实现 Greeting() string，返回 Hello, agentq.，让 go test ./... 通过",
+  "expect": {
+    "merged": true,
+    "item": [
+      "done"
+    ],
+    "main_has": [
+      "greeting.go"
+    ],
+    "unchanged": [
+      "greeting_test.go"
+    ],
+    "verify_exit": 0,
+    "gates_ran": [
+      "test",
+      "review"
+    ],
+    "max_rounds": 2,
+    "human": false
+  }
+}

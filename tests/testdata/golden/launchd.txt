@@ -1,0 +1,158 @@
+==== plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>io.agentq.agentq</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>/srv/agentq-home/.agentq/tick-guard.sh</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>300</integer>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>AbandonProcessGroup</key>
+	<true/>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>/srv/agentq-home</string>
+		<key>PATH</key>
+		<string>/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/srv/agentq-home/.agentq/launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>/srv/agentq-home/.agentq/launchd.log</string>
+</dict>
+</plist>
+
+==== routine night
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>io.agentq.agentq.night</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/srv/agentq-home/.local/bin/agentq</string>
+		<string>night</string>
+		<string>--scheduled</string>
+	</array>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>1</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+	<key>AbandonProcessGroup</key>
+	<true/>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>/srv/agentq-home</string>
+		<key>PATH</key>
+		<string>/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/srv/agentq-home/.agentq/launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>/srv/agentq-home/.agentq/launchd.log</string>
+</dict>
+</plist>
+
+==== routine review
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>io.agentq.agentq.review</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/srv/agentq-home/.local/bin/agentq</string>
+		<string>review</string>
+		<string>--scheduled</string>
+	</array>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>6</integer>
+		<key>Minute</key>
+		<integer>30</integer>
+	</dict>
+	<key>AbandonProcessGroup</key>
+	<true/>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>/srv/agentq-home</string>
+		<key>PATH</key>
+		<string>/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/srv/agentq-home/.agentq/launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>/srv/agentq-home/.agentq/launchd.log</string>
+</dict>
+</plist>
+
+==== listen
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>io.agentq.agentq.listen</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/srv/agentq-home/.local/bin/agentq</string>
+		<string>listen</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>AbandonProcessGroup</key>
+	<true/>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>/srv/agentq-home</string>
+		<key>PATH</key>
+		<string>/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/srv/agentq-home/.agentq/launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>/srv/agentq-home/.agentq/launchd.log</string>
+</dict>
+</plist>
+
+==== aux backup
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>Label</key><string>io.agentq.agentq.backup</string>
+<key>ProgramArguments</key><array><string>/srv/agentq-home/.local/bin/agentq</string><string>maintenance</string><string>backup</string></array>
+<key>StartInterval</key><integer>3600</integer><key>AbandonProcessGroup</key><true/>
+<key>EnvironmentVariables</key><dict><key>HOME</key><string>/srv/agentq-home</string><key>PATH</key><string>/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+<key>StandardOutPath</key><string>/srv/agentq-home/.agentq/backup.log</string>
+<key>StandardErrorPath</key><string>/srv/agentq-home/.agentq/backup.log</string></dict></plist>
+
+==== aux watchdog
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>Label</key><string>io.agentq.agentq.watchdog</string>
+<key>ProgramArguments</key><array><string>/bin/sh</string><string>/srv/agentq-home/.local/share/agentq/support/scripts/watchdog.sh</string></array>
+<key>StartInterval</key><integer>3600</integer><key>AbandonProcessGroup</key><true/>
+<key>EnvironmentVariables</key><dict><key>HOME</key><string>/srv/agentq-home</string><key>PATH</key><string>/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+<key>StandardOutPath</key><string>/srv/agentq-home/.agentq/watchdog.log</string>
+<key>StandardErrorPath</key><string>/srv/agentq-home/.agentq/watchdog.log</string></dict></plist>
+

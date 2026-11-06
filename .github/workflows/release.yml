@@ -1,0 +1,58 @@
+name: release
+
+# 推 v* tag 时跑：先在 macOS 和 Linux 各过一遍全量检查，都过了才构建四个平台的 tar.gz、SHA256SUMS 和填好仓库名的 install.sh，建 GitHub Release。
+# 用户下载的是 Release 附件：releases/latest/download/install.sh。文件名见 scripts/build-release.sh。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # 测试用临时 HOME，读不到 --global。
+      - name: Git identity for test repositories
+        run: |
+          sudo git config --system user.name ci
+          sudo git config --system user.email ci
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test -race -count=1 -timeout 600s ./...
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build release files
+        env:
+          VERSION: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: sh scripts/build-release.sh "$VERSION" dist "$REPOSITORY"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.ref_name }}
+        run: gh release create "$VERSION" dist/* --verify-tag --generate-notes

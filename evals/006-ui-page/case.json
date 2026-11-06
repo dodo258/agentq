@@ -1,0 +1,19 @@
+{
+  "domain": "frontend",
+  "kind": "task",
+  "request": "做一个单页网页 index.html：标题是今日待办，下面三条待办，能勾选",
+  "expect": {
+    "merged": true,
+    "item": [
+      "done"
+    ],
+    "main_has": [
+      "index.html"
+    ],
+    "gates_ran": [
+      "ui"
+    ],
+    "shots": true,
+    "human": false
+  }
+}

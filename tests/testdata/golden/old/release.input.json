@@ -1,0 +1,19 @@
+{
+  "check_day": "2026-01-10",
+  "offers": [
+    {
+      "id": "1-2",
+      "project": "demo",
+      "project_dir": "/srv/agentq-home/projects/demo",
+      "app_id": "1",
+      "bundle_id": "x.demo",
+      "build_id": "2",
+      "status": "offered",
+      "updated_at": "2026-01-10T12:00:00Z"
+    }
+  ],
+  "last_submit": {
+    "1": "2025-12-20T00:00:00Z"
+  },
+  "retired_key": 1
+}

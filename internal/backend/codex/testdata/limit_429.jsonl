@@ -1,0 +1,3 @@
+{"type": "thread.started", "thread_id": "01a1adf5-1a35-7091-9748-0a21efb18c8d"}
+{"type": "turn.started"}
+{"type": "turn.failed", "error": {"message": "exceeded retry limit, last status: 429, request id: req_REDACTED"}}

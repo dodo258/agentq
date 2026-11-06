@@ -1,0 +1,10 @@
+{"type":"thread.started","thread_id":"01a1aded-ff15-7722-a517-cc773c451e2a"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  session-flags: `agentq_label` is ignored."}}
+{"type":"item.completed","item":{"id":"item_1","type":"error","message":"Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  session-flags: `agentq_label` is ignored."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"I’ll run the commands in order and commit a.txt.\n"}}
+{"type":"item.started","item":{"id":"item_3","type":"command_execution","command":"/bin/zsh -lc 'sleep 25'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_3","type":"command_execution","command":"/bin/zsh -lc 'sleep 25'","aggregated_output":"","exit_code":0,"status":"completed"}}
+{"type":"item.started","item":{"id":"item_4","type":"command_execution","command":"/bin/zsh -lc \"git status --short && printf 'hi\\\\n' > a.txt && git add -- a.txt && git diff --cached -- a.txt && git commit -m add-a -- a.txt\"","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_4","type":"command_execution","command":"/bin/zsh -lc \"git status --short && printf 'hi\\\\n' > a.txt && git add -- a.txt && git diff --cached -- a.txt && git commit -m add-a -- a.txt\"","aggregated_output":"diff --git a/a.txt b/a.txt\nnew file mode 100644\nindex 0000000..45b983b\n--- /dev/null\n+++ b/a.txt\n@@ -0,0 +1 @@\n+hi\n[main 5c6bfb5] add-a\n 1 file changed, 1 insertion(+)\n create mode 100644 a.txt\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_5","type":"agent_message","text":"done"}}

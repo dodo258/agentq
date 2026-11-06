@@ -1,0 +1,2 @@
+{"type": "step_start", "timestamp": 1763000000000, "sessionID": "ses_abc123", "part": {"id": "prt_s", "sessionID": "ses_abc123", "messageID": "msg_1", "type": "step-start"}}
+{"type": "error", "timestamp": 1763000000001, "sessionID": "ses_abc123", "error": {"name": "ProviderAuthError", "data": {"providerID": "anthropic", "message": "invalid credentials"}}}

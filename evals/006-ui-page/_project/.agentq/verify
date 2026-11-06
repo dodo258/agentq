@@ -1,0 +1,2 @@
+#!/bin/sh
+test -f index.html && grep -q 今日待办 index.html

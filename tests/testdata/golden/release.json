@@ -1,0 +1,35 @@
+{
+  "check_day": "releaseStore.CheckDay-2",
+  "offers": [
+    {
+      "id": "releaseStore.Offers[].ID-6",
+      "project": "releaseStore.Offers[].Project-7",
+      "project_dir": "releaseStore.Offers[].ProjectDir-8",
+      "app_id": "releaseStore.Offers[].AppID-9",
+      "app_name": "releaseStore.Offers[].AppName-10",
+      "bundle_id": "releaseStore.Offers[].BundleID-11",
+      "build_id": "releaseStore.Offers[].BuildID-12",
+      "build_number": "releaseStore.Offers[].BuildNumber-13",
+      "version": "releaseStore.Offers[].Version-14",
+      "version_id": "releaseStore.Offers[].VersionID-15",
+      "status": "releaseStore.Offers[].Status-16",
+      "tries": 17,
+      "job_id": "releaseStore.Offers[].JobID-18",
+      "changes": [
+        "releaseStore.Offers[].Changes[]-20"
+      ],
+      "message_id": 21,
+      "offered_at": "2026-03-16T08:00:00Z",
+      "checking_at": "2026-03-16T09:00:00Z",
+      "phase": "releaseStore.Offers[].Phase-24",
+      "submission_id": "releaseStore.Offers[].SubmissionID-25",
+      "result": "releaseStore.Offers[].Result-26",
+      "last_err": "releaseStore.Offers[].LastErr-27",
+      "updated_at": "2026-03-16T14:00:00Z"
+    }
+  ],
+  "last_submit": {
+    "releaseStore.LastSubmit.key-30": "2026-03-16T17:00:00Z"
+  },
+  "unknown_since": "2026-03-16T18:00:00Z"
+}

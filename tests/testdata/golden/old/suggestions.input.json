@@ -1,0 +1,21 @@
+{
+  "next": 4,
+  "items": [
+    {
+      "n": 3,
+      "project": "demo",
+      "fingerprint": "abc",
+      "title": "加个开关",
+      "created_at": "2026-01-10T12:00:00Z"
+    },
+    {
+      "n": 3,
+      "project": "demo",
+      "fingerprint": "dup",
+      "title": "编号重复的",
+      "created_at": "2026-01-10T12:00:00Z"
+    }
+  ],
+  "last_day": "2026-01-10",
+  "retired_key": 1
+}
