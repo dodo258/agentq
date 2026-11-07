@@ -53,4 +53,4 @@ if [ -n "$left" ]; then
 fi
 echo "主页和文档已填成 ${repo}。"
 # 公开仓库是新建的，About 不会跟过来，发布时要再设一次。
-echo "新仓库的 About：gh repo edit ${repo} --description '交代一句，做到合并。把活排进 BACKLOG，agentq 开独立的 Claude Code 进程做到合并，中断了续上，做完要对得上。' --add-topic claude-code --add-topic coding-agent --add-topic automation --add-topic developer-tools --add-topic golang"
+echo "新仓库的 About：gh repo edit ${repo} --description 'Claude Code 的后台任务调度器：把 docs/BACKLOG.md 里的待做条目交给独立进程实现，测试和审查通过后合并到本地默认分支。' --add-topic claude-code --add-topic coding-agent --add-topic automation --add-topic developer-tools --add-topic golang"

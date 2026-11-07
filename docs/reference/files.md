@@ -118,7 +118,7 @@ tick 每天最多跑一次清理，不调模型，删不掉只记日志，不影
 | `<label>.review` | `--services` | 每天 06:30 `agentq review --scheduled` |
 | `<label>.backup` | `--backup` | 每 86400 秒 `agentq maintenance backup` |
 | `<label>.watchdog` | `--watchdog` | 每 1800 秒运行 `support/scripts/watchdog.sh` |
-| `<label>.listen` | `--listen`，或 `agentq start` 在 Telegram 配好时 | 常驻 `agentq listen`，见 [Telegram 指南](../guide/telegram.md#让消息随到随回) |
+| `<label>.listen` | `--listen`，或 `agentq start` 在 Telegram 配好时 | 常驻 `agentq listen`，见 [Telegram 指南](../guide/telegram.md#常驻监听) |
 
 Linux 上所有 service 都写 `KillMode=process`，任务是 tick 拉起的后台进程，默认的 `control-group` 会在 tick 退出时把它们一起杀掉。journal 里的 "Found left-over process" 提示不影响运行。定时任务写 `StartLimitIntervalSec=0`。
 

@@ -68,7 +68,7 @@ agentq 给你的保护是调度层面的（预算、超时、熔断、质量门�
 
 - `--settings` 的 deny 规则在 `bypassPermissions` 下是否生效，没有验证过。不要依赖它。
 - `exclude_projects` 只对 agentq 自己的代码是硬约束：tick、巡逻、推送、闲时找活和主动感知写建议、发版助手、Router 的动作都不读写这个项目的 BACKLOG，自动写 BACKLOG 的路都守在同一个函数里。例外是你点名的：`agentq run` 跑的任务过门后，引擎照样合并进 main，并写这一条的 BACKLOG 和 PROGRESS。夜班、复盘、Telegram 对话和小事任务是模型在做，闲时找活的模型也能读 `projects_root`，提示词写明跳过，这部分是**软约束**：它们能碰到的文件比提示词说的多，碰了也没有东西拦得住。不想被碰到的项目放到 `projects_root` 外面，或用单独的用户跑 agentq。
-- Telegram 决策卡片按钮回调、App Store Connect 接口、`gh` 搜索语法只用假服务测过。
+- App Store Connect 接口、`gh` 搜索语法只用假服务测过。
 - 质量门跑的是 main 上的 `.agentq/verify`、`.agentq/ui`、`.agentq/smoke`，任务改分支上的版本不起作用；首次新增时用任务的版本。任务有本机全部权限，能直接改 main：门防的是偷懒和误操作，不防恶意任务。
 
 ## 报告漏洞

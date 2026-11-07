@@ -7,151 +7,150 @@
 
 # agentq
 
-### 交代一句，做到合并。
-
-**修 bug、补测试、做新项目的第一版，一条条排进去。**<br>
-它开独立的 Claude Code 进程去做，测试和审查过了才由 agentq 合并。中断了续上，额度满了等，做完有记录。
+agentq 是 Claude Code 的后台任务调度器：它把各项目 `docs/BACKLOG.md` 里的待做条目交给独立的 Claude Code 进程实现，测试和审查通过后合并到本地默认分支。
 
 [![License](https://img.shields.io/badge/license-MIT-16181D)](LICENSE) ![Go](https://img.shields.io/badge/Go-16181D?logo=go&logoColor=white) ![macOS](https://img.shields.io/badge/macOS-16181D?logo=apple&logoColor=white) ![Linux](https://img.shields.io/badge/Linux-16181D?logo=linux&logoColor=white) ![Claude Code](https://img.shields.io/badge/Claude_Code-16181D?logo=claude&logoColor=white)
 [![Release](https://img.shields.io/github/v/release/dodo258/agentq?label=release&color=16181D)](https://github.com/dodo258/agentq/releases/latest) [![Stars](https://img.shields.io/github/stars/dodo258/agentq?style=flat&color=16181D)](https://github.com/dodo258/agentq/stargazers)
 
-**[快速开始](#快速开始)** &nbsp;·&nbsp; **[入门指南](docs/guide/getting-started.md)** &nbsp;·&nbsp; **[命令](docs/reference/commands.md)** &nbsp;·&nbsp; **[安全](SECURITY.md)** &nbsp;·&nbsp; **简体中文** · [English](README.en.md)
+**[安装](#安装)** &nbsp;·&nbsp; **[入门指南](docs/guide/getting-started.md)** &nbsp;·&nbsp; **[命令](docs/reference/commands.md)** &nbsp;·&nbsp; **[安全](SECURITY.md)** &nbsp;·&nbsp; **简体中文** · [English](README.en.md)
 
 <br>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/hero-dark.png">
-  <img src="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/hero-light.png" width="900" alt="一键安装，按回车启动；agentq add 派一条活；agentq status 显示调度、额度和运行中的任务；过门后合并">
+  <img src="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/hero-light.png" width="900" alt="一键安装，按回车启动；agentq add 添加一条任务；agentq status 显示调度、额度和运行中的任务；通过质量门后合并">
 </picture>
 
 </div>
 
 <br>
 
-## 适合你吗？
-
-Claude Code 很能干，但它等你开口：一个做完了要你开下一个，中途断了要你发现，撞了上限要你记着回来。agentq 把这些接过去。
-
-- **一条接一条**：每个项目一份 `docs/BACKLOG.md`，上一个任务结束几秒内接下一条。终端和客户端都不用开着。
-- **中断了续上**：进程退出、机器重启、撞上用量上限，都用同一个会话接着做，不从头再来。
-- **做完要对得上**：任务说做完了不算数。它只做到分支可合并，agentq 在合并后的代码上跑项目的检查脚本（第一次接手时按项目文件生成，判断不了就由任务补），再开独立进程审查，都过了才合到默认分支。没过退回任务，还不过就等你定。
-- **一次装齐**：任务流程、审查和收尾的技能随安装带上，还有一份通用工程规则，不用找插件、写规则。你已有全局规则就不加这份（要加：`agentq env on`），你自己的配置不动。
-
-适合手上有不止一个 Git 项目、想把活交出去、过后看结果的人。需要边做边看、频繁对话的任务，直接开 Claude Code 更合适，你不需要它。
-
-## 快速开始
-
-**1 · 安装。**
+## 安装
 
 ```sh
 curl -fsSL https://github.com/dodo258/agentq/releases/latest/download/install.sh | sh
 ```
 
-<sub>下载预编译程序并校验 SHA256，不用 sudo，不用装 Go。新老用户同一条命令，重跑就是升级，配置和任务数据都保留。没有 Claude Code CLI 时，同意后替你运行官方安装命令并登录；只装了桌面端也一样。网络不通时用 `--proxy <地址>` 或 `--mirror <前缀>`，校验文件和源码不走镜像，被改过的文件会被拒绝。卸载：`curl … | sh -s -- --uninstall`，或 `agentq remove --yes`，都保留数据。</sub>
+脚本下载预编译程序并校验 SHA256，不需要 sudo 和 Go，只依赖 Git。已安装时重跑同一条命令就是升级，配置和任务数据保留。
 
 
-也可以告诉你的 agent：
+安装结束时，程序说明以下三点，然后询问是否启动：
+
+- 任务能读写当前系统用户的所有文件。
+- 任务内容发给你使用的模型服务，消耗你自己的额度。
+- 没有待做时不消耗额度。
+
+按回车同意并启动，输入 `n` 只安装。没有终端时（CI、由 agent 代装）只安装，不替你同意，之后运行 `agentq start` 启动。
+
+同意后，如果没有 Claude Code CLI 或没有登录，脚本运行官方安装命令和 `claude auth login`。桌面端不能跑后台任务，只装了桌面端也需要 CLI。
+
+安装内容包括程序、任务流程和审查用的技能、项目模板和一份通用工程规则，已有配置不修改。网络不通时加 `--proxy <地址>` 或 `--mirror <前缀>`，用镜像时校验文件和源码仍从原地址取。卸载用 `agentq remove --yes`，数据保留。其他安装方式和参数见[入门指南](docs/guide/getting-started.md#其他安装方式)。
+
+由 agent 代装时，把这句话发给它：
 
 > 读 `https://github.com/dodo258/agentq/blob/main/llms.txt`，帮我装 agentq
 
-**2 · 按一下回车。** 装完它会讲清楚三件事：任务能读写你这个用户的所有文件；任务内容会发给你用的模型服务，用你自己的额度；没有待做时不消耗额度。回车同意并启动，输入 `n` 只安装不启动。没有终端（CI、agent 代装）时只装不启动，不会替你同意。
+## 用法
 
-**3 · 说一句要做什么。** 在项目目录打开 Claude Code，CLI 或桌面端都行：
+在项目目录打开 Claude Code（CLI 或桌面端），说明要做什么：
 
 ```text
 派活：导出失败时重试 3 次，断网时要能看到重试日志
 ```
 
-它写成带验收标准的条目，交给后台，你接着干别的。
+`dispatch` 技能把这句话写成带验收标准的条目，提交到 `docs/BACKLOG.md` 并启动后台任务。项目要是 Git 仓库，不要求放在 `~/projects` 下。
 
-<sub>项目要是 Git 仓库，默认分支自动认（主目录在 `main` 或 `master` 上就用它，否则看 `origin/HEAD`，再看本地 `main`、`master`）。不用放到 `~/projects` 下。</sub>
-
-或者全在终端里：
+也可以在终端操作：
 
 ```sh
-agentq add "..."                  # 一句话排一条，后台会接；第一次顺带把项目接入
-agentq run my-app                 # 现在就开始，不等下一轮
-agentq new "..."                  # 一句话从零做新项目的第一版
-agentq discuss                    # 看开工前在问你的大方向
-agentq inbox add "..."            # 不属于任何项目的活：调研、写东西、整理文件
+agentq add "..."                  # 往当前项目的「待做」加一条，项目第一次添加时自动接入
+agentq run my-app                 # 立刻启动该项目的一条待做
+agentq new "..."                  # 按一句话新建项目并做出第一版
+agentq discuss                    # 查看开工前等你回答的大方向问题
+agentq inbox add "..."            # 添加不属于任何项目的任务，产出写到 ~/.agentq/outbox/
 
-agentq status                     # 额度、运行中、各项目待做、最近结束
-agentq logs 1105-211629-shop-api  # 某个任务的结果全文
-agentq stop 1105-211629-shop-api  # 停掉一个任务，成果留着
-agentq pause                      # 暂停接活；agentq resume 恢复
+agentq status                     # 查看额度、运行中的任务、各项目待做和最近结束的任务
+agentq logs 1105-211629-shop-api  # 查看一个任务的结果全文
+agentq stop 1105-211629-shop-api  # 停止一个任务，已有改动保留
+agentq pause                      # 暂停启动新任务，agentq resume 恢复
 agentq doctor                     # 只读检查安装、CLI 和配置
 agentq update                     # 升级到最新版
 ```
 
-## 支持什么
+日常操作见[日常使用](docs/guide/daily-ops.md)，所有命令见[命令参考](docs/reference/commands.md)。
 
-- **工具**：Claude Code，后台任务走官方 CLI，用的是你自己的账号。Codex CLI 也能当后端：在 macOS 上用 ChatGPT 登录真实跑通过一次到合并的闭环和中断续跑，要工具限制的任务（Router、闲时找活、主动感知、发版准备）在它上面不启动，没有美元上限。opencode 是实验：真实的 opencode 没跑过，只用假 CLI 测过。安装时加 `--backend codex` 或 `--backend opencode`（`... | sh -s -- --backend codex`），[接新工具的接口](docs/backends.md)已留好。
-- **客户端**：Claude 桌面端的 Code 标签页和 CLI 读同一份规则和技能，在里面说一句就能派活。派出去的任务跑在后台，不显示在客户端的会话列表里，用 `agentq status` 或推送看结果。
-- **系统**：macOS（launchd）、带 `systemd --user` 的 Linux。Windows 不支持，WSL 没验证过。
-- **依赖**：Git。预编译程序没有别的依赖，源码构建只用 Go 标准库。
+## 工作流程
 
-每项验证到了哪一步，见[支持矩阵](docs/reference/support-matrix.md)。
-
-## 它怎么工作
-
-agentq 自己不写业务代码。挑活、启动、看着、过门、合并、收尾、记账是它的事；实现和自测由 Claude Code 按随附的 `agent-task` 技能完成，审查由另开的 Claude Code 进程做。
+agentq 负责选择条目、启动和监控进程、运行质量门、合并和记录，不写业务代码。实现和自测由 Claude Code 按随附的 `agent-task` 技能完成，审查由另一个 Claude Code 进程完成。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/flow-zh-dark.svg">
-  <img src="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/flow-zh-light.svg" width="900" alt="你说一句，写进 docs/BACKLOG.md；agentq tick 检查后启动独立的 claude -p 进程，在独立 worktree 里实现、自测，写 ready.json；agentq 过门（测试、审查），都过了由引擎合并并收尾；门没过就退回任务接着改，还不过就等你定；中断或撞上限时用同一会话续跑；结果写进当天汇总和早报">
+  <img src="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/flow-zh-light.svg" width="900" alt="你说一句，写进 docs/BACKLOG.md；agentq tick 检查后启动独立的 claude -p 进程，在独立 worktree 里实现、自测，写 ready.json；agentq 运行质量门（测试、审查），通过后由引擎合并并收尾；未通过时退回任务接着改，仍未通过就等你决定；中断或撞上限时用同一会话续跑；结果写进当天汇总和早报">
 </picture>
 
-agentq 不做 `git push`，推送远程要你另外授权。完整规则见[调度规则](docs/reference/scheduling.md)。
+调度器每 5 分钟运行一次，任务结束时也立刻运行一次，所以排队的条目几秒内开始。默认全局同时运行 2 个任务，同一项目 1 个。任务不依赖终端或客户端，机器要保持开机。
 
-## 它做什么
+调度器不执行 `git push`，合并只发生在本地默认分支，推送远程要另外授权。完整规则见[调度规则](docs/reference/scheduling.md)。
 
-### 无人值守不等于没人管
+## 质量门
 
-无人值守最怕的是半夜出了事没人知道，或者同一个错误把待办烧光。这些情况都写了处理办法，也都有测试。
+任务只能把分支做到可合并，并写一份 `.agentq/ready.json`。是否合并由 agentq 按下面五道质量门判定，门都在分支和最新默认分支合并后的代码上运行。
 
-| 出了什么事 | 怎么处理 |
+| 质量门 | 什么时候运行 | 检查内容 | 默认档位 |
+| :-- | :-- | :-- | :-- |
+| **测试门** | 每次 | 运行项目的 `.agentq/verify` | 挡合并 |
+| **审查门** | 只改 markdown 文档时跳过 | 独立进程审查改动，阻塞项要有文件、行号、证据和复现步骤 | 挡合并 |
+| **补丁门** | 改动类型是修复时 | 同一模块 30 天内第三次修复。调成 `error` 后退回任务，要求重写该模块 | 只记录 |
+| **界面门** | 改到界面文件时 | 项目脚本截图，agentq 检查不是空白，审查进程只对渲染坏、溢出、看不清和占位内容阻塞 | 只记录 |
+| **成品门** | `agentq new` 的第一版和标了 `（成品）` 的条目 | 运行项目的烟测 `.agentq/smoke`，通过后生成交付单 | 只记录 |
+
+项目可以在 `.agentq/gates.json` 调整档位。第一次 `agentq init` 或 `agentq add` 时，程序按项目文件生成 `.agentq/verify`；判断不了时，任务要在实现时补上。
+
+质量门未通过时，原因退回任务，同一会话接着修改，最多 2 轮。仍未通过或无法判定（比如脚本说这次跑不了）时，条目标记为卡住，等你决定：
+
+```sh
+agentq gate report <任务id>                # 查看原因
+agentq gate pass <任务id> --reason "..."   # 放行这一次
+agentq gate rerun <任务id>                 # 不改代码重新运行质量门
+agentq gate abandon <任务id>               # 放弃，分支保留
+```
+
+任务绕过质量门自己合并的不算通过，agentq 会标出来并通知你。质量门针对的是模型偷懒和误操作，不是安全边界：任务在你的机器上有完整权限。
+
+设计、界面和技术选型这类方向问题，在开工前问一次：最多 3 个问题，每个带默认答案。在 Claude Code 会话里派活时当场问。条目标了 `（大方向）` 或使用 `agentq new` 时，后台通过 Telegram 卡片问，2 小时没有回答就按默认开工，其他条目不等待；没配 Telegram 时直接按默认。
+
+`agentq health` 显示每个模块最近的改动次数、修复次数和两周返工率，`agentq stats` 显示每道门的拦截和放行次数，`agentq quality` 按提交记录计算一次满意率和返工率。细节见[质量门和引擎合并](docs/reference/features.md#质量门和引擎合并)。
+
+## 故障处理
+
+| 情况 | 处理 |
 | :-- | :-- |
-| **进程中途退出** | 核对 BACKLOG 后用同一会话续跑，已经合并的不重做 |
-| **撞上用量上限** | 冷却到重置时间，再接着做 |
-| **额度快用完** | 到 90% 不领新活，手动启动到 98% 也拒绝 |
-| **一启动就报错** | 连续 3 个任务 3 分钟内退出就熔断，冷却从 30 分钟起，不把待办烧光 |
-| **任务失控** | 单次预算兜底，子代理失控自动停，超时默认 4 小时，成果都留着 |
-| **状态文件坏了** | 读不了就不收尾也不启动；内容损坏就备份坏文件，按任务记录重建，那次不启动新任务 |
-| **磁盘** | 任务记录默认留 90 天，日志定期清理 |
+| **进程中途退出、机器重启** | 核对 BACKLOG 后用同一会话续跑，已合并的不重做 |
+| **撞上用量上限** | 冷却到重置时间，再用同一会话续跑 |
+| **额度快用完** | 到 90% 时不启动新任务，`agentq run` 到 98% 时拒绝 |
+| **任务启动后立刻失败** | 连续 3 个任务在 3 分钟内退出时熔断，暂停启动 30 分钟，再次失败时时长翻倍，最长 4 小时 |
+| **任务失控** | 单次运行有预算上限，子代理失控时自动停止，超时默认 4 小时。已有改动保留 |
+| **状态文件损坏** | 读不了时不收尾也不启动。内容损坏时备份坏文件，按任务记录重建，那一轮不启动新任务 |
+| **运行数据增长** | 任务记录默认保留 90 天，日志定期截断 |
 
-<sub>暴力测试会杀进程、写坏状态文件、制造并发、写满磁盘、跳变时钟，全部用假依赖，最近一次在 macOS 上 3 个种子各 40 轮没有失败。Linux 上跑过全部单元测试和真实的 `systemd --user` 流程，暴力测试还没跑过。方法见 [CONTRIBUTING](CONTRIBUTING.md#暴力测试)。</sub>
+这些路径有假 CLI 和暴力测试覆盖，真实撞限还没有跑过。暴力测试会杀进程、写坏状态文件、制造并发、写满磁盘、跳变时钟，依赖全部是假的，目前只在 macOS 上跑过。方法见 [CONTRIBUTING](CONTRIBUTING.md#暴力测试)，规则见[调度规则](docs/reference/scheduling.md)。
 
-### 做完要对得上
-
-任务说「做完了」只是它的说法。它只能把分支做到可合并，写一份 `.agentq/ready.json`，合不合并由 agentq 判定：
-
-- **测试门**：把任务分支和最新的默认分支合起来，在一次性 worktree 里跑项目的 `.agentq/verify`。
-- **审查门**：另开一个进程审查这次改动，阻塞要拿得出证据。
-- **补丁门**：看 git 历史，同一个模块 30 天内第三次修复记下来。调成 `error` 就退回，合同改成重写这个模块。
-- **界面门**：改到界面文件才跑。项目脚本截图，引擎查不是空白，再交给审查进程。只有渲染坏、溢出、看不清、占位内容这类有证据的问题能阻塞，好不好看只给意见。
-- **成品门**：`agentq new` 的第一版和标了 `（成品）` 的条目才跑。项目的烟测过了才有交付单，写明做了什么、怎么打开看。
-- 都过了，引擎合到默认分支，再写「已完成」和交接单。
-
-测试门和审查门默认挡合并，另外三道默认只记录，项目可以在 `.agentq/gates.json` 调。`agentq health` 看每个模块最近的改动、修复次数和两周返工率，`agentq stats` 看每道门挡了多少、放行了几次。
-
-设计、界面、前后端选型这类大方向，开工前问你一次：最多 3 个问题，每个带默认答案，细节不问。在会话里派活就当场问；后台走 Telegram 卡片，等 2 小时没回按默认，别的条目不等。
-
-没过就把原因退回任务，同一会话接着改。还不过，或者判不了（比如脚本说这次跑不了），就标卡住等你定：`agentq gate report` 看原因，`agentq gate pass` 放行，`agentq gate rerun` 再审一次。任务绕过门自己合并的不算过门，会标出来。门防的是偷懒和误操作，不是安全边界：任务在你的机器上有完整权限。`agentq quality` 按提交记录算一次满意率和返工率，每一条都能查到依据。
-
-### 手机上派活和决定
+## Telegram
 
 <table>
 <tr>
 <td width="55%">
 
-配好 Telegram（可选）后，直接给机器人发需求，也可以带截图。
+Telegram 是可选的。配好后可以给机器人发需求，也可以带截图。
 
-- 回复「要你定」的消息，或者点按钮，它写回条目接着做
-- 回复任务的提醒，接上那个任务
-- 发 `状态`、`额度`、`暂停`、`恢复`，由代码直接回，不花额度
-- 一句话做新项目：`一个记录读书笔记的网页工具`，做完把项目路径和合并提交推给你
+- 回复「要你定」的消息或点按钮，决定写回条目，任务继续。
+- 回复任务提醒，接上那个任务。
+- `状态`、`额度`、`暂停`、`恢复` 由代码直接回答，不消耗额度。
+- 打开 `router_enabled` 后，发一句新项目的描述，比如 `一个记录读书笔记的网页工具`，agentq 新建项目并做出第一版，合并后推送结果。这条的真实 Telegram 往返没有验证过。
 
-每天最多推 10 条，23:00 到 08:00 只攒着，同类 30 分钟合并一次。任务合并后推一条，带合并提交；失败、中断、卡住也说。没配 Telegram 就弹本机通知。[配置方法](docs/guide/telegram.md)。
+每天最多推送 10 条，23:00 到 08:00 的消息攒到早上发，同类消息 30 分钟内合并。任务合并后推送合并提交，失败、中断、卡住也推送。没配 Telegram 时用本机通知。
+
+完成推送和决定卡片按钮在真实 Telegram 上走通，回复链和完整对话往返只用假服务测过。配置方法见 [Telegram 指南](docs/guide/telegram.md)。
 
 </td>
 <td width="45%">
@@ -163,70 +162,87 @@ agentq 不做 `git push`，推送远程要你另外授权。完整规则见[调�
 </tr>
 </table>
 
-### 还有
+## 配置
 
-- **任务箱**（随时能用）：调研、写东西、整理文件这类不属于任何项目的活，产出写到 `~/.agentq/outbox/`。
+配置文件是 `~/.agentq/config.json`，改完下次 tick 生效，不用重启。常见设置见[配置指南](docs/guide/configuration.md)，每个键的说明见[配置参考](docs/reference/config.md)。
 
-下面这些默认关，要用才开，开关见[配置](docs/guide/configuration.md)：
+新安装时下面这些功能关闭，打开对应开关才运行：
 
-- **夜班和复盘**：每天定点把待做往前推，早上看报告。
-- **闲时找活**：没事可做时读一遍项目，低风险的自己排上，会改产品的写成建议等你点头。
-- **主动感知**：读 App Store 评价、TestFlight 反馈和 GitHub issue，分辨真假，真问题写成建议。
-- **发版助手**：盯 App Store Connect 的发版条件，满足了推给你，回复「发」才提交。
-- **巡逻**：每小时查一遍服务、备份、卡住的任务、额度和磁盘。
+| 功能 | 开关 | 作用 |
+| :-- | :-- | :-- |
+| **夜班** | `night_enabled` | 每天 01:00 推进待做、分诊 issue 并写报告 |
+| **复盘** | `review_enabled` | 每天 06:30 复盘近期提交和失败任务，写早报 |
+| **巡逻** | `patrol_enabled` | 每小时检查服务、备份、卡住的任务、额度和磁盘 |
+| **闲时找活** | `suggest_enabled` | 所有项目的待做都空时读一遍项目，低风险的写进待做，会改产品的写成建议等你确认 |
+| **主动感知** | `sense_enabled` | 读 App Store 评价、TestFlight 反馈和 GitHub issue，判为真问题的写成建议 |
+| **发版助手** | `release_assist_enabled` | 检查 App Store Connect 的发版条件，满足后推送，回复「发」才提交审核 |
 
-## 代价
+## 支持范围
 
-无人值守写代码要用 `bypassPermissions`。任务以你的系统用户运行，有你的全部文件权限，能读本地密钥（包括 App Store Connect 私钥和 SSH key），能跑任意命令。提示词和 deny 规则不是安全边界，agentq 防得住模型偷懒和误操作，防不住存心破坏。
+| 项目 | 状态 |
+| :-- | :-- |
+| **Claude Code CLI** | 默认后端。2.1.316 在 macOS 上真实走到合并，包括审查门、界面门、`agentq new`、launchd 后台和桌面端派活 |
+| **Codex CLI** | 手动选择。codex-cli 0.166.0 在 macOS 上真实走到合并和 SIGTERM 续跑。Router、闲时找活、主动感知、发版准备在它上面不启动，没有美元上限 |
+| **opencode** | 实验，真实的 opencode 没跑过 |
+| **macOS** | arm64 是主要平台。amd64 能交叉编译，没有在 Intel Mac 上跑过 |
+| **Linux** | 需要 `systemd --user`。amd64 在 CI 上跑测试和真实 systemd 验收，没跑过真实任务。arm64 能交叉编译 |
+| **WSL、Windows** | WSL 未验证，Windows 不支持 |
 
-所以高敏感的机器上，用单独的系统用户或容器跑，主动感知用只读的 App Store Connect key，不放生产凭据。这件事在你按回车之前会讲清楚。详见 [SECURITY](SECURITY.md)。
+还没有真实验证的：真实撞限和令牌失效、Codex 桌面端派活、Linux 上的真实任务和暴力测试、opencode 的任何运行。门和裸 CLI 在真实项目上的对比也没有做过。每项详情见[支持矩阵](docs/reference/support-matrix.md)。
 
-其他要知道的：
+安装时用 `--backend codex` 或 `--backend opencode` 选择后端（`... | sh -s -- --backend codex`）。接新工具的接口见 [docs/backends.md](docs/backends.md)。预编译程序只依赖 Git，源码构建只用 Go 标准库。
 
-- 机器要开着。睡眠和重启后接着做，但关着的时候什么都不发生。
-- 任务花的是你自己的模型额度，排得越多用得越快。
+Claude 桌面端的 Code 标签页和 CLI 读同一份规则和技能。后台任务不显示在客户端的会话列表里，结果用 `agentq status` 或推送查看。
+
+## 权限和限制
+
+无人值守写代码需要 `bypassPermissions`。任务以你的系统用户运行，有你的全部文件权限，能读本地密钥（包括 App Store Connect 私钥和 SSH key），能运行任意命令。提示词和 deny 规则不是安全边界。agentq 能防模型偷懒和误操作，防不了存心破坏。
+
+在高敏感的机器上，用单独的系统用户或容器运行，主动感知用只读的 App Store Connect key，不放生产凭据。详见 [SECURITY](SECURITY.md)。
+
+其他限制：
+
+- 机器要开着。睡眠和重启后任务继续，关机期间不运行。
+- 任务消耗你自己的模型额度。
 - 命令输出、推送和 BACKLOG 的节标题目前是中文，条目内容不限语言。
 
 ## 隐私
 
-agentq 没有遥测，不收集任何数据。你的任务内容只发给你用的模型服务。它自己只在你开了对应功能时才联网：Telegram、App Store Connect、GitHub。
+agentq 没有遥测，不收集数据。任务内容只发给你使用的模型服务。除安装和升级外，agentq 自身只在对应功能打开时访问 Telegram、App Store Connect 和 GitHub。
 
 ## 常见问题
 
-- **没有待做时会花额度吗？** 不会。没有待做就不起模型，夜班和巡逻分析这些要你打开才有。
-- **我的项目有自己的规则。** 项目的 `CLAUDE.md`、`AGENTS.md` 照常生效，任务按它们做。agentq 带的通用规则第一条写明项目规则优先，但这只是提示，所以里面只放通用工程习惯。不想要：`agentq env off`。
+- **什么任务不适合用 agentq？** 需要边做边看、频繁对话的任务，直接用 Claude Code。
+- **没有待做时会消耗额度吗？** 不会。没有待做时不启动模型。夜班和巡逻分析要打开开关才运行。
+- **项目已有规则时怎么办？** 项目的 `CLAUDE.md`、`AGENTS.md` 照常生效。agentq 第一次同意启动时放一份通用工程规则到 `~/.claude/rules/agentq/`，已有全局规则时不放。`agentq env on` 添加，`agentq env off` 移除。这份规则第一条写明项目规则优先，但这只是提示，所以里面只放通用工程习惯。
 - **用哪个模型？** 新安装跟随你在 CLI 里选的模型和强度，不传参数。已有配置里写了的照用。
-- **会把代码推到远程吗？** 不会。任务合到本地默认分支，推送要你另外授权。
-- **怎么马上停下来？** `agentq pause` 不再接新活，`agentq stop <任务id>` 停掉正在跑的。
-- **怎么彻底卸载？** `agentq remove --yes` 卸载程序和服务，数据和恢复材料留着；反悔的办法见[安装指南](docs/install.zh-CN.md)。
-- **升级会丢东西吗？** 升级走事务，配置和任务数据都保留；`agentq rollback --yes` 回到上一版。
-
-## 为什么做
-
-装好 CLI 或客户端的人，多数不会再去配置什么。agentq 想做到只装这一次，就能开始干活：新手少走弯路，不用先学一遍插件、规则和文档；老手省心，排好活去干别的，已有的配置一点不动。
+- **会把代码推到远程吗？** 调度器不推送，任务按 `agent-task` 技能也只走本地合并，推送要另外授权。这条对任务是技能约定，不是技术限制：任务能用你已登录的 `git`。可选的 `--backup` 服务只推 `~/.agentq/backup.json` 明确列出的私有目标。
+- **怎么立刻停下？** `agentq pause` 不再启动新任务，`agentq stop <任务id>` 停止运行中的任务。
+- **怎么卸载？** `agentq remove --yes` 卸载程序和服务，保留数据和恢复材料。恢复方法见[安装指南](docs/install.zh-CN.md)。
+- **升级会丢数据吗？** 升级走事务，配置和任务数据保留。`agentq rollback --yes` 回到上一版。
 
 ## 文档
 
-| 文档 | 写了什么 |
+| 文档 | 内容 |
 | :-- | :-- |
-| **[入门](docs/guide/getting-started.md)** | 安装，第一个任务，其他安装方式 |
-| **[配置](docs/guide/configuration.md)** | 换目录、控制花费、开夜班 |
-| **[Telegram](docs/guide/telegram.md)** | 配机器人，派活，决定 |
-| **[日常使用](docs/guide/daily-ops.md)** | 看状态、停、续、决定、早报 |
-| **[排查](docs/guide/troubleshooting.md)** | 按症状查 |
-| **[命令](docs/reference/commands.md)** | 每个命令 |
-| **[配置项](docs/reference/config.md)** | 每个键的类型、默认值、作用 |
-| **[调度规则](docs/reference/scheduling.md)** | 挑活、并发、额度、熔断、续跑、状态损坏 |
-| **[功能](docs/reference/features.md)** | 任务箱、质量门、感知、发版助手、夜班、巡逻、推送 |
-| **[文件](docs/reference/files.md)** | `~/.agentq/` 下每个文件 |
-| **[支持矩阵](docs/reference/support-matrix.md)** | 每项能力验证到了哪一步 |
+| **[入门指南](docs/guide/getting-started.md)** | 安装、第一个任务、其他安装方式 |
+| **[配置指南](docs/guide/configuration.md)** | 项目目录、并发、模型、夜班和可选功能 |
+| **[Telegram 指南](docs/guide/telegram.md)** | 配置机器人、添加任务、回复决定 |
+| **[日常使用](docs/guide/daily-ops.md)** | 查看状态、停止、恢复、决定、早报 |
+| **[故障排查](docs/guide/troubleshooting.md)** | 按症状查原因和处理方法 |
+| **[命令参考](docs/reference/commands.md)** | 每个命令 |
+| **[配置参考](docs/reference/config.md)** | 每个键的类型、默认值和作用 |
+| **[调度规则](docs/reference/scheduling.md)** | 选择条目、并发、额度、熔断、续跑、状态损坏 |
+| **[功能参考](docs/reference/features.md)** | 任务箱、质量门、感知、发版助手、夜班、巡逻、推送 |
+| **[文件参考](docs/reference/files.md)** | `~/.agentq/` 下每个文件 |
+| **[支持矩阵](docs/reference/support-matrix.md)** | 每项能力的验证情况 |
 | **[安装指南](docs/install.zh-CN.md)** | 候选自检、冲突、事务备份和回滚 |
 
 还有：[隐私门禁](docs/privacy.md)、[旧版安装](docs/legacy-install.md)、[给 Agent 的入口](llms.txt)。
 
 ## 参与
 
-欢迎提 Issue、PR 和真实使用反馈，先看 [CONTRIBUTING](CONTRIBUTING.md)。漏洞按 [SECURITY](SECURITY.md) 报告。
+欢迎提 Issue、PR 和使用反馈，先看 [CONTRIBUTING](CONTRIBUTING.md)。漏洞按 [SECURITY](SECURITY.md) 报告。
 
 ## 许可证
 

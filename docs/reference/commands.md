@@ -69,7 +69,7 @@ cd ~/projects/my-app && agentq init
 | `pyproject.toml` 提到 `pytest` | 有 `uv.lock` 用 uv，有 `poetry.lock` 用 poetry，有 `[project]` 在临时虚拟环境里装好再跑；都没有算判断不了 |
 | `Package.swift` 和 `Tests/` | `swift test`；只声明 iOS 的算判断不了 |
 
-判断不了就不写，打印一句。`.agentq/` 被 `.gitignore` 忽略时也不写，测试门只认提交进去的脚本。工具没有、依赖下不来、Go 模块下一个包都没有时脚本退出 125，核验记未知，不写修回归；pytest 收集不到测试（退出码 5）算通过。见[合并后核验](features.md#合并后核验)。
+判断不了就不写，打印一句。`.agentq/` 被 `.gitignore` 忽略时也不写，测试门只认提交进去的脚本。工具没有、依赖下不来、Go 模块下一个包都没有时脚本退出 125，测试门判不了，不退回任务；pytest 收集不到测试（退出码 5）算通过。见[测试门](features.md#测试门)。
 
 ### `agentq add "<需求>" [--project 名字]`
 
@@ -85,7 +85,7 @@ cd ~/projects/my-app && agentq init
 
 1. 没有 CLI 时运行官方命令 `curl -fsSL https://claude.ai/install.sh | bash`，失败就停，贴原文，给 `brew install --cask claude-code` 和 `npm install -g @anthropic-ai/claude-code`，什么都不改。标准输入不是终端时不装，打印命令，退出 1。
 2. 没登录时运行 `claude auth login`（打开浏览器）。没登录上就不开后台，退出 1。标准输入不是终端时不运行，打印命令。
-3. `~/.local/bin` 不在 PATH 时往 shell 配置文件加一行带 `# agentq managed` 标记的 export，改前备份成 `*.pre-agentq`。zsh、bash 之外不改，打印手动的那一行。
+3. `~/.local/bin` 不在 PATH 时往 shell 配置文件加一行带 `# agentq managed` 标记的 export，改前备份成 `*.pre-agentq`。zsh 写 `~/.zshrc`；bash 在 Linux 上写 `~/.bashrc`，在 macOS 上写 `~/.bash_profile`、`~/.bash_login`、`~/.profile` 里第一个存在的，都没有才新建 `~/.bash_profile`。zsh、bash 之外不改，打印手动的那一行。
 4. 写 `~/.agentq/consent.json`；第一次同意时把通用工程规则装到 `~/.claude/rules/agentq/`（已有用户规则不装，同意文字说明，见 [`agentq env`](#agentq-env-statusonoff)）；把 `permission_mode` 设成 `bypassPermissions`，其余和 `agentq start` 相同。没有待做时只打印一句怎么开始，不调用模型。
 
 没有同意时不做这些，只打印后续命令。
