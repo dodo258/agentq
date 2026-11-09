@@ -26,6 +26,14 @@ import (
 
 const reviewEffort = "medium" // 审查最低这一档，轻量流程也不降
 
+// reviewEffortFor：影响面广、难撤回的改动要验证的边界多，用 high；局部的 medium。
+func reviewEffortFor(r Risk) string {
+	if r == RiskBroad || r == RiskIrreversible {
+		return "high"
+	}
+	return reviewEffort
+}
+
 // reviewSchema 是审查要给的结构化结论。
 const reviewSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","block","unknown"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"integer"},"severity":{"type":"string","enum":["blocker","hint"]},"evidence":{"type":"string"},"repro":{"type":"string"}},"required":["file","line","severity","evidence","repro"]}}},"required":["verdict","findings"]}`
 
@@ -260,7 +268,7 @@ func runModel(ctx context.Context, d Deps, c Candidate, be backend.Backend, req 
 // ReviewRequest 是审查进程的启动意图：同一个后端、medium、候选 worktree 作目录、结构化输出。
 func ReviewRequest(cfg config.Config, c Candidate) backend.Request {
 	model := reviewModel(cfg.Model, cfg.LightReviewModel, c)
-	return backend.Request{Prompt: reviewPrompt(c), Dir: c.Dir, Label: proc.NameMarker(c.Project) + "审查", Model: model, Effort: reviewEffort, Permission: cfg.PermissionMode,
+	return backend.Request{Prompt: reviewPrompt(c), Dir: c.Dir, Label: proc.NameMarker(c.Project) + "审查", Model: model, Effort: reviewEffortFor(c.Risk), Permission: cfg.PermissionMode,
 		Profile: backend.ProfileReview, Schema: reviewSchema, BudgetUSD: cfg.JobBudgetUSD, Must: backend.MustReview}
 }
 

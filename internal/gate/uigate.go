@@ -292,7 +292,7 @@ func UIReviewRequest(cfg config.Config, c Candidate, shotsDir string, shots, bas
 		images = append(images, filepath.Join(shotsDir, s))
 	}
 	model := reviewModel(cfg.Model, cfg.LightReviewModel, c)
-	return backend.Request{Prompt: uiPrompt(c, shotsDir, shots, baseline), Dir: c.Dir, Label: proc.NameMarker(c.Project) + "界面审查", Model: model, Effort: reviewEffort, Permission: cfg.PermissionMode,
+	return backend.Request{Prompt: uiPrompt(c, shotsDir, shots, baseline), Dir: c.Dir, Label: proc.NameMarker(c.Project) + "界面审查", Model: model, Effort: reviewEffortFor(c.Risk), Permission: cfg.PermissionMode,
 		Profile: backend.ProfileReview, Schema: uiSchema, BudgetUSD: cfg.JobBudgetUSD, Must: backend.MustReview | backend.MustImages, AddDirs: []string{shotsDir}, Images: images}
 }
 

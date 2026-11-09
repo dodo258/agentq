@@ -4,6 +4,12 @@
 
 ## 未发布
 
+### 按活分配模型
+
+- 每类调用按活的性质配模型和强度（依据官方对各档模型的定位）：Telegram 路由用 haiku；开工前问大方向、复盘、巡逻分析、回复链里的只读答问用 sonnet（复盘 high，其余 medium）；带 `（低风险）` 的待做任务用 sonnet、medium；标题提到重写、重构、迁移，或标了 `（难撤回）` 的待做任务模型不变、强度 xhigh（重写、重构这类即使标了低风险也不降模型）；完整流程的代码审查和界面审查遇到影响面广、难撤回的改动用 high。普通待做任务、夜班、要动手的对话照旧用 `model`、`effort`。
+- 新键 `discuss_model`、`review_model`、`review_effort`、`patrol_model`、`followup_model`、`heavy_effort`、`low_risk_effort`；`router_model` 缺键默认从 sonnet 改成 haiku，`low_risk_model` 从空改成 sonnet。都写别名，新模型出来自动跟上；新配置、默认后端不是 Claude、配置明写 `"model": ""` 跟随 CLI 时都是空的，照 `model`、`effort`（上一版的 `light_review_model` 也照这个规则，跟随 CLI 的配置不再被塞 sonnet）。
+- `agentq doctor` 发现配置里写了带版本号的模型 ID 会提醒改成别名。
+
 ### 用量显示
 
 - `agentq status`、当天汇总、`agentq stats`、推送里的用量只写 token，不再写按 API 标价折算的「约 $x」：用订阅时这个数不是实际花的钱。汇总小结改叫「当天用量」，按 token 排；`stats` 最后一列是 token 占比。美元预算上限照旧按金额算。

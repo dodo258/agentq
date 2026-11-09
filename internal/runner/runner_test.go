@@ -28,7 +28,7 @@ func TestTaskModel(t *testing.T) {
 		{"fixed 没配 low_risk 不换", config.Config{Model: "big"}, "", "加测试（低风险）", "light", "big"},
 		{"fixed 不看后端的轻模型", config.Config{Model: "big"}, "", "文档：改 README", "light", "big"},
 		{"fixed 文档前缀不算", fixed, "", "文档：改 README", "", "big"},
-		{"fixed 低风险压过重写（原样）", fixed, "", "重写调度（低风险）", "", "small"},
+		{"fixed 重写不降级，低风险标记也压不过", fixed, "", "重写调度（低风险）", "", "big"},
 		{"fixed 留空", config.Config{}, "", "加导出", "light", ""},
 		{"auto 普通不降级", auto, "", "加导出", "light", "big"},
 		{"auto 低风险用 low_risk", auto, "", "加测试（低风险）", "light", "small"},
@@ -49,10 +49,48 @@ func TestTaskModel(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := TaskModel(c.cfg, c.kind, c.item, c.light); got != c.want {
+			if got, _ := TaskModel(c.cfg, c.kind, c.item, c.light); got != c.want {
 				t.Fatalf("%q，想要 %q", got, c.want)
 			}
 		})
+	}
+}
+
+// 按活分配强度和专用模型：重活用 heavy_effort，低风险用 low_risk_effort，复盘、巡逻分析用各自的模型，没配的照 model、effort。
+func TestTaskModelEffort(t *testing.T) {
+	cfg := config.Config{Model: "opus", Effort: "high", HeavyEffort: "xhigh", LowRiskModel: "sonnet", LowRiskEffort: "medium",
+		ReviewModel: "sonnet", ReviewEffort: "high", PatrolModel: "sonnet"}
+	auto := cfg
+	auto.ModelPolicy = config.ModelPolicyAuto
+	bare := config.Config{Model: "opus", Effort: "high"}
+	for _, c := range []struct {
+		name       string
+		cfg        config.Config
+		kind, item string
+		model, eff string
+	}{
+		{"普通", cfg, "", "加导出", "opus", "high"},
+		{"重写用 xhigh", cfg, "", "重写调度模块", "opus", "xhigh"},
+		{"英文重构用 xhigh", cfg, "", "Refactor scheduler", "opus", "xhigh"},
+		{"迁移", cfg, "", "迁移配置格式", "opus", "xhigh"},
+		{"低风险", cfg, "", "加测试（低风险）", "sonnet", "medium"},
+		{"auto 重活", auto, "", "重写调度（低风险）", "opus", "xhigh"},
+		{"fixed 重活压过低风险", cfg, "", "重构解析（低风险）", "opus", "xhigh"},
+		{"标题提到审查不算长任务", cfg, "", "修审查门超时", "opus", "high"},
+		{"难撤回用 xhigh", cfg, "", "改表结构（难撤回）", "opus", "xhigh"},
+		{"跟随 CLI 时重活也不单传强度", config.Config{HeavyEffort: "xhigh"}, "", "重写调度", "", ""},
+		{"auto 文档", auto, "", "文档：改 README", "sonnet", "medium"},
+		{"复盘", cfg, config.KindReview, "", "sonnet", "high"},
+		{"巡逻分析", cfg, state.KindPatrol, "", "sonnet", "medium"},
+		{"夜班照主模型", cfg, config.KindNight, "重写调度", "opus", "high"},
+		{"对话照主模型", cfg, state.KindChat, "", "opus", "high"},
+		{"没配的重活照 effort", bare, "", "重写调度", "opus", "high"},
+		{"没配的复盘照主模型", bare, config.KindReview, "", "opus", "high"},
+		{"没配的巡逻照主模型", bare, state.KindPatrol, "", "opus", "high"},
+	} {
+		if m, e := TaskModel(c.cfg, c.kind, c.item, ""); m != c.model || e != c.eff {
+			t.Errorf("%s：%s %s，想要 %s %s", c.name, m, e, c.model, c.eff)
+		}
 	}
 }
 

@@ -133,7 +133,7 @@ const Schema = `{"type":"object","properties":{"questions":{"type":"array","item
 
 // Request：没有工具、不接 MCP、有回合和预算上限。不传权限模式。进程标记用任务的项目名：收尾靠它认进程还在不在。
 func Request(cfg config.Config, prompt, project, session string) backend.Request {
-	return backend.Request{Prompt: prompt, Label: proc.NameMarker(project) + "大方向", Session: session, Model: cfg.RouterModel, Effort: "medium",
+	return backend.Request{Prompt: prompt, Label: proc.NameMarker(project) + "大方向", Session: session, Model: cfg.DiscussModel, Effort: "medium",
 		Profile: backend.ProfileNoTools, NoExternalMCP: true, Schema: Schema, MaxTurns: discussTurns, BudgetUSD: discussBudget, Must: backend.MustDiscuss}
 }
 

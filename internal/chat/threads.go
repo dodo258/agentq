@@ -289,8 +289,9 @@ const FollowupSchema = `{"type":"object","properties":{"reply":{"type":"string",
 // FollowupRequest：续原会话但只给只读工具。不传权限模式：读文件的边界（工作目录外拒绝）是默认权限模式下的。
 // filesDir 非空时是这次消息的附件目录：默认权限下读不到工作目录外的文件（实测被拒），只放这一个目录。
 func FollowupRequest(cfg config.Config, prompt, project, title, session, filesDir string) backend.Request {
+	model, effort := cfg.Role(cfg.FollowupModel, "medium") // 只读答问，对延迟敏感：Sonnet、medium
 	r := backend.Request{
-		Prompt: prompt, Label: proc.NameMarker(project) + textfmt.TruncRunes(title, 20), Resume: session, Model: cfg.Model, Effort: cfg.Effort,
+		Prompt: prompt, Label: proc.NameMarker(project) + textfmt.TruncRunes(title, 20), Resume: session, Model: model, Effort: effort,
 		Profile: backend.ProfileReadOnly, NoExternalMCP: true, Schema: FollowupSchema, BudgetUSD: followupBudget,
 		Must: backend.MustFollowup,
 	}

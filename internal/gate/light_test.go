@@ -95,6 +95,16 @@ func TestLightReviewModel(t *testing.T) {
 	if r := gate.ReviewRequest(cfg, c); r.Model != "opus" || r.Effort != "medium" {
 		t.Errorf("没配便宜模型就和完整流程一样：%s %s", r.Model, r.Effort)
 	}
+	// 影响面广、难撤回：要验证的边界多，强度 high（这两档不会走轻量）
+	for _, r := range []gate.Risk{gate.RiskBroad, gate.RiskIrreversible} {
+		c := gate.Candidate{Item: "大改", Risk: r}
+		if req := gate.ReviewRequest(cfg, c); req.Effort != "high" {
+			t.Errorf("%s 审查要 high：%s", r, req.Effort)
+		}
+		if req := gate.UIReviewRequest(cfg, c, "/shots", []string{"a.png"}, nil); req.Effort != "high" {
+			t.Errorf("%s 界面审查要 high：%s", r, req.Effort)
+		}
+	}
 }
 
 // 走一遍门：小改动的审查进程拿到便宜模型，报告写「流程：轻量」；改多了写「流程：完整」和原因。

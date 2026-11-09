@@ -15,14 +15,14 @@ import (
 
 func TestBudgetConfig(t *testing.T) {
 	cfg := Default()
-	if cfg.NightBudgetUSD != 10 || cfg.ReviewBudgetUSD != 15 || cfg.PatrolBudgetUSD != 2 || cfg.JobBudgetUSD != 150 || !cfg.ProgressAutostop || cfg.LowRiskModel != "" {
+	if cfg.NightBudgetUSD != 10 || cfg.ReviewBudgetUSD != 15 || cfg.PatrolBudgetUSD != 2 || cfg.JobBudgetUSD != 150 || !cfg.ProgressAutostop || cfg.LowRiskModel != "sonnet" {
 		t.Errorf("默认值：%+v", cfg)
 	}
 	path := filepath.Join(t.TempDir(), "config.json")
 	// 老配置没有这些键：沿用默认值
 	os.WriteFile(path, []byte(`{"max_parallel": 3}`), 0o644)
 	got, err := Load(path)
-	if err != nil || got.JobBudgetUSD != 150 || got.NightBudgetUSD != 10 || !got.ProgressAutostop || got.LowRiskModel != "" {
+	if err != nil || got.JobBudgetUSD != 150 || got.NightBudgetUSD != 10 || !got.ProgressAutostop || got.LowRiskModel != "sonnet" {
 		t.Errorf("%v %+v", err, got)
 	}
 	os.WriteFile(path, []byte(`{"job_budget_usd": 0, "night_budget_usd": 7.5, "progress_autostop": false, "low_risk_model": "haiku"}`), 0o644)
@@ -36,7 +36,7 @@ func TestBudgetConfig(t *testing.T) {
 	}
 	// 新配置写全这些键（setup 就是把这份写出去）
 	b, _ := json.Marshal(Default())
-	for _, key := range []string{`"night_budget_usd":10`, `"review_budget_usd":15`, `"patrol_budget_usd":2`, `"job_budget_usd":150`, `"progress_autostop":true`, `"low_risk_model":""`} {
+	for _, key := range []string{`"night_budget_usd":10`, `"review_budget_usd":15`, `"patrol_budget_usd":2`, `"job_budget_usd":150`, `"progress_autostop":true`, `"low_risk_model":"sonnet"`} {
 		if !strings.Contains(string(b), key) {
 			t.Errorf("缺 %s：%s", key, b)
 		}
@@ -235,7 +235,46 @@ func TestModelDefaults(t *testing.T) {
 	if c, err := Load(path); err != nil || c.LightReviewModel != "sonnet" {
 		t.Errorf("Claude 缺键：%+v %v", c, err)
 	}
-	for _, bad := range []string{`{"usage_stop_session_pct":0}`, `{"usage_stop_week_pct":98}`, `{"light_review_model":"--x"}`, `{"light_review_model":"haiku"}`, `{"light_review_model":"claude-Haiku-4"}`} {
+	// 按活分配：Claude 缺键照官方定位给别名；Codex 默认后端、新配置都留空，照 model
+	if c, err := Load(path); err != nil || c.RouterModel != "haiku" || c.DiscussModel != "sonnet" || c.ReviewModel != "sonnet" || c.ReviewEffort != "high" ||
+		c.PatrolModel != "sonnet" || c.FollowupModel != "sonnet" || c.HeavyEffort != "xhigh" || c.LowRiskModel != "sonnet" || c.LowRiskEffort != "medium" {
+		t.Errorf("Claude 缺键的分配：%+v %v", c, err)
+	}
+	if err := os.WriteFile(path, []byte(`{"backend":"codex"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := Load(path); err != nil || c.RouterModel+c.DiscussModel+c.ReviewModel+c.ReviewEffort+c.PatrolModel+c.FollowupModel+c.HeavyEffort+c.LowRiskModel+c.LowRiskEffort != "" {
+		t.Errorf("codex 缺键要全空：%+v %v", c, err)
+	}
+	// 安装器以前建的配置明写了 "model": ""（跟随 CLI），没有新键：升级后按活分配的别名也不传，跟着 CLI 走；明写了的照用
+	if err := os.WriteFile(path, []byte(`{"model":"","effort":"","router_model":"","low_risk_model":""}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := Load(path); err != nil || c.LightReviewModel+c.DiscussModel+c.ReviewModel+c.ReviewEffort+c.PatrolModel+c.FollowupModel+c.HeavyEffort+c.LowRiskEffort != "" {
+		t.Errorf("跟随 CLI 的老配置不该被塞别名：%+v %v", c, err)
+	}
+	if err := os.WriteFile(path, []byte(`{"model":"","review_model":"sonnet"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := Load(path); err != nil || c.ReviewModel != "sonnet" || c.PatrolModel != "" {
+		t.Errorf("跟随 CLI 时明写的照用：%+v %v", c, err)
+	}
+	if err := os.WriteFile(path, []byte(`{"model":"opus"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := Load(path); err != nil || c.PatrolModel != "sonnet" || c.HeavyEffort != "xhigh" {
+		t.Errorf("写了模型的照默认分配：%+v %v", c, err)
+	}
+	if f := Default().Fresh(); f.RouterModel+f.DiscussModel+f.ReviewModel+f.ReviewEffort+f.PatrolModel+f.FollowupModel+f.HeavyEffort+f.LowRiskModel+f.LowRiskEffort != "" {
+		t.Errorf("新配置跟随 CLI：%+v", f)
+	}
+	if m, e := (Config{Model: "opus", Effort: "high"}).Role("", "medium"); m != "opus" || e != "high" {
+		t.Errorf("没配专用模型照 model、effort：%s %s", m, e)
+	}
+	if got := (Config{Model: "claude-opus-5-5", RouterModel: "haiku", ReviewModel: "claude-sonnet-4-5-20250929"}).PinnedModels(); len(got) != 2 {
+		t.Errorf("钉了版本号的要找出来，别名不算：%v", got)
+	}
+	for _, bad := range []string{`{"usage_stop_session_pct":0}`, `{"usage_stop_week_pct":98}`, `{"light_review_model":"--x"}`, `{"light_review_model":"haiku"}`, `{"light_review_model":"claude-Haiku-4"}`, `{"heavy_effort":"--x"}`, `{"followup_model":"-m"}`} {
 		if err := os.WriteFile(path, []byte(bad), 0o600); err != nil {
 			t.Fatal(err)
 		}

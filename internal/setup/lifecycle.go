@@ -293,6 +293,9 @@ func (i *Installer) Doctor() error {
 	if note := consentNote(i.Home); note != "" {
 		fmt.Fprintln(i.Out, note)
 	}
+	if pinned := cfg.PinnedModels(); len(pinned) > 0 {
+		fmt.Fprintf(i.Out, "Model IDs pinned to a version (%s): new models will not be picked up; use an alias such as opus or sonnet\n", strings.Join(pinned, ", "))
+	}
 	notes, e := i.Svc(cfg).Svc().Doctor(r.Services)
 	for _, n := range notes {
 		fmt.Fprintln(i.Out, n)

@@ -78,6 +78,15 @@ type Config struct {
 	// Router：新消息由只读的 Router 处理，动作由 agentq 校验后执行（见 internal/chat/router.go）。关着时对话流程和原来完全一样。
 	RouterEnabled bool   `json:"router_enabled"`
 	RouterModel   string `json:"router_model"`
+	// 按活分配模型和强度（docs/reference/config.md「按活分配模型」）：配了专用模型的那类调用用它，没配照 model、effort。
+	// 默认按官方定位：路由用 haiku，商量大方向、复盘、巡逻分析、答问用 sonnet；都写别名，新模型出来自动跟上。
+	DiscussModel  string `json:"discuss_model"`
+	ReviewModel   string `json:"review_model"`
+	ReviewEffort  string `json:"review_effort"`
+	PatrolModel   string `json:"patrol_model"`
+	FollowupModel string `json:"followup_model"`
+	// HeavyEffort：重写、重构、迁移、审计这类长任务的强度（模型照 model）。空就照 effort。
+	HeavyEffort string `json:"heavy_effort"`
 	// 预算兜底（美元，--max-budget-usd，按单次运行算）：只防失控，额度按正常工作量留足，撞到后保留成果（见 internal/runner/budget.go）。0 表示不传这个参数。
 	NightBudgetUSD  float64 `json:"night_budget_usd"`
 	ReviewBudgetUSD float64 `json:"review_budget_usd"`
@@ -94,8 +103,9 @@ type Config struct {
 	UsageStopWeekPct    float64 `json:"usage_stop_week_pct"`
 	// ProgressAutostop：看进展的「子代理失控」信号命中时自动停掉任务（见 internal/runner/budget.go）；关掉时和其他信号一样只报不停。
 	ProgressAutostop bool `json:"progress_autostop"`
-	// LowRiskModel：非空时，条目标题带「（低风险）」标记的待做任务用这个模型（见 lowRiskItem）；空的时候所有任务都用 model。
-	LowRiskModel string `json:"low_risk_model"`
+	// LowRiskModel、LowRiskEffort：非空时，条目标题带「（低风险）」标记的待做任务用这个模型和强度（见 runner.TaskModel）；空的时候照 model、effort。
+	LowRiskModel  string `json:"low_risk_model"`
+	LowRiskEffort string `json:"low_risk_effort"`
 	// ModelPolicy：fixed（默认，不写也是）照 model 和 low_risk_model；auto 按任务类型选，见 runner.TaskModel。降级省额度却可能做坏，所以默认不开。
 	ModelPolicy string `json:"model_policy,omitempty"`
 	// 闲时找活（suggest_enabled，默认关）：所有项目没有待做、额度宽裕时，每天最多一次起只读的 claude -p 找值得做的活（见 internal/suggest/suggest.go）。
@@ -259,8 +269,39 @@ func (c Config) PermissionProblems() []string {
 	return out
 }
 
-// claudeDefaultKeys 是默认值只对 Claude 有意义的键。默认后端不是 Claude、配置又没写它们时要留空，不能把 opus 传给别家。
-var claudeDefaultKeys = []string{"model", "effort", "permission_mode", "router_model", "suggest_model", "sense_model", "light_review_model"}
+// claudeDefaultKeys 是默认值只对 Claude 有意义的键，前三个是 model、effort、permission_mode（ClearClaudeDefaults 靠这个顺序）。默认后端不是 Claude、配置又没写它们时要留空，不能把 opus 传给别家。
+var claudeDefaultKeys = []string{"model", "effort", "permission_mode", "router_model", "suggest_model", "sense_model", "light_review_model",
+	"discuss_model", "review_model", "review_effort", "patrol_model", "followup_model", "heavy_effort", "low_risk_model", "low_risk_effort"}
+
+// clearRoleModels 清掉按活分配的模型和强度（照 model、effort）：新配置跟随 CLI，别家后端不用 Claude 的别名。
+func (c *Config) clearRoleModels() {
+	c.DiscussModel, c.ReviewModel, c.ReviewEffort, c.PatrolModel, c.FollowupModel = "", "", "", "", ""
+	c.HeavyEffort, c.LowRiskEffort = "", ""
+}
+
+// Role：配了专用模型就用它和给的强度，没配照 model、effort。
+func (c Config) Role(model, effort string) (string, string) {
+	if model == "" {
+		return c.Model, c.Effort
+	}
+	return model, effort
+}
+
+// pinnedModelRe：带版本号的 Claude 模型 ID（claude-opus-5-5、claude-sonnet-4-5-20250929）。写了它就不会随新模型更新。
+var pinnedModelRe = regexp.MustCompile(`(?i)^claude-[a-z]+-\d`)
+
+// PinnedModels：配置里钉死版本号的模型键，doctor 提醒改成别名。
+func (c Config) PinnedModels() []string {
+	var out []string
+	for _, kv := range []struct{ key, val string }{{"model", c.Model}, {"router_model", c.RouterModel}, {"suggest_model", c.SuggestModel}, {"sense_model", c.SenseModel},
+		{"light_review_model", c.LightReviewModel}, {"low_risk_model", c.LowRiskModel}, {"discuss_model", c.DiscussModel}, {"review_model", c.ReviewModel},
+		{"patrol_model", c.PatrolModel}, {"followup_model", c.FollowupModel}} {
+		if pinnedModelRe.MatchString(kv.val) {
+			out = append(out, kv.key+"="+kv.val)
+		}
+	}
+	return out
+}
 
 // ForBackend 返回这个后端看到的配置：模型、强度、权限只传给配了它们的后端，别家的默认不串。
 // 顶层的这些键是默认后端的（后端名空表示 Claude，老任务记录就是这样），backends.<名字> 里写了的优先。
@@ -281,6 +322,7 @@ func (c Config) ForBackend(name string) Config {
 	if name != def {
 		out.Model, out.Effort, out.PermissionMode, out.LowRiskModel = "", "", "", ""
 		out.RouterModel, out.SuggestModel, out.SenseModel, out.LightReviewModel = "", "", "", ""
+		out.clearRoleModels()
 	}
 	s := c.Backends[name]
 	if s.Model != "" {
@@ -324,7 +366,16 @@ func Default() Config {
 
 		NotifyEnabled: true,
 
-		RouterModel: "sonnet",
+		RouterModel: "haiku",
+
+		DiscussModel:  "sonnet",
+		ReviewModel:   "sonnet",
+		ReviewEffort:  "high",
+		PatrolModel:   "sonnet",
+		FollowupModel: "sonnet",
+		HeavyEffort:   "xhigh",
+		LowRiskModel:  "sonnet",
+		LowRiskEffort: "medium",
 
 		NightBudgetUSD:  10,
 		ReviewBudgetUSD: 15,
@@ -362,6 +413,8 @@ func Default() Config {
 func (c Config) Fresh() Config {
 	c.Model, c.Effort = "", ""
 	c.RouterModel, c.SuggestModel, c.SenseModel, c.LightReviewModel = "", "", "", ""
+	c.LowRiskModel = ""
+	c.clearRoleModels()
 	c.Paused = true
 	c.NightEnabled = false
 	c.ReviewEnabled = false
@@ -413,6 +466,12 @@ func (c Config) Validate() error {
 	}
 	if c.RouterEnabled && strings.HasPrefix(c.RouterModel, "-") {
 		bad = append(bad, "router_model 不能以 - 开头")
+	}
+	for _, kv := range [][2]string{{"discuss_model", c.DiscussModel}, {"review_model", c.ReviewModel}, {"review_effort", c.ReviewEffort}, {"patrol_model", c.PatrolModel},
+		{"followup_model", c.FollowupModel}, {"heavy_effort", c.HeavyEffort}, {"low_risk_model", c.LowRiskModel}, {"low_risk_effort", c.LowRiskEffort}} {
+		if strings.HasPrefix(kv[1], "-") {
+			bad = append(bad, kv[0]+" 不能以 - 开头")
+		}
 	}
 	if strings.HasPrefix(c.LightReviewModel, "-") {
 		bad = append(bad, "light_review_model 不能以 - 开头")
@@ -522,18 +581,26 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// ClearClaudeDefaults：默认后端不是 Claude 时，文件里没写的那几个键不沿用 Claude 的默认值。写了的是用户给这个后端配的，留着。
+// ClearClaudeDefaults：文件里没写的模型类键不沿用 Claude 的默认值，两种情况：
+// 默认后端不是 Claude（不能把 opus、sonnet 传给别家）；文件明写了 "model": ""（跟随 CLI，安装器新建的就是这样：按活分配的别名也不传，跟着 CLI 走）。
+// 写了的是用户自己配的，留着。
 func (c *Config) ClearClaudeDefaults(raw []byte) error {
-	if c.Backend == "" || c.Backend == backend.Default {
-		return nil
-	}
 	var written map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &written); err != nil {
 		return err
 	}
 	fields := map[string]*string{"model": &c.Model, "effort": &c.Effort, "permission_mode": &c.PermissionMode,
-		"router_model": &c.RouterModel, "suggest_model": &c.SuggestModel, "sense_model": &c.SenseModel, "light_review_model": &c.LightReviewModel}
-	for _, key := range claudeDefaultKeys {
+		"router_model": &c.RouterModel, "suggest_model": &c.SuggestModel, "sense_model": &c.SenseModel, "light_review_model": &c.LightReviewModel,
+		"discuss_model": &c.DiscussModel, "review_model": &c.ReviewModel, "review_effort": &c.ReviewEffort, "patrol_model": &c.PatrolModel,
+		"followup_model": &c.FollowupModel, "heavy_effort": &c.HeavyEffort, "low_risk_model": &c.LowRiskModel, "low_risk_effort": &c.LowRiskEffort}
+	keys := claudeDefaultKeys
+	if c.Backend == "" || c.Backend == backend.Default {
+		if m, ok := written["model"]; !ok || string(m) != `""` {
+			return nil
+		}
+		keys = claudeDefaultKeys[3:] // model、effort、permission_mode 文件里写了什么就是什么
+	}
+	for _, key := range keys {
 		if _, ok := written[key]; !ok {
 			*fields[key] = ""
 		}

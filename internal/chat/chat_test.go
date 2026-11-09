@@ -252,8 +252,8 @@ func newChatApp(t *testing.T) (*Service, *bytes.Buffer) {
 
 func TestRouterArgs(t *testing.T) {
 	cfg := config.Default()
-	if cfg.RouterEnabled || cfg.RouterModel != "sonnet" {
-		t.Errorf("默认关，模型 sonnet：%+v", cfg)
+	if cfg.RouterEnabled || cfg.RouterModel != "haiku" {
+		t.Errorf("默认关，模型 haiku（官方定位：路由是 Haiku 的场景）：%+v", cfg)
 	}
 	args := testkit.ClaudeArgv(t, RouterRequest(cfg, "/h", "问", "s1"))
 	got := map[string]string{}
@@ -262,7 +262,7 @@ func TestRouterArgs(t *testing.T) {
 			got[args[i]] = args[i+1]
 		}
 	}
-	want := map[string]string{"-p": "问", "--session-id": "s1", "--model": "sonnet", "--effort": "medium", "--tools": "Read,Grep,Glob",
+	want := map[string]string{"-p": "问", "--session-id": "s1", "--model": "haiku", "--effort": "medium", "--tools": "Read,Grep,Glob",
 		"--settings": testkit.ClaudeDeny(backend.DenySecrets), "--json-schema": RouterSchema, "--max-turns": "12", "--max-budget-usd": "1", "--output-format": "json"}
 	for k, v := range want {
 		if got[k] != v {
@@ -412,6 +412,13 @@ func TestFollowupArgs(t *testing.T) {
 	}
 	if strings.Contains(args, "--permission-mode") || strings.Contains(args, "bypass") {
 		t.Errorf("只读续跑不能带权限模式：%s", args)
+	}
+	if !strings.Contains(args, "--model sonnet") || !strings.Contains(args, "--effort medium") {
+		t.Errorf("只读答问用 sonnet、medium：%s", args)
+	}
+	cfg.FollowupModel = ""
+	if r := FollowupRequest(cfg, "问", "p", "标题", "s1", ""); r.Model != cfg.Model || r.Effort != cfg.Effort {
+		t.Errorf("没配答问模型照主模型：%s %s", r.Model, r.Effort)
 	}
 	for _, want := range []string{"-r s1", "--tools Read,Grep,Glob", "--strict-mcp-config", "--max-budget-usd 1", "--output-format json", "--name " + proc.NameMarker("p")} {
 		if !strings.Contains(args, want) {

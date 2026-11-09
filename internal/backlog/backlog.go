@@ -476,6 +476,14 @@ var (
 // NoDowngradeItem：标题提到重写、重构、迁移、审查这类活，model_policy=auto 时不降级。这里故意不要求固定格式（LESSONS 那条管的是判断状态）：多认了只是不省额度，不会做坏。
 func NoDowngradeItem(text string) bool { return noDowngradeRe.MatchString(ItemTitle(text)) }
 
+// heavyRe：要用长任务强度的活（重写、重构、迁移）。比 noDowngradeRe 窄：标题里顺带提到「审查」「审计」的不算长任务。
+var heavyRe = regexp.MustCompile(`(?i)重写|重构|迁移|rewrite|refactor|migrat`)
+
+// HeavyItem：重写、重构、迁移，或标了（难撤回）的条目，用 heavy_effort。
+func HeavyItem(text string) bool {
+	return heavyRe.MatchString(ItemTitle(text)) || IrreversibleItem(text)
+}
+
 // LightItem：model_policy=auto 时可以用轻模型的活，只认固定格式：「（低风险）」标记，或标题以「文档：」「docs:」开头。多认了可能做坏，所以不用关键字。
 func LightItem(text string) bool { return LowRiskItem(text) || docsItemRe.MatchString(ItemTitle(text)) }
 

@@ -410,7 +410,7 @@ func (a *Service) Start(st *state.State, j *state.Job, prompt, resume string) (*
 	if l, ok := be.(backend.LightModeler); ok {
 		light = l.LightModel()
 	}
-	cfg.Model = TaskModel(cfg, j.Kind, j.Item, light) // 新开、续跑、接手都走这里，判断一样
+	cfg.Model, cfg.Effort = TaskModel(cfg, j.Kind, j.Item, light) // 新开、续跑、接手都走这里，判断一样
 	req := TaskRequest(cfg, prompt, j.Project, j.Title, resume, session, a.JobBudget(j.Kind))
 	switch j.Kind {
 	case state.KindFollowup:
@@ -618,29 +618,51 @@ func (a *Service) startingUp(j *state.Job) bool {
 	return d >= 0 && d < ShellReportWait
 }
 
-// TaskModel 选这个任务的模型。只有普通待做任务（kind 为空）才可能换：夜班、复盘、对话、new 这些都用 model。
-// fixed：带「（低风险）」标记且配了 low_risk_model 才换。
-// auto：重写、审查类不降级，标记压不过它；能用轻模型的活（backlog.LightItem）用 low_risk_model，没配就用后端说的轻模型 light。
-func TaskModel(cfg config.Config, kind, item, light string) string {
-	if kind != "" {
-		return cfg.Model
+// TaskModel 选这个任务的模型和强度（docs/specs 按活分配模型；官方定位：Opus 长任务和大重构，Sonnet 范围清楚的日常活和知识工作）。
+// 复盘用 review_model、review_effort，巡逻分析用 patrol_model、medium；夜班、对话、new 这些用 model、effort。
+// 普通待做任务（kind 为空）：
+// 重写、重构、迁移、审查、审计（backlog.NoDowngradeItem）不降模型，（低风险）标记也压不过；其中重写、重构、迁移和（难撤回）（backlog.HeavyItem）强度用 heavy_effort。
+// fixed：其余带「（低风险）」标记且配了 low_risk_model 的换成它和 low_risk_effort。
+// auto：能用轻模型的活（backlog.LightItem）用 low_risk_model，没配就用后端说的轻模型 light。
+// model 为空（跟随 CLI）时强度也跟随，不单给重活传 heavy_effort。
+func TaskModel(cfg config.Config, kind, item, light string) (model, effort string) {
+	switch kind {
+	case config.KindReview:
+		return cfg.Role(cfg.ReviewModel, cfg.ReviewEffort)
+	case state.KindPatrol:
+		return cfg.Role(cfg.PatrolModel, "medium")
+	case "":
+	default:
+		return cfg.Model, cfg.Effort
+	}
+	if backlog.NoDowngradeItem(item) || backlog.HeavyItem(item) {
+		if backlog.HeavyItem(item) && cfg.HeavyEffort != "" && cfg.Model != "" {
+			return cfg.Model, cfg.HeavyEffort
+		}
+		return cfg.Model, cfg.Effort
+	}
+	low := func(m string) (string, string) {
+		if cfg.LowRiskEffort != "" {
+			return m, cfg.LowRiskEffort
+		}
+		return m, cfg.Effort
 	}
 	if cfg.ModelPolicy != config.ModelPolicyAuto {
 		if cfg.LowRiskModel != "" && backlog.LowRiskItem(item) {
-			return cfg.LowRiskModel
+			return low(cfg.LowRiskModel)
 		}
-		return cfg.Model
+		return cfg.Model, cfg.Effort
 	}
-	if backlog.NoDowngradeItem(item) || !backlog.LightItem(item) {
-		return cfg.Model
+	if !backlog.LightItem(item) {
+		return cfg.Model, cfg.Effort
 	}
 	if cfg.LowRiskModel != "" {
-		return cfg.LowRiskModel
+		return low(cfg.LowRiskModel)
 	}
 	if light != "" {
-		return light
+		return low(light)
 	}
-	return cfg.Model
+	return cfg.Model, cfg.Effort
 }
 
 // TaskRequest 是能动手的任务（待做、new、夜班、复盘、对话、任务箱）共用的启动意图。resume 非空时接回那个会话，否则 session 是新会话的 id。

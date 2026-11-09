@@ -581,12 +581,19 @@ func TestIntegrationLowRiskModel(t *testing.T) {
 		t.Errorf("夜班不看标记：%s", got)
 	}
 
-	off := newEnv(t, nil)
+	def := newEnv(t, nil)
+	testkit.MkProject(t, def.root, "a", "- [ ] 补测试（低风险） —— x\n")
+	def.mustRun("tick")
+	if got := modelOf(t, def, def.jobByTitle("补测试（低风险）")); got != "sonnet" {
+		t.Errorf("没写这个键用默认的 sonnet：%s", got)
+	}
+
+	off := newEnv(t, map[string]any{"low_risk_model": ""})
 	testkit.MkProject(t, off.root, "a", "- [ ] 补测试（低风险） —— x\n")
 	off.mustRun("tick")
 	j := off.jobByTitle("补测试（低风险）")
 	if got := modelOf(t, off, j); got != "opus" {
-		t.Errorf("没配：%s", got)
+		t.Errorf("写成空照 model：%s", got)
 	}
 }
 

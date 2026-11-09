@@ -9,7 +9,7 @@
 | 情况 | 行为 |
 | --- | --- |
 | 配置里缺这个键 | 用下表「缺键默认」，已有配置升级后新增的键也走这条 |
-| 安装器新建配置（`agentq setup`、`scripts/bootstrap.sh`） | 在缺键默认之上显式写入 `paused=true`、`night_enabled=false`、`review_enabled=false`、`patrol_enabled=false`、`patrol_analyze=false`、`notify_enabled=false`、`permission_mode=default`，`model`、`effort`、`router_model`、`suggest_model`、`sense_model`、`light_review_model` 写成空字符串（跟随你在 CLI 里选的），`claude_path` 写检测到的绝对路径 |
+| 安装器新建配置（`agentq setup`、`scripts/bootstrap.sh`） | 在缺键默认之上显式写入 `paused=true`、`night_enabled=false`、`review_enabled=false`、`patrol_enabled=false`、`patrol_analyze=false`、`notify_enabled=false`、`permission_mode=default`，`model`、`effort`、`router_model`、`suggest_model`、`sense_model`、`light_review_model` 和「按活分配模型」那几个键写成空字符串（跟随你在 CLI 里选的），`claude_path` 写检测到的绝对路径 |
 | 配置文件不存在时跑了普通命令（如 `agentq status`） | 和安装器新建的一样：`paused=true`、`permission_mode=default`，模型和强度留空，夜班、复盘、巡逻、推送都关。`claude_path` 是命令名 `claude` |
 
 已有配置文件逐字节保留，安装和升级不改。JSON 写错或校验不过时命令报错退出，不覆盖文件。`agentq pause`、`resume` 只替换 `paused` 的值，不认识的键也留着。
@@ -39,11 +39,28 @@
 
 ### 按任务类型选模型
 
-`model_policy` 默认 `fixed`，因为降级模型省额度却可能做坏。写成 `auto` 后，只有普通待做任务会换模型，夜班、复盘、对话、`new` 都用 `model`：
+`model_policy` 默认 `fixed`，因为降级模型省额度却可能做坏。`fixed` 下只有带 `（低风险）` 的条目换成 `low_risk_model`；标题提到重写、重构、迁移、审查、审计的不降模型，`（低风险）` 也压不过，其中重写、重构、迁移和标了 `（难撤回）` 的强度用 `heavy_effort`。写成 `auto` 后，普通待做任务按类型换模型（夜班、对话、`new` 都用 `model`，复盘、巡逻分析见下一节）：
 
 - 标题提到重写、重构、迁移、审查、审计（`rewrite`、`refactor`、`migrat`、`review`、`audit`）的不降级，带 `（低风险）` 也不降。
 - 带 `（低风险）` 标记，或标题以 `文档：`、`docs:` 开头的，用 `low_risk_model`；没配就用后端自己说的轻模型（Claude 是 `sonnet`）。
 - 其余用 `model`。
+
+### 按活分配模型
+
+每类调用按活的性质配模型和强度，依据是官方对各档模型的定位：Haiku 做分类、路由这类量大要快的活；Sonnet 做范围清楚的日常编码、知识工作和看图；Opus 做长时间自主编码和大重构。强度 `medium` 给范围清楚的活，`high` 给要验证、边界多的活，`xhigh` 给超过半小时的长任务。省额度靠少跑和换一档模型，不靠降低把关环节的强度：审查最低 Sonnet + `medium`，不用 Haiku。
+
+模型都写别名（`opus`、`sonnet`、`haiku`），Claude Code 会让别名指向最新版，新模型出来自动跟上；写带版本号的完整 ID（如 `claude-opus-5-5`）就钉死了，`agentq doctor` 会提醒。默认后端不是 Claude，或配置明写了 `"model": ""`（跟随 CLI，安装器新建的就是）时，这些键没写就是空的，照 `model`、`effort`。
+
+| 键 | 缺键默认 | 用在 | 没配时 |
+| --- | --- | --- | --- |
+| `router_model` | `haiku` | Telegram 消息的路由（强度 `medium`：它还要读文件、写回复） | 不传，走后端默认 |
+| `discuss_model` | `sonnet` | 开工前出大方向问题（强度 `medium`） | 不传，走后端默认 |
+| `low_risk_model`、`low_risk_effort` | `sonnet`、`medium` | 带 `（低风险）` 的待做任务 | 照 `model`、`effort` |
+| `heavy_effort` | `xhigh` | 标题提到重写、重构、迁移，或标了 `（难撤回）` 的待做任务，模型照 `model` | 照 `effort` |
+| `review_model`、`review_effort` | `sonnet`、`high` | 复盘（写教训和早报） | 照 `model`、`effort` |
+| `patrol_model` | `sonnet` | 巡逻分析异常原因（强度 `medium`） | 照 `model`、`effort` |
+| `followup_model` | `sonnet` | Telegram 回复链里的只读答问（强度 `medium`）；要动手改代码的对话照 `model` | 照 `model`、`effort` |
+| `light_review_model` | `sonnet` | 小改动的审查和界面审查（强度 `medium`）。完整流程的审查用 `model`：局部改动 `medium`，影响面广、难撤回 `high` | 照 `model` |
 
 ### 外面的项目
 
@@ -76,7 +93,7 @@
 | `tick_after_job` | 布尔 | `true` | 任务结束时马上 tick 一次接下一条。为假时只靠定时 tick |
 | `stall_after` | 时长 | `45m` | 运行中的任务会话记录这么久没增长，标疑似卡死（只提醒，不杀），大于 0 |
 | `progress_autostop` | 布尔 | `true` | 子代理失控时自动停。关掉只报不停 |
-| `low_risk_model` | 字符串 | 空 | 非空时，带 `（低风险）` 标记的待做任务用这个模型 |
+| `low_risk_model` | 字符串 | `sonnet`，新配置是空 | 带 `（低风险）` 标记的待做任务用这个模型，强度用 `low_risk_effort`。见「按活分配模型」 |
 
 ## 熔断
 
@@ -127,7 +144,7 @@
 | --- | --- | --- | --- |
 | `notify_enabled` | 布尔 | `true` | 是否推送和收 Telegram 消息。关掉同时停止两者。没配 Telegram 时只弹本机通知。安装器新建的配置先写 `false`，在 `agentq start --welcome` 第一次同意时打开；升级前就有的配置里写的 `false` 不动。先只安装、后来用 `agentq start` 启动的不会打开，要收通知就把它改成 `true` |
 | `router_enabled` | 布尔 | `false` | 新消息改由只读的 Router 处理 |
-| `router_model` | 字符串 | `sonnet`，新配置是空 | Router 用的模型。空字符串不传，走后端默认。不能以 `-` 开头 |
+| `router_model` | 字符串 | `haiku`，新配置是空 | Router 用的模型。空字符串不传，走后端默认。不能以 `-` 开头。见「按活分配模型」 |
 
 ## 可选功能
 
