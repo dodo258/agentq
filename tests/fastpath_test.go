@@ -110,7 +110,7 @@ func TestFastUsage(t *testing.T) {
 	e.tg.msg(2, ownerChat, 12, "额度？", "")
 	e.flush()
 	got = e.tg.sentLast().Get("text")
-	if !strings.Contains(got, "会话 91%") || !strings.Contains(got, "订阅额度快用完") || calls != 1 {
+	if !strings.Contains(got, "会话 91%") || !strings.Contains(got, "订阅额度到了后台上限") || calls != 1 {
 		t.Errorf("过期现读：%d %s", calls, got)
 	}
 	e.a.Runner.UsageText = func() (string, error) { return "", fmt.Errorf("读不了") }

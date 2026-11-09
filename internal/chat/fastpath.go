@@ -97,7 +97,7 @@ func (a *Service) fastPaused(paused bool) string {
 	lines := []string{"下次 tick 起接活，最多等 5 分钟"}
 	if stErr == nil {
 		now := a.Now()
-		lvl, until, why := backend.UsageLevel(st.Usage, now, a.Cfg.Model)
+		lvl, until, why := backend.UsageLevel(st.Usage, now, a.Cfg.UsagePolicy())
 		if note := a.Runner.SchedNote(st, nil, now, lvl, until, why); note != "正常" {
 			lines = append(lines, "不过现在："+note)
 		}
@@ -116,10 +116,10 @@ func (a *Service) usageDigest() string {
 		u = a.Runner.ReadUsage(now)
 	}
 	lines := []string{textfmt.WhenCN(u.CheckedAt) + " 读取"}
-	if lvl, until, why := backend.UsageLevel(u, now, a.Cfg.Model); lvl >= backend.UsageStop {
+	if lvl, until, why := backend.UsageLevel(u, now, a.Cfg.UsagePolicy()); lvl >= backend.UsageStop {
 		lines = append(lines, backend.UsageGateNote(lvl, until, why))
 	}
-	return a.fastStatus("额度　"+backend.UsageDescribe(u, now, a.Cfg.Model), lines...)
+	return a.fastStatus("额度　"+backend.UsageDescribe(u, now, a.Cfg.UsagePolicy()), lines...)
 }
 
 // RunningDigest：「在跑什么」的回答，占名额的任务在前，id 写全，用户可以直接复制去停。

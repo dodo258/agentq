@@ -69,7 +69,7 @@ func (a *Service) ReadJobUsage(st *state.State, j *state.Job) {
 	}
 }
 
-// 当天汇总末尾的小结（当天花费、一次满意率和返工率）夹在这两行之间，每有任务结束就重写；其余行插在它前面。
+// 当天汇总末尾的小结（当天用量、一次满意率和返工率）夹在这两行之间，每有任务结束就重写；其余行插在它前面。
 // 标记文字沿用最初的「当天花费」，改了会认不出已有汇总里的小结。
 const (
 	CostBegin = "<!-- agentq 当天花费：开始（自动生成，每有任务结束重写） -->"
@@ -81,7 +81,7 @@ func (a *Service) CostFooter(st *state.State, day time.Time) string {
 	y, m, d := day.Date()
 	var jobs []*state.Job
 	var sum backend.JobUsage
-	noUsage, noCost := 0, 0 // 后端不给的：合计里要注明，不能当 0
+	noUsage := 0 // 后端不给的：合计里要注明，不能当 0
 	for _, j := range st.Jobs {
 		if j.EndedAt == nil {
 			continue
@@ -95,44 +95,34 @@ func (a *Service) CostFooter(st *state.State, day time.Time) string {
 			}
 			continue
 		}
-		if j.Usage.CostUnknown {
-			noCost++
-		}
 		jobs = append(jobs, j)
 		sum.Input += j.Usage.Input
 		sum.Output += j.Usage.Output
 		sum.CacheRead += j.Usage.CacheRead
 		sum.CacheWrite += j.Usage.CacheWrite
-		sum.CostUSD += j.Usage.CostUSD
 	}
 	note := ""
 	if noUsage > 0 {
 		note += fmt.Sprintf("；另有 %d 个任务没有用量（后端不提供）", noUsage)
 	}
-	if noCost > 0 {
-		note += fmt.Sprintf("；其中 %d 个任务只有 token 没有金额，费用不全", noCost)
-	}
 	if len(jobs) == 0 {
 		if noUsage == 0 {
 			return ""
 		}
-		return fmt.Sprintf("%s\n\n## 当天花费\n\n- %d 个任务没有用量（后端不提供）\n%s\n", CostBegin, noUsage, CostEnd)
+		return fmt.Sprintf("%s\n\n## 当天用量\n\n- %d 个任务没有用量（后端不提供）\n%s\n", CostBegin, noUsage, CostEnd)
 	}
 	sort.SliceStable(jobs, func(i, k int) bool {
-		if jobs[i].Usage.CostUSD != jobs[k].Usage.CostUSD {
-			return jobs[i].Usage.CostUSD > jobs[k].Usage.CostUSD
-		}
 		return jobs[i].Usage.Total() > jobs[k].Usage.Total()
 	})
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\n## 当天花费\n\n", CostBegin)
-	fmt.Fprintf(&b, "- 合计 %d 个任务（没有用量记录的不算）：%s；费用按 API 标价估算%s\n", len(jobs), backend.JobUsageDetail(sum), note)
+	fmt.Fprintf(&b, "%s\n\n## 当天用量\n\n", CostBegin)
+	fmt.Fprintf(&b, "- 合计 %d 个任务（没有用量记录的不算）：%s%s\n", len(jobs), backend.JobUsageDetail(sum), note)
 	hit := "—"
 	if den := sum.CacheRead + sum.CacheWrite + sum.Input; den > 0 {
 		hit = fmt.Sprintf("%.1f%%", float64(sum.CacheRead)*100/float64(den))
 	}
 	fmt.Fprintf(&b, "- 缓存命中率 %s（缓存读 /（缓存读+缓存写+输入））\n", hit)
-	b.WriteString("- 最费的 3 个任务：\n")
+	b.WriteString("- 用量最多的 3 个任务：\n")
 	for i, j := range jobs {
 		if i == 3 {
 			break
@@ -176,7 +166,7 @@ func rewriteNightly(path, header, line string, footer *string) error {
 	return fsx.WriteFileAtomic(path, []byte(out))
 }
 
-// UpdateCostFooter 重写 t 那天汇总末尾的小结：当天花费（那天还没有记了用量的任务就没有这一节）和最近 7 天的一次满意率、返工率。
+// UpdateCostFooter 重写 t 那天汇总末尾的小结：当天用量（那天还没有记了用量的任务就没有这一节）和最近 7 天的一次满意率、返工率。
 func (a *Service) UpdateCostFooter(st *state.State, t time.Time) {
 	f := a.CostFooter(st, t)
 	if q := a.Quality.QualitySection(t); q != "" {

@@ -85,6 +85,13 @@ type Config struct {
 	// AutopushLog：外部自动推送脚本的日志路径（可写 ~），巡逻读它报推送失败。默认空，不查。
 	AutopushLog  string  `json:"autopush_log,omitempty"`
 	JobBudgetUSD float64 `json:"job_budget_usd"`
+	// LightReviewModel：轻量流程（改动小、局部、好撤回，见 internal/gate/light.go）时审查和界面审查用的模型，强度照旧 medium。空就照 model。
+	// 写别名（sonnet），不写带版本号的模型 ID：新模型出来别名自动跟上。审查不用 haiku 这一档。
+	LightReviewModel string `json:"light_review_model"`
+	// 后台给你留额度：计入的会话窗口（5 小时）、周窗口用到这个百分比，tick 就不领新活（正在跑的不动），等那个窗口重置。
+	// 会话默认 70，留 30% 给你自己用；周默认 90。agentq run 不受它管，到 98% 才拒绝。
+	UsageStopSessionPct float64 `json:"usage_stop_session_pct"`
+	UsageStopWeekPct    float64 `json:"usage_stop_week_pct"`
 	// ProgressAutostop：看进展的「子代理失控」信号命中时自动停掉任务（见 internal/runner/budget.go）；关掉时和其他信号一样只报不停。
 	ProgressAutostop bool `json:"progress_autostop"`
 	// LowRiskModel：非空时，条目标题带「（低风险）」标记的待做任务用这个模型（见 lowRiskItem）；空的时候所有任务都用 model。
@@ -103,6 +110,12 @@ type Config struct {
 	// 发版助手（release_assist_enabled，默认关）：条件都满足时起任务准备提交审核，用户回复「发」才提交（见 internal/release/release.go）。
 	ReleaseAssistEnabled bool    `json:"release_assist_enabled"`
 	ReleaseBudgetUSD     float64 `json:"release_budget_usd"`
+	// 自我进化（见 internal/evolve/signals.go）：evolve_signals_enabled 时 tick 每小时从门结果、任务记录、巡逻里收信号，只读本机文件，不调模型；
+	// learned_constraints_enabled 时确认过的门拦截记成项目约束，接在新任务合同末尾。self_project 是 agentq 源码所在的项目名，
+	// 配了就把 agentq 自身反复出现的问题写成那个项目「## 建议」里的提案，没配只写 ~/.agentq/evolve/proposals.md。
+	EvolveSignalsEnabled      bool   `json:"evolve_signals_enabled"`
+	LearnedConstraintsEnabled bool   `json:"learned_constraints_enabled"`
+	SelfProject               string `json:"self_project,omitempty"`
 	// VerifyAfterMerge 是老配置键，合并后核验已经并进质量门（见 internal/gate），它不再起作用，留着是为了已有配置读写字节不变。
 	// VerifyTimeout 是门里每个脚本、每次调模型的超时，超时算判不了。
 	VerifyAfterMerge bool     `json:"verify_after_merge"`
@@ -247,10 +260,15 @@ func (c Config) PermissionProblems() []string {
 }
 
 // claudeDefaultKeys 是默认值只对 Claude 有意义的键。默认后端不是 Claude、配置又没写它们时要留空，不能把 opus 传给别家。
-var claudeDefaultKeys = []string{"model", "effort", "permission_mode", "router_model", "suggest_model", "sense_model"}
+var claudeDefaultKeys = []string{"model", "effort", "permission_mode", "router_model", "suggest_model", "sense_model", "light_review_model"}
 
 // ForBackend 返回这个后端看到的配置：模型、强度、权限只传给配了它们的后端，别家的默认不串。
 // 顶层的这些键是默认后端的（后端名空表示 Claude，老任务记录就是这样），backends.<名字> 里写了的优先。
+// UsagePolicy：判断额度用的模型和后台上限。
+func (c Config) UsagePolicy() backend.UsagePolicy {
+	return backend.UsagePolicy{Model: c.Model, Session: c.UsageStopSessionPct, Week: c.UsageStopWeekPct}
+}
+
 func (c Config) ForBackend(name string) Config {
 	if name == "" {
 		name = backend.Default
@@ -262,7 +280,7 @@ func (c Config) ForBackend(name string) Config {
 	out := c
 	if name != def {
 		out.Model, out.Effort, out.PermissionMode, out.LowRiskModel = "", "", "", ""
-		out.RouterModel, out.SuggestModel, out.SenseModel = "", "", ""
+		out.RouterModel, out.SuggestModel, out.SenseModel, out.LightReviewModel = "", "", "", ""
 	}
 	s := c.Backends[name]
 	if s.Model != "" {
@@ -286,7 +304,7 @@ func Default() Config {
 		Effort:         "high",
 		PermissionMode: "bypassPermissions",
 		MaxParallel:    2,
-		PerProject:     1,
+		PerProject:     2,
 		Timeout:        Duration{4 * time.Hour},
 		RetryAfter:     Duration{12 * time.Hour},
 		LimitCooldown:  Duration{time.Hour},
@@ -313,6 +331,10 @@ func Default() Config {
 		PatrolBudgetUSD: 2,
 		JobBudgetUSD:    150,
 
+		LightReviewModel:    "sonnet",
+		UsageStopSessionPct: 70,
+		UsageStopWeekPct:    90,
+
 		ProgressAutostop: true,
 		SuggestModel:     "sonnet",
 		SuggestBudgetUSD: 1,
@@ -321,6 +343,9 @@ func Default() Config {
 		SenseBudgetUSD: 1,
 
 		ReleaseBudgetUSD: 30,
+
+		EvolveSignalsEnabled:      true,
+		LearnedConstraintsEnabled: true,
 
 		VerifyAfterMerge: true,
 		VerifyTimeout:    Duration{30 * time.Minute},
@@ -336,7 +361,7 @@ func Default() Config {
 // 已有配置缺的键不走这里：老配置靠 defaultConfig 的语义，不能悄悄变。
 func (c Config) Fresh() Config {
 	c.Model, c.Effort = "", ""
-	c.RouterModel, c.SuggestModel, c.SenseModel = "", "", ""
+	c.RouterModel, c.SuggestModel, c.SenseModel, c.LightReviewModel = "", "", "", ""
 	c.Paused = true
 	c.NightEnabled = false
 	c.ReviewEnabled = false
@@ -380,11 +405,20 @@ func (c Config) Validate() error {
 	if c.NightBudgetUSD < 0 || c.ReviewBudgetUSD < 0 || c.PatrolBudgetUSD < 0 || c.JobBudgetUSD < 0 {
 		bad = append(bad, "night_budget_usd、review_budget_usd、patrol_budget_usd、job_budget_usd 不能是负数（0 表示不限）")
 	}
+	if !(c.UsageStopSessionPct >= 1 && c.UsageStopSessionPct <= 97) || !(c.UsageStopWeekPct >= 1 && c.UsageStopWeekPct <= 97) {
+		bad = append(bad, "usage_stop_session_pct、usage_stop_week_pct 要在 1 到 97 之间（到 98% 连 agentq run 都拒绝）")
+	}
 	if c.ModelPolicy != "" && c.ModelPolicy != ModelPolicyFixed && c.ModelPolicy != ModelPolicyAuto {
 		bad = append(bad, "model_policy 只能是 fixed 或 auto")
 	}
 	if c.RouterEnabled && strings.HasPrefix(c.RouterModel, "-") {
 		bad = append(bad, "router_model 不能以 - 开头")
+	}
+	if strings.HasPrefix(c.LightReviewModel, "-") {
+		bad = append(bad, "light_review_model 不能以 - 开头")
+	}
+	if strings.Contains(strings.ToLower(c.LightReviewModel), "haiku") {
+		bad = append(bad, "light_review_model 不能用 haiku：审查是合并前最后一道把关，最低用 sonnet 这一档")
 	}
 	if c.SuggestEnabled && strings.HasPrefix(c.SuggestModel, "-") {
 		bad = append(bad, "suggest_model 不能以 - 开头")
@@ -409,6 +443,9 @@ func (c Config) Validate() error {
 			bad = append(bad, "exclude_projects 里要写项目目录名，不能是空的，也不能带路径")
 			break
 		}
+	}
+	if c.SelfProject != "" && (strings.TrimSpace(c.SelfProject) == "" || c.SelfProject == "." || c.SelfProject == ".." || strings.ContainsAny(c.SelfProject, `/\`)) {
+		bad = append(bad, "self_project 要写项目目录名，不能带路径")
 	}
 	for _, dir := range c.ExtraProjects {
 		if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir || dir == string(filepath.Separator) {
@@ -495,7 +532,7 @@ func (c *Config) ClearClaudeDefaults(raw []byte) error {
 		return err
 	}
 	fields := map[string]*string{"model": &c.Model, "effort": &c.Effort, "permission_mode": &c.PermissionMode,
-		"router_model": &c.RouterModel, "suggest_model": &c.SuggestModel, "sense_model": &c.SenseModel}
+		"router_model": &c.RouterModel, "suggest_model": &c.SuggestModel, "sense_model": &c.SenseModel, "light_review_model": &c.LightReviewModel}
 	for _, key := range claudeDefaultKeys {
 		if _, ok := written[key]; !ok {
 			*fields[key] = ""

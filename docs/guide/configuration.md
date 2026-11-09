@@ -23,10 +23,10 @@ agentq 只扫描这个目录下一层、`.git` 是目录的 Git 主目录，跳�
 ## 并发
 
 ```json
-{ "max_parallel": 3, "per_project": 1 }
+{ "max_parallel": 3, "per_project": 2 }
 ```
 
-`per_project` 大于 1 时，同一项目会并行多个任务。每个任务有自己的 worktree，但合并时可能冲突。
+`per_project` 默认 2，但同一项目只有写了互不重叠 `（范围：…）` 的条目才会并行，没写范围的一次一条。每个任务有自己的 worktree 和分支，后合并的那条在合并态上重新过门。写法见[挑活](../reference/scheduling.md#挑活)。
 
 ## 模型和强度
 

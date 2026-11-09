@@ -45,6 +45,8 @@ type Result struct {
 	Summary string  `json:"summary"`
 	// Evidence 是命令原文、文件行号、日志路径。
 	Evidence []string `json:"evidence,omitempty"`
+	// Files 是门知道出问题的文件（仓库内相对路径），退回时引擎拿它定下一轮的范围。认不出就空着，不硬凑。
+	Files []string `json:"files,omitempty"`
 	// Level 由引擎填：跑这道门时的档位。
 	Level Level `json:"level,omitempty"`
 	// Defer 非空表示这次不算结论，过一会儿重跑，比如审查撞了用量上限。不消耗退回的轮数。
@@ -99,6 +101,13 @@ type Candidate struct {
 	Upstream int
 	// Prior 是这次已经跑完的门的结果，比如让审查门看到测试门标出的事。
 	Prior []Result
+	// Risk 是改错了多难撤回，引擎在跑门前定，见 risk.go。
+	Risk Risk
+	// Light：走轻量流程，审查和界面审查换便宜的模型、降强度，见 light.go。
+	Light bool
+	// Scope、ScopeFrom：这一轮是退回限定了范围的，只该改 Scope 里的文件；ScopeFrom 是上一轮过门看的分支尖。见 scope.go。
+	Scope     []string
+	ScopeFrom string
 }
 
 // Gate 是一道门。
@@ -152,9 +161,10 @@ func registered() []registration {
 	return slices.Clone(registry)
 }
 
-// 内置的门。不花钱的在前：补丁门只看 git，测试都没过不用花额度审。默认档位写在这里，方案第 6 节定的。
+// 内置的门。不花钱的在前：补丁门、范围门只看 git，测试都没过不用花额度审。默认档位写在这里，方案第 6 节定的。
 func init() {
 	Register("patch", LevelWarn, func(d Deps) Gate { return patchGate{d} })
+	Register("scope", LevelError, func(d Deps) Gate { return scopeGate{d} })
 	Register("test", LevelError, func(d Deps) Gate { return testGate{d} })
 	Register("smoke", LevelWarn, func(d Deps) Gate { return smokeGate{d} })
 	Register("review", LevelError, func(d Deps) Gate { return reviewGate{d} })

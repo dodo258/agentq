@@ -9,7 +9,7 @@
 | 情况 | 行为 |
 | --- | --- |
 | 配置里缺这个键 | 用下表「缺键默认」，已有配置升级后新增的键也走这条 |
-| 安装器新建配置（`agentq setup`、`scripts/bootstrap.sh`） | 在缺键默认之上显式写入 `paused=true`、`night_enabled=false`、`review_enabled=false`、`patrol_enabled=false`、`patrol_analyze=false`、`notify_enabled=false`、`permission_mode=default`，`model`、`effort`、`router_model`、`suggest_model`、`sense_model` 写成空字符串（跟随你在 CLI 里选的），`claude_path` 写检测到的绝对路径 |
+| 安装器新建配置（`agentq setup`、`scripts/bootstrap.sh`） | 在缺键默认之上显式写入 `paused=true`、`night_enabled=false`、`review_enabled=false`、`patrol_enabled=false`、`patrol_analyze=false`、`notify_enabled=false`、`permission_mode=default`，`model`、`effort`、`router_model`、`suggest_model`、`sense_model`、`light_review_model` 写成空字符串（跟随你在 CLI 里选的），`claude_path` 写检测到的绝对路径 |
 | 配置文件不存在时跑了普通命令（如 `agentq status`） | 和安装器新建的一样：`paused=true`、`permission_mode=default`，模型和强度留空，夜班、复盘、巡逻、推送都关。`claude_path` 是命令名 `claude` |
 
 已有配置文件逐字节保留，安装和升级不改。JSON 写错或校验不过时命令报错退出，不覆盖文件。`agentq pause`、`resume` 只替换 `paused` 的值，不认识的键也留着。
@@ -69,7 +69,7 @@
 | 键 | 类型 | 缺键默认 | 作用 |
 | --- | --- | --- | --- |
 | `max_parallel` | 整数 | `2` | 全局同时运行的任务数，至少 1 |
-| `per_project` | 整数 | `1` | 同一项目同时运行的任务数，至少 1 |
+| `per_project` | 整数 | `2` | 同一项目同时运行的任务数，至少 1。第二条起要条目写了互不重叠的 `（范围：…）` 才并行，没写范围的一次一条，见[挑活](scheduling.md#挑活) |
 | `timeout` | 时长 | `4h` | 待做任务超时，到时杀掉整个进程组，大于 0 |
 | `retry_after` | 时长 | `12h` | 同一条目再试的间隔，大于 0 |
 | `limit_cooldown` | 时长 | `1h` | 撞用量上限又解析不出重置时间时的冷却时长，大于 0 |
@@ -86,6 +86,14 @@
 | `breaker_quick` | 时长 | `3m` | 运行不到这么久就结束且没做完，算秒退，大于 0 |
 | `breaker_cooldown` | 时长 | `30m` | 第一次熔断暂停启动的时长，大于 0 |
 | `breaker_max` | 时长 | `4h` | 熔断后再秒退时长翻倍的上限，不能小于 `breaker_cooldown` |
+
+## 额度和轻量流程
+
+| 键 | 类型 | 缺键默认 | 作用 |
+| --- | --- | --- | --- |
+| `usage_stop_session_pct` | 数字 | `70` | 会话窗口（5 小时）用到这个百分比，tick 不领新活，等窗口重置；留出的给你自己的会话。1 到 97 |
+| `usage_stop_week_pct` | 数字 | `90` | 周窗口用到这个百分比，tick 不领新活。1 到 97。`agentq run` 不受这两个管，到 98% 才拒绝 |
+| `light_review_model` | 字符串 | `sonnet`，新配置是空 | 改动小、局部、好撤回时（不算测试和记录文件最多 3 个文件、60 行，不是 rewrite，没改指令文件和门脚本），审查和界面审查用这个模型，强度照旧 `medium`；空就照 `model`。写别名（如 `sonnet`），新模型出来自动跟上，不写带版本号的模型 ID。不能用 haiku，不能以 `-` 开头 |
 
 ## 预算
 
@@ -129,6 +137,9 @@
 | `suggest_model` | 字符串 | `sonnet`，新配置是空 | 闲时找活用的模型。空字符串不传，走后端默认。不能以 `-` 开头 |
 | `sense_enabled` | 布尔 | `false` | 主动感知。关着时不发请求、不起进程、不建文件 |
 | `sense_model` | 字符串 | `sonnet`，新配置是空 | 判断外部反馈用的模型。空字符串不传，走后端默认。不能以 `-` 开头 |
+| `evolve_signals_enabled` | 布尔 | `true` | tick 每小时从门结果、任务记录、巡逻收自我进化的信号，只读本机文件，不调模型。关着时不收、不写文件，见[自我进化](commands.md#自我进化) |
+| `learned_constraints_enabled` | 布尔 | `true` | 确认过的门拦截记成项目约束，接在新任务合同末尾。关着时不学，合同一字不变 |
+| `self_project` | 字符串 | 空 | agentq 源码所在的项目目录名。配了，agentq 自己反复出的问题写成那个项目「## 建议」里的提案；空的只写 `~/.agentq/evolve/proposals.md` |
 | `release_assist_enabled` | 布尔 | `false` | 发版助手。关着时不发请求、不起进程、不建文件，回复「发」也不提交 |
 | `verify_after_merge` | 布尔 | `true` | 老配置键，不再起作用。合并后核验并进了质量门，留着是为了已有配置不变 |
 | `verify_timeout` | 时长 | `30m` | 门里每个脚本、每次审查的超时，大于 0。超时算判不了 |

@@ -149,8 +149,8 @@ func TestCodexFullLoopMerges(t *testing.T) {
 	if !strings.Contains(task.Args, `sandbox_mode="danger-full-access"`) || strings.Contains(task.Args, "opus") || strings.Contains(task.Args, " -m ") || strings.Contains(task.Args, "model_reasoning_effort") {
 		t.Errorf("任务的参数：%s", task.Args)
 	}
-	if !strings.Contains(review.Args, `sandbox_mode="workspace-write"`) || !strings.Contains(review.Args, "--output-schema") || !strings.Contains(review.Args, `model_reasoning_effort="medium"`) {
-		t.Errorf("审查的参数：%s", review.Args)
+	if !strings.Contains(review.Args, `sandbox_mode="workspace-write"`) || !strings.Contains(review.Args, "--output-schema") || !strings.Contains(review.Args, `model_reasoning_effort="medium"`) || strings.Contains(review.Args, "sonnet") {
+		t.Errorf("审查的参数（小改动走轻量流程也是 medium，不把 Claude 的便宜模型传给 Codex）：%s", review.Args)
 	}
 	for _, c := range calls {
 		if !slices.Equal(c.Login, []string{"CODEX_HOME"}) {

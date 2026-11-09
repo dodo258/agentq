@@ -374,7 +374,7 @@ func TestIntegrationNewRefused(t *testing.T) {
 	}
 	noJobs("输入不对")
 
-	// 额度 ≥98% 拒绝，并说明；≥90% 只提示（下面的用例）
+	// 额度 ≥98% 拒绝，并说明；到后台上限只提示（下面的用例）
 	e.setUsage(usageLine("99"))
 	if out, code := e.run("new", "做个工具"); code == 0 || !strings.Contains(out, "订阅额度快用完") {
 		t.Errorf("额度：%d\n%s", code, out)
@@ -421,7 +421,7 @@ func TestIntegrationNewRefused(t *testing.T) {
 	noJobs("上面所有拒绝")
 }
 
-// 名额：new 占着时 tick 少接一个、run 被拒；满了 new 也被拒；同一句话不重复起；≥90% 只提示。
+// 名额：new 占着时 tick 少接一个、run 被拒；满了 new 也被拒；同一句话不重复起；到后台上限只提示。
 func TestIntegrationNewCapacity(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]any{"max_parallel": 2})
@@ -429,8 +429,8 @@ func TestIntegrationNewCapacity(t *testing.T) {
 	testkit.MkProject(t, e.root, "beta", "- [ ] 乙 —— SLEEP=20\n")
 	e.setUsage(usageLine("91"))
 	out := e.mustRun("new", "SLEEP=20 做个工具")
-	if !strings.Contains(out, "订阅额度快用完") {
-		t.Errorf("≥90%% 只提示：\n%s", out)
+	if !strings.Contains(out, "订阅额度到了后台上限") {
+		t.Errorf("到后台上限只提示：\n%s", out)
 	}
 	os.Remove(filepath.Join(e.home, "fake-usage.json"))
 	st := e.state()

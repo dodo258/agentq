@@ -393,13 +393,13 @@ func (a *Service) TakeOverTodo(st *state.State, j *state.Job) (string, bool) {
 // checkUsage：state 里缓存的订阅额度（tick 领活前读的，巡逻不另读）到了 usageStopAt。
 func (a *Service) checkUsage(st *state.State, now time.Time) []PatrolIssue {
 	u := st.Usage
-	lvl, until, why := backend.UsageLevel(u, now, a.Cfg.Model)
+	lvl, until, why := backend.UsageLevel(u, now, a.Cfg.UsagePolicy())
 	if lvl < backend.UsageStop {
 		return nil
 	}
 	fp := "usage"
 	for _, w := range u.Windows {
-		if w.Counts(a.Cfg.Model) && w.UsedAt(now) >= backend.UsageStopAt {
+		if w.Counts(a.Cfg.Model) && w.UsedAt(now) >= a.Cfg.UsagePolicy().StopAt(w) {
 			reset := "?"
 			if w.ResetsAt != nil {
 				reset = w.ResetsAt.Format("2006-01-02T15:04")
@@ -409,8 +409,8 @@ func (a *Service) checkUsage(st *state.State, now time.Time) []PatrolIssue {
 	}
 	return []PatrolIssue{{
 		Fingerprint: fp, Check: "usage", quiet: true,
-		Title:    "订阅额度快用完：" + why,
-		Evidence: []string{"额度：" + backend.UsageDescribe(u, now, a.Cfg.Model) + "（" + textfmt.WhenCN(u.CheckedAt) + " 读取）"},
+		Title:    "订阅额度到了后台上限：" + why,
+		Evidence: []string{"额度：" + backend.UsageDescribe(u, now, a.Cfg.UsagePolicy()) + "（" + textfmt.WhenCN(u.CheckedAt) + " 读取）"},
 		Action:   backend.UsageGateNote(lvl, until, why),
 	}}
 }

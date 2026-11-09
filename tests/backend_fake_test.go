@@ -377,7 +377,7 @@ func TestDegradeNoResume(t *testing.T) {
 	}
 }
 
-// §4.4 用量数字：没有就写未知，合计注明，瞬时错误退回只看回合数。只有 token 的写费用未知。
+// §4.4 用量数字：没有就写未知，合计注明，瞬时错误退回只看回合数。用量只显示 token，不显示金额。
 func TestDegradeNoUsage(t *testing.T) {
 	r := fakeApp(t, testkit.FakeOpts{}, func(c *backend.Caps) { c.Usage, c.Cost = false, false })
 	j := r.job(state.KindChat, okResult("答"))
@@ -419,8 +419,8 @@ func TestDegradeNoUsage(t *testing.T) {
 	if k.Usage == nil || !k.Usage.CostUnknown {
 		t.Fatalf("%+v", k.Usage)
 	}
-	if f := tok.a.Ledger.CostFooter(tok.st, *k.EndedAt); !strings.Contains(f, "费用未知") || !strings.Contains(f, "只有 token 没有金额") {
-		t.Errorf("%s", f)
+	if f := tok.a.Ledger.CostFooter(tok.st, *k.EndedAt); !strings.Contains(f, "token 1.0K") || strings.Contains(f, "$") {
+		t.Errorf("只显示 token：%s", f)
 	}
 	if s := backend.JobUsageShort(*k.Usage); strings.Contains(s, "$") {
 		t.Errorf("没有金额不能写 $：%s", s)
@@ -436,12 +436,12 @@ func TestDegradeNoUsage(t *testing.T) {
 func TestDegradeNoQuota(t *testing.T) {
 	r := fakeApp(t, testkit.FakeOpts{}, nil)
 	u := r.a.Runner.Usage(r.st)
-	lvl, _, _ := backend.UsageLevel(u, time.Now(), r.a.Cfg.Model)
+	lvl, _, _ := backend.UsageLevel(u, time.Now(), r.a.Cfg.UsagePolicy())
 	if lvl != backend.UsageUnknown || u.Err == "" {
 		t.Errorf("%d %+v", lvl, u)
 	}
-	if !strings.Contains(backend.UsageDescribe(u, time.Now(), r.a.Cfg.Model), "照常接活") {
-		t.Error(backend.UsageDescribe(u, time.Now(), r.a.Cfg.Model))
+	if !strings.Contains(backend.UsageDescribe(u, time.Now(), r.a.Cfg.UsagePolicy()), "照常接活") {
+		t.Error(backend.UsageDescribe(u, time.Now(), r.a.Cfg.UsagePolicy()))
 	}
 	if _, err := r.a.Runner.ManualGate(r.st); err != nil {
 		t.Errorf("额度未知不该挡：%v", err)

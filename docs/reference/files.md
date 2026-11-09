@@ -75,6 +75,7 @@ tick 每天最多跑一次清理，不调模型，删不掉只记日志，不影
 | `docs/NOT-DOING.md` | 不做清单 |
 | `.agentq/verify` | 测试门跑的检查命令，任务合同要求有 |
 | `.agentq/gates.json` | 可选，调每道门的档位和算界面文件的后缀，读默认分支上的 |
+| `.agentq/risk.json` | 可选，追加难撤回、影响面广的路径规则，读默认分支上的，见[按改错了多难撤回放行](features.md#质量门和引擎合并) |
 | `.agentq/ui`、`.agentq/smoke` | 界面门的截图命令、成品门的烟测，示例在安装资产的 `templates/gates/` |
 | `docs/design/approved/` | 用户确认过的界面基线，只认默认分支上的，引擎和任务都不更新，任务动它测试门不过 |
 | `.agentq/ready.json` | 只在任务分支上：任务的交付单，不进任务基于的分支 |

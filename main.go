@@ -78,6 +78,7 @@ const usage = `agentq：后台调度器，把各项目 docs/BACKLOG.md「待做�
   agentq patrol                   立刻巡逻一次：launchd 服务、备份推送、任务失败和卡住、额度、早报和夜班报告、等拍板条目、磁盘（tick 每小时自动巡逻一次）
   agentq gate report|pass|rerun|abandon <任务id> [--reason "原因"]  过门：看报告；放行这一次卡在门上的任务（原因必写）；再审一次（不改代码重新跑门，不算退回轮数，同一提交最多 2 次）；放弃卡住的任务或新项目的第一版，分支留着
   agentq eval list|run|baseline|compare  评测集：给 agentq 自己打分。run 默认只跑不调模型的程序题，--fake 用假 CLI，--real 才调模型（周额度 ≥85% 拒绝）；compare 和基线比，任一题或任一领域变差就报（agentq eval 看详细用法）
+  agentq evolve signals|constraints <项目名>  自我进化（只读）：看 tick 从门结果、任务记录、巡逻收到的信号和提案；看项目学到的约束（确认过的门拦截，新任务合同末尾带上）
   agentq health [项目名]           最近 30 天每个模块的改动次数、修复次数、行数，反复修的模块，两周返工率（只读，只看 git，不调模型）
   agentq logs <任务id>             结果摘要和 stderr 末尾
   agentq stop <任务id>             杀掉该任务的进程组
@@ -145,7 +146,7 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 		"tick": {0, 0}, "run": {1, 2}, "new": {1, 3}, "discuss": {0, 3}, "suggest": {0, 1}, "sense": {0, 1}, "release": {1, 2}, "status": {0, 0}, "logs": {1, 1},
 		"stop": {1, 1}, "pause": {0, 0}, "resume": {0, 0}, "install": {0, 0}, "uninstall": {0, 0},
 		"night": {0, 0}, "review": {0, 0}, "quality": {0, 0}, "backlog": {2, 3}, "stats": {0, 1}, "patrol": {0, 0}, "notify": {0, 30}, "listen": {0, 0}, "inbox": {0, 30},
-		"init": {0, 1}, "add": {1, 4}, "start": {0, 2}, "env": {1, 1}, "projects": {0, 0}, "gate": {0, 4}, "health": {0, 1}, "eval": {0, 30}, app.GateProcToken: {0, 1},
+		"init": {0, 1}, "add": {1, 4}, "start": {0, 2}, "env": {1, 1}, "projects": {0, 0}, "gate": {0, 4}, "health": {0, 1}, "eval": {0, 30}, "evolve": {0, 2}, app.GateProcToken: {0, 1},
 	}
 	n, ok := want[cmd]
 	if !ok {
@@ -192,6 +193,8 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 	case "eval":
 		a.Evolve.Version = versionString()
 		err = a.Evolve.CmdEval(rest)
+	case "evolve":
+		err = a.Evolve.CmdEvolve(rest)
 	case "init":
 		err = a.Onboard.CmdInit(rest)
 	case "add":

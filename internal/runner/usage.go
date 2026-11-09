@@ -55,8 +55,8 @@ func (a *Service) UsageOn(st *state.State, name string) *backend.UsageInfo {
 	}
 	u.NotedLevel, u.NotedDay = prevLevel, prevDay
 	st.SetUsageOf(name, a.Cfg.Backend, u)
-	model := a.Cfg.ForBackend(name).Model
-	lvl, until, why := backend.UsageLevel(u, now, model)
+	pol := a.Cfg.ForBackend(name).UsagePolicy()
+	lvl, until, why := backend.UsageLevel(u, now, pol)
 	day := now.Format("2006-01-02")
 	if lvl == prevLevel && day == prevDay {
 		return u
@@ -66,7 +66,7 @@ func (a *Service) UsageOn(st *state.State, name string) *backend.UsageInfo {
 	if be := a.BackendFor(name).Name(); be != a.DefaultBackend().Name() {
 		head, key = "额度（"+be+"）：", "usage:"+be+":"+day
 	}
-	msg := head + backend.UsageDescribe(u, now, model)
+	msg := head + backend.UsageDescribe(u, now, pol)
 	switch {
 	case lvl >= backend.UsageStop:
 		msg += "；" + backend.UsageGateNote(lvl, until, why)
@@ -76,7 +76,7 @@ func (a *Service) UsageOn(st *state.State, name string) *backend.UsageInfo {
 	a.Logf("%s", msg)
 	a.Ledger.AppendNightlyLine(now, msg)
 	if lvl >= backend.UsageStop {
-		a.Notify.Notify(notify.Notice{Cat: "alert", Key: key, Text: "订阅" + strings.TrimSuffix(head, "：") + "快用完：" + why, Lines: []string{backend.UsageGateNote(lvl, until, why)}})
+		a.Notify.Notify(notify.Notice{Cat: "alert", Key: key, Text: "订阅" + strings.TrimSuffix(head, "：") + "到了后台上限：" + why, Lines: []string{backend.UsageGateNote(lvl, until, why)}})
 	}
 	return u
 }

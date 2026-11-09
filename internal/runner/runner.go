@@ -82,10 +82,14 @@ func (a *Service) RunProject(st *state.State, project, keyword string) (RunResul
 	}
 	it, ok := a.Pick(st, items, keyword, false)
 	if !ok {
-		if keyword != "" {
-			return RunResult{}, fmt.Errorf("%s 的「待做」里没有包含「%s」、可以做的条目（已标进行中、卡住或正在跑的不算）", p.BacklogPath(), keyword)
+		why := "已标进行中、卡住、正在跑或依赖没做完的不算"
+		if n := len(RunningItems(st, project)); n > 0 {
+			why += fmt.Sprintf("；项目已有 %d 个任务在跑，同项目再起一条要它和在跑的都写了（范围：…）且不重叠（per_project=%d）", n, a.Cfg.PerProject)
 		}
-		return RunResult{}, fmt.Errorf("%s 的「待做」里没有可以做的条目（已标进行中、卡住或正在跑的不算）", p.BacklogPath())
+		if keyword != "" {
+			return RunResult{}, fmt.Errorf("%s 的「待做」里没有包含「%s」、可以做的条目（%s）", p.BacklogPath(), keyword, why)
+		}
+		return RunResult{}, fmt.Errorf("%s 的「待做」里没有可以做的条目（%s）", p.BacklogPath(), why)
 	}
 	r, err := a.ManualGateOn(st, name)
 	if err != nil {
@@ -112,7 +116,7 @@ func (a *Service) ManualGateOn(st *state.State, name string) (RunResult, error) 
 		return RunResult{}, errors.New(why)
 	}
 	u := a.UsageOn(st, name)
-	lvl, until, why := backend.UsageLevel(u, a.Now(), a.Cfg.ForBackend(name).Model)
+	lvl, until, why := backend.UsageLevel(u, a.Now(), a.Cfg.ForBackend(name).UsagePolicy())
 	if lvl >= backend.UsageRefuse {
 		if err := state.Save(a.StatePath(), st); err != nil {
 			a.Logf("写状态文件失败（额度读数没存下）：%v", err)
@@ -199,6 +203,8 @@ type Hooks struct {
 	DiscussRequest    func(cfg config.Config, prompt, project, session string) backend.Request
 	ReleaseRequest    func(cfg config.Config, base backend.Request) backend.Request
 	WriteSenseRunFile func(id, name string, data []byte) error
+	// ConstraintsNote：这个项目学到的约束（门拦过、确认过的事），接在新任务合同末尾。没接或返回空时提示词一字不变。
+	ConstraintsNote func(project string) string
 
 	// 定结果：各种任务自己怎么算做完了。
 	MissingReport  func(j *state.Job) string
@@ -352,6 +358,41 @@ func (a *Service) EnforceTimeouts(st *state.State) int {
 	return n
 }
 
+// ProjectSlot：还能不能在 project 起一个做 item（条目原文）的任务。先看全局和单项目名额（state.Capacity）；
+// 同项目已有任务在跑时还要范围不重叠（backlog.ParallelBlock）。没有条目的（发版准备这类）传空串，当没写范围。
+func ProjectSlot(st *state.State, cfg config.Config, project, item string) (bool, string) {
+	if ok, why := state.Capacity(st, cfg, project); !ok {
+		return false, why
+	}
+	if why := ScopeBlocked(st, cfg, project, item); why != "" {
+		return false, why
+	}
+	return true, ""
+}
+
+// ScopeBlocked：名额还有、只是和同项目在跑的任务范围冲突时返回原因，否则空。续跑、接手被它挡住时，项目这次不挑新条目，免得写了范围的新条目一直插队。
+func ScopeBlocked(st *state.State, cfg config.Config, project, item string) string {
+	if ok, _ := state.Capacity(st, cfg, project); !ok {
+		return ""
+	}
+	running := RunningItems(st, project)
+	if why := backlog.ParallelBlock(backlog.Item{Scope: backlog.ItemScope(item)}, running); why != "" {
+		return fmt.Sprintf("项目 %s 已有 %d 个任务在跑，%s", project, len(running), why)
+	}
+	return ""
+}
+
+// RunningItems：这个项目里占名额、在跑的任务记的条目原文。没有条目的（任务箱、新项目）是空串，当没写范围。
+func RunningItems(st *state.State, project string) []string {
+	var out []string
+	for _, j := range st.Tasks() {
+		if j.Project == project {
+			out = append(out, j.Item)
+		}
+	}
+	return out
+}
+
 // InProgressItem 找「待做」里指纹为 fp、标着进行中的条目。同时标了卡住的不算：那是 agent 有意放下的，不是中断。
 func InProgressItem(items []backlog.Item, fp string) (backlog.Item, bool) {
 	for _, it := range items {
@@ -362,10 +403,14 @@ func InProgressItem(items []backlog.Item, fp string) (backlog.Item, bool) {
 	return backlog.Item{}, false
 }
 
-// Pick 取第一条可做的条目：没标进行中/卡住、没有同指纹任务在跑、（honorRetry 时）不在 retry_after 内、包含 keyword。
+// Pick 取第一条可做的条目：没标进行中/卡住、没有同指纹任务在跑、（honorRetry 时）不在 retry_after 内、包含 keyword、
+// 依赖都做完了；同项目已有任务在跑时还要范围和它们都不重叠（见 backlog.ParallelBlock）。不满足的跳过，下一条照挑。
 func (a *Service) Pick(st *state.State, items []backlog.Item, keyword string, honorRetry bool) (backlog.Item, bool) {
 	for _, it := range items {
 		if !it.Eligible() || st.RunningFor(it.Project, it.Fingerprint) != nil {
+			continue
+		}
+		if len(it.DepsWaiting) > 0 || backlog.ParallelBlock(it, RunningItems(st, it.Project)) != "" {
 			continue
 		}
 		if keyword != "" && !strings.Contains(it.Text, keyword) {
@@ -487,7 +532,7 @@ func (a *Service) RoutineBlocked(st *state.State, limit int) string {
 	if ok, why := a.CheckLogin(); !ok {
 		return why
 	}
-	if lvl, until, why := backend.UsageLevel(a.Usage(st), a.Now(), a.Cfg.Model); lvl >= limit {
+	if lvl, until, why := backend.UsageLevel(a.Usage(st), a.Now(), a.Cfg.UsagePolicy()); lvl >= limit {
 		if err := state.Save(a.StatePath(), st); err != nil {
 			a.Logf("写状态文件失败（额度读数没存下）：%v", err)
 		}

@@ -203,7 +203,7 @@ func TestModelDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, c := range map[string]Config{"新建": fresh, "读回来": reload} {
-		if c.Model != "" || c.Effort != "" || c.RouterModel != "" || c.SuggestModel != "" || c.SenseModel != "" {
+		if c.Model != "" || c.Effort != "" || c.RouterModel != "" || c.SuggestModel != "" || c.SenseModel != "" || c.LightReviewModel != "" {
 			t.Errorf("%s：不该有模型名：%+v", name, c)
 		}
 		if c.ModelPolicy != "" {
@@ -220,6 +220,27 @@ func TestModelDefaults(t *testing.T) {
 		c, err := Load(path)
 		if err != nil || c.Model != raw[1] || c.Effort == "" {
 			t.Errorf("%s：%+v %v", name, c, err)
+		}
+	}
+	// 默认后端不是 Claude、又没写的：轻量审查的模型不能把 sonnet 传给别家；老 Claude 配置缺键照默认
+	if err := os.WriteFile(path, []byte(`{"backend":"codex"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := Load(path); err != nil || c.LightReviewModel != "" || c.UsageStopSessionPct != 70 || c.UsageStopWeekPct != 90 {
+		t.Errorf("codex 缺键：%+v %v", c, err)
+	}
+	if err := os.WriteFile(path, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := Load(path); err != nil || c.LightReviewModel != "sonnet" {
+		t.Errorf("Claude 缺键：%+v %v", c, err)
+	}
+	for _, bad := range []string{`{"usage_stop_session_pct":0}`, `{"usage_stop_week_pct":98}`, `{"light_review_model":"--x"}`, `{"light_review_model":"haiku"}`, `{"light_review_model":"claude-Haiku-4"}`} {
+		if err := os.WriteFile(path, []byte(bad), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Errorf("%s 应报错", bad)
 		}
 	}
 	if err := os.WriteFile(path, []byte(`{"model_policy":"auto"}`), 0o600); err != nil {
@@ -336,8 +357,8 @@ func TestConfigDefaultsAndPartialFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 旧配置文件没有 tick_after_job：沿用默认的开；没有夜班、复盘的键：默认关，超时 6h/4h
-	if cfg.MaxParallel != 3 || cfg.Timeout.Duration != 30*time.Minute || !cfg.Paused || cfg.PerProject != 1 || !cfg.TickAfterJob {
+	// 旧配置文件没有 tick_after_job：沿用默认的开；没有 per_project：用新默认 2；没有夜班、复盘的键：默认关，超时 6h/4h
+	if cfg.MaxParallel != 3 || cfg.Timeout.Duration != 30*time.Minute || !cfg.Paused || cfg.PerProject != 2 || !cfg.TickAfterJob {
 		t.Errorf("部分配置应覆盖对应键、其余用默认：%+v", cfg)
 	}
 	if cfg.NightEnabled || cfg.ReviewEnabled || cfg.NightTimeout.Duration != 6*time.Hour || cfg.ReviewTimeout.Duration != 4*time.Hour {

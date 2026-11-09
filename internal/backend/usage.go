@@ -120,22 +120,15 @@ func BudgetLabel(usd float64) string {
 	return "$" + strconv.FormatFloat(usd, 'f', -1, 64)
 }
 
-// short：status 里用的「token 6.75M，约 $4.61」。
+// JobUsageShort：status、推送里用的「token 6.75M」。只显示 token：用订阅时按 API 标价折算的金额没有意义。
 func JobUsageShort(u JobUsage) string {
-	if u.CostUnknown {
-		return "token " + textfmt.FmtTokens(u.Total()) + "，费用未知"
-	}
-	return fmt.Sprintf("token %s，约 $%.2f", textfmt.FmtTokens(u.Total()), u.CostUSD)
+	return "token " + textfmt.FmtTokens(u.Total())
 }
 
-// detail：汇总里用的「token 6.75M（输入 122、输出 69.8K、缓存读 6.39M、缓存写 292.3K），约 $4.61」。
+// JobUsageDetail：汇总里用的「token 6.75M（输入 122、输出 69.8K、缓存读 6.39M、缓存写 292.3K）」。
 func JobUsageDetail(u JobUsage) string {
-	if u.CostUnknown {
-		return fmt.Sprintf("token %s（输入 %s、输出 %s、缓存读 %s、缓存写 %s），费用未知", textfmt.FmtTokens(u.Total()),
-			textfmt.FmtTokens(u.Input), textfmt.FmtTokens(u.Output), textfmt.FmtTokens(u.CacheRead), textfmt.FmtTokens(u.CacheWrite))
-	}
-	return fmt.Sprintf("token %s（输入 %s、输出 %s、缓存读 %s、缓存写 %s），约 $%.2f", textfmt.FmtTokens(u.Total()),
-		textfmt.FmtTokens(u.Input), textfmt.FmtTokens(u.Output), textfmt.FmtTokens(u.CacheRead), textfmt.FmtTokens(u.CacheWrite), u.CostUSD)
+	return fmt.Sprintf("token %s（输入 %s、输出 %s、缓存读 %s、缓存写 %s）", textfmt.FmtTokens(u.Total()),
+		textfmt.FmtTokens(u.Input), textfmt.FmtTokens(u.Output), textfmt.FmtTokens(u.CacheRead), textfmt.FmtTokens(u.CacheWrite))
 }
 
 // TransientStatus：上游暂时出问题的状态码：5xx 和 422（真实历史里 422 是中转站转上游过载）。
@@ -147,11 +140,31 @@ func TransientStatus(code int) bool {
 // LimitScanTurns：回合数不超过这个的结果，才可能是一开始就撞了上限（瞬时错误判断「没开工」也用它）。
 const LimitScanTurns = 3
 
-// 额度门槛。到 UsageStopAt 就不领新活，到 usageRefuseAt 手动启动也拒绝。
+// 额度门槛。窗口到后台上限就不领新活（见 UsagePolicy），到 usageRefuseAt 手动启动也拒绝。
 const (
-	UsageStopAt   = 90 // 任一计入的窗口到这个百分比：tick 不再启动新任务（正在跑的不动）
+	UsageStopAt   = 90 // 后台上限没配时的默认：任一计入的窗口到这个百分比，tick 不再启动新任务（正在跑的不动）
 	usageRefuseAt = 98 // 到这个百分比：agentq run 也拒绝
 )
+
+// UsagePolicy：判断额度时要的东西。Model 决定只限某个模型的窗口算不算；Session、Week 是后台在会话窗口、周窗口的上限（百分比），
+// 给用户自己留出额度。0 当 UsageStopAt。
+type UsagePolicy struct {
+	Model   string
+	Session float64
+	Week    float64
+}
+
+// StopAt：这个窗口的后台上限。
+func (p UsagePolicy) StopAt(w UsageWindow) float64 {
+	v := p.Week
+	if w.Label == "session" {
+		v = p.Session
+	}
+	if v <= 0 {
+		return UsageStopAt
+	}
+	return v
+}
 
 // 额度档位。
 const (
@@ -163,15 +176,15 @@ const (
 
 // level 返回 now 时的档位；挡住启动时 until 是最晚恢复的时刻（零值 = 没写重置时间，要等下次读），
 // why 列出挡住的窗口。
-func UsageLevel(u *UsageInfo, now time.Time, model string) (lvl int, until time.Time, why string) {
+func UsageLevel(u *UsageInfo, now time.Time, pol UsagePolicy) (lvl int, until time.Time, why string) {
 	if u == nil || u.Err != "" || len(u.Windows) == 0 {
 		return UsageUnknown, time.Time{}, ""
 	}
 	var parts []string
 	noReset := false
 	for _, w := range u.Windows {
-		p := w.UsedAt(now)
-		if !w.Counts(model) || p < UsageStopAt {
+		p, stop := w.UsedAt(now), pol.StopAt(w)
+		if !w.Counts(pol.Model) || p < stop {
 			continue
 		}
 		l := UsageStop
@@ -181,7 +194,7 @@ func UsageLevel(u *UsageInfo, now time.Time, model string) (lvl int, until time.
 		if l > lvl {
 			lvl = l
 		}
-		parts = append(parts, fmt.Sprintf("%s %s%%", w.Name(), textfmt.FmtPct(p)))
+		parts = append(parts, fmt.Sprintf("%s %s%%，后台上限 %s%%", w.Name(), textfmt.FmtPct(p), textfmt.FmtPct(stop)))
 		if w.ResetsAt == nil {
 			noReset = true
 		} else if r := w.ResetsAt.Add(UsageResetSlack); r.After(until) {
@@ -195,7 +208,8 @@ func UsageLevel(u *UsageInfo, now time.Time, model string) (lvl int, until time.
 }
 
 // describe：各窗口用量和重置时间一行，status、当天汇总、日志共用。
-func UsageDescribe(u *UsageInfo, now time.Time, model string) string {
+func UsageDescribe(u *UsageInfo, now time.Time, pol UsagePolicy) string {
+	model := pol.Model
 	if u == nil {
 		return "还没读过"
 	}
@@ -204,16 +218,19 @@ func UsageDescribe(u *UsageInfo, now time.Time, model string) string {
 	}
 	var parts []string
 	for _, w := range u.Windows {
-		s := w.Name() + " " + textfmt.FmtPct(w.Used) + "%"
+		var note string
 		switch {
 		case w.ResetsAt == nil:
-			s += "（重置时间没读出）"
+			note = "重置时间没读出"
 		case !now.Before(w.ResetsAt.Add(UsageResetSlack)):
-			s += "（" + textfmt.WhenCN(*w.ResetsAt) + " 已重置）"
+			note = textfmt.WhenCN(*w.ResetsAt) + " 已重置"
 		default:
-			s += "（" + textfmt.WhenCN(*w.ResetsAt) + " 重置）"
+			note = textfmt.WhenCN(*w.ResetsAt) + " 重置"
 		}
-		if !w.Counts(model) {
+		s := w.Name() + " " + textfmt.FmtPct(w.Used) + "%（" + note + "）"
+		if w.Counts(model) {
+			s = strings.TrimSuffix(s, "）") + "，后台上限 " + textfmt.FmtPct(pol.StopAt(w)) + "%）"
+		} else {
 			used := "任务用 " + model
 			if model == "" { // 跟随 CLI：不知道实际用哪个模型，撞了由撞限冷却兜住
 				used = "任务跟随 CLI 选的模型"
@@ -234,5 +251,5 @@ func UsageGateNote(lvl int, until time.Time, why string) string {
 	if lvl >= UsageRefuse {
 		return fmt.Sprintf("订阅额度快用完（%s，≥%d%%）：不启动新任务，agentq run 也拒绝%s", why, usageRefuseAt, at)
 	}
-	return fmt.Sprintf("订阅额度快用完（%s，≥%d%%）：不启动新任务（正在跑的不动），agentq run 仍可用%s", why, UsageStopAt, at)
+	return fmt.Sprintf("订阅额度到了后台上限（%s）：不启动新任务（正在跑的不动），agentq run 仍可用%s", why, at)
 }

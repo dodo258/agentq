@@ -25,7 +25,8 @@ import (
 // ---- 纯函数 ----
 
 func TestCapacityCountsInbox(t *testing.T) {
-	cfg := config.Default() // max_parallel 2、per_project 1
+	cfg := config.Default() // max_parallel 2
+	cfg.PerProject = 1      // 这里只看名额怎么算（任务箱另有同一时间最多一个的限制）
 	st := &State{Jobs: []*Job{
 		{ID: "a", Status: state.StatusRunning, Kind: state.KindInbox, Project: inboxpkg.InboxJobName},
 		{ID: "b", Status: state.StatusRunning, Kind: state.KindRouter, Project: chat.ChatJobName},

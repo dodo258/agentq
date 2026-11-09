@@ -56,3 +56,22 @@ func ReworkStats(t *testing.T, a *Service, dir, ref string, since time.Time) Rew
 }
 
 var IsInstructionFile = isInstructionFile
+
+// FoldScope、InScope 给测试。
+var (
+	FoldScope = foldScope
+	InScope   = inScope
+)
+
+// SpecRefs、UIPrompt、ReviewPrompt 给测试。
+var (
+	SpecRefs     = specRefs
+	UIPrompt     = uiPrompt
+	ReviewPrompt = reviewPrompt
+)
+
+// LightFlow、ChangedLines 给测试。
+var (
+	LightFlow    = lightFlow
+	ChangedLines = changedLines
+)

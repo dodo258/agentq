@@ -37,7 +37,7 @@ func TestUsageCacheAndNightly(t *testing.T) {
 	if calls != 1 || st.Usage != u || u.Err != "" || len(u.Windows) != 2 {
 		t.Fatalf("第一次应读：calls=%d %+v", calls, u)
 	}
-	if n := nightly(); strings.Count(n, "额度：") != 1 || !strings.Contains(n, "本周 95%（10-11 周日 12:30 重置）") ||
+	if n := nightly(); strings.Count(n, "额度：") != 1 || !strings.Contains(n, "本周 95%（10-11 周日 12:30 重置，后台上限 90%）") ||
 		!strings.Contains(n, "不启动新任务（正在跑的不动）") {
 		t.Errorf("挡住时应写汇总：\n%s", n)
 	}
@@ -58,7 +58,7 @@ func TestUsageCacheAndNightly(t *testing.T) {
 	if calls != 2 {
 		t.Errorf("过了重置时刻应重读：calls=%d", calls)
 	}
-	if lvl, _, _ := backend.UsageLevel(u, now, "opus"); lvl != backend.UsageOK {
+	if lvl, _, _ := backend.UsageLevel(u, now, backend.UsagePolicy{Model: "opus"}); lvl != backend.UsageOK {
 		t.Errorf("重读后应正常：%d", lvl)
 	}
 	if n := nightly(); strings.Count(n, "额度：") != 2 || !strings.Contains(n, "已恢复，照常接活") {
@@ -76,14 +76,14 @@ func TestUsageCacheAndNightly(t *testing.T) {
 	now = now.Add(10 * time.Minute)
 	readErr = errors.New("执行 claude -p /usage 失败：exit status 1")
 	u = a.Runner.Usage(st)
-	if lvl, _, _ := backend.UsageLevel(u, now, "opus"); lvl != backend.UsageUnknown || !strings.Contains(u.Err, "exit status 1") {
+	if lvl, _, _ := backend.UsageLevel(u, now, backend.UsagePolicy{Model: "opus"}); lvl != backend.UsageUnknown || !strings.Contains(u.Err, "exit status 1") {
 		t.Errorf("读失败应当未知：%+v", u)
 	}
 	if n := nightly(); strings.Count(n, "额度：") != 3 || !strings.Contains(n, "未知（执行 claude -p /usage 失败") {
 		t.Errorf("变成未知时应写汇总：\n%s", n)
 	}
-	if !strings.Contains(backend.UsageDescribe(u, now, "opus"), "照常接活") {
-		t.Errorf("describe：%s", backend.UsageDescribe(u, now, "opus"))
+	if !strings.Contains(backend.UsageDescribe(u, now, backend.UsagePolicy{Model: "opus"}), "照常接活") {
+		t.Errorf("describe：%s", backend.UsageDescribe(u, now, backend.UsagePolicy{Model: "opus"}))
 	}
 
 	// 时钟往回拨也重读
@@ -131,17 +131,17 @@ func usageLine(pct string) string {
 		"Current week (Fable): 100% used · resets " + week + " (UTC)\n"
 }
 
-// 89% 照常启动；涨到 90% 后 tick 不再启动新任务（正在跑的不动），run 仍可用；98% run 也拒绝。
+// 69% 照常启动；会话窗口涨到后台上限 70% 后 tick 不再启动新任务（正在跑的不动），run 仍可用；98% run 也拒绝。
 func TestIntegrationUsageGate(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]any{"max_parallel": 5, "per_project": 3})
 	testkit.MkProject(t, e.root, "alpha", "- [ ] 甲一 —— SLEEP=20\n- [ ] 甲二 —— SLEEP=20\n- [ ] 甲三 —— SLEEP=20\n")
 	testkit.MkProject(t, e.root, "beta", "- [ ] 乙一 —— SLEEP=20\n")
 
-	e.setUsage(usageLine("89"))
+	e.setUsage(usageLine("69"))
 	out := e.mustRun("tick")
 	if !strings.Contains(out, "启动 2") {
-		t.Fatalf("89%% 应照常启动（只限 Fable 的窗口 100%% 不管 opus 任务）：\n%s", out)
+		t.Fatalf("69%% 应照常启动（只限 Fable 的窗口 100%% 不管 opus 任务）：\n%s", out)
 	}
 	calls := e.usageCalls()
 	if len(calls) != 1 || !strings.Contains(calls[0], "--no-session-persistence") || !strings.Contains(calls[0], "--setting-sources") ||
@@ -149,45 +149,47 @@ func TestIntegrationUsageGate(t *testing.T) {
 		t.Errorf("一次 tick 只读一次额度，在临时目录里、不读设置、不存会话：%q", calls)
 	}
 	st := e.state()
-	if st.Usage == nil || len(st.Usage.Windows) != 3 || st.Usage.Windows[0].Used != 89 {
+	if st.Usage == nil || len(st.Usage.Windows) != 3 || st.Usage.Windows[0].Used != 69 {
 		t.Errorf("额度应写进 state：%+v", st.Usage)
 	}
-	if n := e.nightly(); !strings.Contains(n, "额度：会话 89%") || !strings.Contains(n, "本周（Fable） 100%") || !strings.Contains(n, "不计入") {
+	if n := e.nightly(); !strings.Contains(n, "额度：会话 69%") || !strings.Contains(n, "本周（Fable） 100%") || !strings.Contains(n, "不计入") {
 		t.Errorf("当天第一次读到应写汇总：\n%s", n)
 	}
-	if out := e.mustRun("status"); !strings.Contains(out, "调度：正常") || !strings.Contains(out, "额度：会话 89%") ||
-		!strings.Contains(out, "本周 10%（"+textfmt.WhenCN(weekReset)+" 重置）") {
+	if out := e.mustRun("status"); !strings.Contains(out, "调度：正常") || !strings.Contains(out, "额度：会话 69%") ||
+		!strings.Contains(out, "本周 10%（"+textfmt.WhenCN(weekReset)+" 重置，后台上限 90%）") {
 		t.Errorf("status 应显示各窗口用量和重置时间：\n%s", out)
 	}
 	if len(e.usageCalls()) != 1 {
 		t.Errorf("缓存没过期时 status 不重读：%q", e.usageCalls())
 	}
-	// 涨到 90%：不再启动新任务（甲二本来可以接），正在跑的不动；run 仍可用
-	e.setUsage(usageLine("90"))
+	// 涨到 70%：不再启动新任务（丙一本来可以接），正在跑的不动；run 仍可用。
+	// 丙是这时才出现的项目：alpha 的条目没写范围，甲一在跑时同项目不并行（tick 和 run 都一样），这里要一个本来能接的条目
+	testkit.MkProject(t, e.root, "gamma", "- [ ] 丙一 —— SLEEP=20 （范围：a/）\n- [ ] 丙二 —— SLEEP=20 （范围：b/）\n")
+	e.setUsage(usageLine("70"))
 	e.expireUsage()
 	out = e.mustRun("tick")
-	if !strings.Contains(out, "启动 0") || !strings.Contains(out, "订阅额度快用完（会话 90%，≥90%）") || !strings.Contains(out, "重置后自动恢复") {
-		t.Fatalf("90%% 不应启动：\n%s", out)
+	if !strings.Contains(out, "启动 0") || !strings.Contains(out, "订阅额度到了后台上限（会话 70%，后台上限 70%）") || !strings.Contains(out, "重置后自动恢复") {
+		t.Fatalf("70%% 不应启动：\n%s", out)
 	}
 	if n := countRunning(e.state()); n != 2 {
 		t.Errorf("正在跑的不动：运行中 %d", n)
 	}
-	if n := e.nightly(); !strings.Contains(n, "额度：会话 90%") || !strings.Contains(n, "不启动新任务（正在跑的不动）") {
+	if n := e.nightly(); !strings.Contains(n, "额度：会话 70%") || !strings.Contains(n, "不启动新任务（正在跑的不动）") {
 		t.Errorf("档位变了应写汇总：\n%s", n)
 	}
-	if out := e.mustRun("status"); !strings.Contains(out, "调度：订阅额度快用完") {
+	if out := e.mustRun("status"); !strings.Contains(out, "调度：订阅额度到了后台上限") {
 		t.Errorf("status 调度行应标出：\n%s", out)
 	}
-	out = e.mustRun("run", "alpha")
+	out = e.mustRun("run", "gamma")
 	if !strings.Contains(out, "已启动任务") || !strings.Contains(out, "agentq run 仍可用") {
-		t.Errorf("90%% 时 run 仍可用并提示：\n%s", out)
+		t.Errorf("70%% 时 run 仍可用并提示：\n%s", out)
 	}
 
 	// 98%：run 也拒绝
 	e.setUsage(usageLine("98"))
 	e.expireUsage()
 	before := len(e.state().Jobs)
-	out, code := e.run("run", "alpha")
+	out, code := e.run("run", "gamma")
 	if code == 0 || !strings.Contains(out, "agentq run 也拒绝") {
 		t.Errorf("98%% 时 run 应拒绝：%d\n%s", code, out)
 	}
@@ -202,7 +204,7 @@ func TestIntegrationUsageGate(t *testing.T) {
 	}
 }
 
-// 中断的任务等着续跑时额度涨到 ≥90%：续跑也算新任务，不启动；中断的那条仍等着续跑。
+// 中断的任务等着续跑时额度涨到后台上限：续跑也算新任务，不启动；中断的那条仍等着续跑。
 func TestIntegrationUsageBlocksResume(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, nil)
@@ -213,8 +215,8 @@ func TestIntegrationUsageBlocksResume(t *testing.T) {
 	e.setUsage(usageLine("92"))
 	e.expireUsage()
 	out := e.mustRun("tick")
-	if !strings.Contains(out, "本次收尾 1，启动 0") || !strings.Contains(out, "订阅额度快用完（会话 92%") {
-		t.Fatalf("额度 ≥90%% 时不续跑：\n%s", out)
+	if !strings.Contains(out, "本次收尾 1，启动 0") || !strings.Contains(out, "订阅额度到了后台上限（会话 92%") {
+		t.Fatalf("额度到后台上限时不续跑：\n%s", out)
 	}
 	st := e.state()
 	if len(st.Jobs) != 1 || st.Jobs[0].Status != state.StatusInterrupted || !st.Jobs[0].ResumePending {
@@ -295,16 +297,16 @@ func TestIntegrationUsageUnknown(t *testing.T) {
 	}
 }
 
-// 夜班定点叫醒时额度 ≥90% 不启动、汇总记一行；手动执行到 98% 才拒绝。
+// 夜班定点叫醒时额度到后台上限不启动、汇总记一行；手动执行到 98% 才拒绝。
 func TestIntegrationUsageRoutine(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]any{"night_enabled": true})
 	e.setUsage(usageLine("95"))
 	out, code := e.run("night", "--scheduled")
-	if code == 0 || !strings.Contains(out, "夜班没有启动：订阅额度快用完") {
+	if code == 0 || !strings.Contains(out, "夜班没有启动：订阅额度到了后台上限") {
 		t.Errorf("95%% 时定点夜班不应启动：%d\n%s", code, out)
 	}
-	if n := e.nightly(); !strings.Contains(n, "夜班没有启动：订阅额度快用完") {
+	if n := e.nightly(); !strings.Contains(n, "夜班没有启动：订阅额度到了后台上限") {
 		t.Errorf("汇总应记一行：\n%s", n)
 	}
 	e.setUsage(usageLine("98"))

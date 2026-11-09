@@ -86,7 +86,8 @@ func TestTransientRetryEdges(t *testing.T) {
 }
 
 func TestCapacity(t *testing.T) {
-	cfg := config.Default() // max_parallel 2, per_project 1
+	cfg := config.Default() // max_parallel 2
+	cfg.PerProject = 1      // 这里只看名额怎么算；默认 2 时同项目第二条还要看范围，由 runner.Pick 判
 	st := &State{Jobs: []*Job{
 		{Project: "a", Status: StatusRunning},
 		{Project: "b", Status: StatusDone},

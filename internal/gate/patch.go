@@ -345,7 +345,13 @@ func (g patchGate) Run(ctx context.Context, c Candidate) Result {
 	if len(names) == 0 {
 		return Result{Outcome: Pass, Summary: "这次改到的模块最近 30 天没有反复修"}
 	}
-	return Result{Outcome: Fail, Summary: "第三次打补丁：" + strings.Join(names, "、") + " 最近 30 天已修过两次以上，这次又是修复", Evidence: evidence}
+	var files []string
+	for _, f := range c.Files {
+		if slices.Contains(names, ModuleOf(f)) {
+			files = append(files, f)
+		}
+	}
+	return Result{Outcome: Fail, Summary: "第三次打补丁：" + strings.Join(names, "、") + " 最近 30 天已修过两次以上，这次又是修复", Evidence: evidence, Files: files}
 }
 
 // rewriteContract 是 error 档退回时改的合同。引擎不改代码，重写由任务做。

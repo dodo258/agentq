@@ -26,7 +26,7 @@ type Service struct {
 	Ledger *ledger.Service
 }
 
-// agentq stats [天数]：只读，按任务种类、项目、模型统计最近 N 天的次数、成败、token 和折算费用（按 API 标价折算，实际走订阅额度）。
+// agentq stats [天数]：只读，按任务种类、项目、模型统计最近 N 天的次数、成败、token。
 // 数据来自 jobs/*/meta.json 和 result.json（主动感知的在 sense/runs/，见 jobOutput）。同一会话续跑时 result.json 是累计的，用 readJobUsage 减掉上一次，不重复计。
 // 模型取启动参数里的模型（一个任务算一个模型，子代理用的便宜模型也算在它头上）。
 const (
@@ -247,7 +247,7 @@ func (a *Service) loadUsage(all *state.State, j *state.Job, res *statsResult) {
 	}
 }
 
-func (r *statsRow) line(total float64) string {
+func (r *statsRow) line(total int64) string {
 	s := fmt.Sprintf("%d 次　成 %d　败 %d", r.Count, r.OK, r.Bad)
 	if r.Other > 0 {
 		s += fmt.Sprintf("　中断 %d", r.Other)
@@ -255,16 +255,16 @@ func (r *statsRow) line(total float64) string {
 	if r.Running > 0 {
 		s += fmt.Sprintf("　在跑 %d", r.Running)
 	}
-	s += fmt.Sprintf("　token %s　约 $%.2f", textfmt.FmtTokens(r.Usage.Total()), r.Usage.CostUSD)
+	s += "　token " + textfmt.FmtTokens(r.Usage.Total())
 	if total > 0 {
-		s += fmt.Sprintf("　%.0f%%", r.Usage.CostUSD*100/total)
+		s += fmt.Sprintf("　%.0f%%", float64(r.Usage.Total())*100/float64(total))
 	}
 	return s
 }
 
 func (res *statsResult) print(w *strings.Builder) {
 	fmt.Fprintf(w, "最近 %d 天：%s\n", res.Days, res.Total.line(0))
-	total := res.Total.Usage.CostUSD
+	total := res.Total.Usage.Total()
 	for _, sec := range []struct {
 		head string
 		rows map[string]*statsRow
@@ -279,8 +279,8 @@ func (res *statsResult) print(w *strings.Builder) {
 		}
 		sort.Slice(names, func(i, k int) bool {
 			x, y := sec.rows[names[i]], sec.rows[names[k]]
-			if x.Usage.CostUSD != y.Usage.CostUSD {
-				return x.Usage.CostUSD > y.Usage.CostUSD
+			if x.Usage.Total() != y.Usage.Total() {
+				return x.Usage.Total() > y.Usage.Total()
 			}
 			if x.Count != y.Count {
 				return x.Count > y.Count
@@ -302,7 +302,7 @@ func (res *statsResult) print(w *strings.Builder) {
 	if res.BadResult > 0 {
 		notes = append(notes, fmt.Sprintf("%d 个 result.json 读不了，用量按收尾时记下的算", res.BadResult))
 	}
-	notes = append(notes, "费用按 API 标价折算，实际走订阅额度；最后一列是费用占比")
+	notes = append(notes, "最后一列是 token 占比")
 	fmt.Fprintf(w, "\n%s\n", strings.Join(notes, "；"))
 }
 

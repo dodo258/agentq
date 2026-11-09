@@ -291,6 +291,8 @@ func (a *Service) collectOne(st *state.State, j *state.Job) {
 		a.dropStrayReady(j)
 	case outFail:
 		a.failed(st, j, res)
+	case outHold:
+		a.hold(j, res.Reason)
 	case outWait:
 		a.waitMain(j, res)
 	case outDefer:
@@ -449,11 +451,15 @@ func (a *Service) failed(st *state.State, j *state.Job, res RunResult) {
 	be := a.BackendFor(j.Backend)
 	first := j.SessionInRoot() // 新项目第一版的会话在 projects_root，换了目录接不回去：和不能续跑的后端一样，由接手任务接着做
 	// 用户放行之后还没过（只会是合并冲突）：条目标着卡住，退回没人接得上，再让用户定。再审没过同理，也不算退回轮数
-	if g.Override != "" || g.Rerun || g.Round >= MaxRounds || a.Backlog.Excluded(j.Project) || (be.Caps().Resume && j.SessionID == "" && !first) {
+	if g.Override != "" || g.Rerun || a.Backlog.Excluded(j.Project) || (be.Caps().Resume && j.SessionID == "" && !first) {
 		a.stuck(st, j, res.Reason)
 		return
 	}
-	g.State = state.GateReturned
+	if g.Round >= MaxRounds { // 退回用完还没过：再改一轮多半也不行，是条目拆法或验收的问题
+		a.stuck(st, j, planReason(g.Round, res.Reason))
+		return
+	}
+	g.State, g.Scope = state.GateReturned, res.Scope
 	j.Status = state.StatusInterrupted           // 这一条其实没做完：续跑和接手都认这个状态
 	j.ResumePending = be.Caps().Resume && !first // 不能续跑的后端由接手任务从分支现状接着做
 	j.Summary = fmt.Sprintf("门没过，退回第 %d 轮：%s", g.Round+1, textfmt.OneLine(res.Reason, 200))
@@ -540,13 +546,23 @@ func (a *Service) crashed(st *state.State, j *state.Job, why string) {
 
 // stuck：判不了或轮数用完。保留分支，条目标卡住（下次 RetryStuckMarks 写），发决定卡片。同项目下一条照常做。
 func (a *Service) stuck(st *state.State, j *state.Job, why string) {
+	a.park(j, why, "门没过", "没过，等你定", "B")
+}
+
+// hold：门没挡，但改错了难撤回，或影响面广又没有确定性检查。和卡住一样等用户定，agentq gate pass 才合。不推荐选项：要用户自己看过。
+func (a *Service) hold(j *state.Job, why string) {
+	a.park(j, why, "等你拍板", "等你拍板", "")
+}
+
+// park 是卡住和等拍板共用的：标卡住、写日志和当天汇总、发决定卡片。head 是标记和通知标题里的说法，logHead 是日志里的。
+func (a *Service) park(j *state.Job, why, head, logHead, recommend string) {
 	g := j.Gate
 	g.State, g.Override, g.Rerun = state.GateStuck, "", false
 	g.Report = textfmt.OneLine(why, 300)
 	j.StuckBranch = g.Branch
-	j.StuckPending = "门没过：" + markSafe(why) + "，任务 " + j.ID
-	j.Summary = "门没过，分支 " + g.Branch + " 留着：" + textfmt.OneLine(why, 200)
-	msg := fmt.Sprintf("门：%s「%s」没过，等你定：%s", j.Project, textfmt.TruncRunes(j.Title, 40), textfmt.OneLine(why, 200))
+	j.StuckPending = head + "：" + markSafe(why) + "，任务 " + j.ID
+	j.Summary = head + "，分支 " + g.Branch + " 留着：" + textfmt.OneLine(why, 200)
+	msg := fmt.Sprintf("门：%s「%s」%s：%s", j.Project, textfmt.TruncRunes(j.Title, 40), logHead, textfmt.OneLine(why, 200))
 	a.Logf("%s", msg)
 	a.Ledger.AppendNightlyLine(a.Now(), msg)
 	options := []notify.DecideOption{{Label: "A", Text: "放行"}, {Label: "B", Text: "退回"}, {Label: "C", Text: "放弃"}}
@@ -556,9 +572,9 @@ func (a *Service) stuck(st *state.State, j *state.Job, why string) {
 		how += "；再审一次：不改代码重新跑门，不算退回轮数"
 	}
 	a.Notify.Notify(notify.Notice{Cat: "decide", Key: "gate:" + j.ID, JobID: j.ID,
-		Text:  j.Project + "　「" + textfmt.TruncRunes(j.Title, 40) + "」门没过",
+		Text:  j.Project + "　「" + textfmt.TruncRunes(j.Title, 40) + "」" + head,
 		Lines: []string{textfmt.OneLine(why, 200), "分支 " + g.Branch + " 留着；详情 agentq gate report " + j.ID, how},
-		Card:  &notify.DecideCard{Project: j.Project, Fingerprint: j.Fingerprint, Title: j.Title, Recommend: "B", GateJob: j.ID, Options: options}})
+		Card:  &notify.DecideCard{Project: j.Project, Fingerprint: j.Fingerprint, Title: j.Title, Recommend: recommend, GateJob: j.ID, Options: options}})
 }
 
 // rerunRefusal：这个任务现在不能再审的原因，能是空。同一提交有次数上限：判不了多半是外面的原因，一直点也是一直花额度。
@@ -978,6 +994,9 @@ func (a *Service) ReturnNote(j *state.Job) string {
 	} else {
 		b.WriteString(j.Gate.Report)
 	}
+	if len(j.Gate.Scope) > 0 && j.Gate.State == state.GateReturned {
+		b.WriteString("\n" + scopeLine(j.Gate.Scope) + "\n")
+	}
 	if a.mustRewrite(j) {
 		b.WriteString("\n" + rewriteContract + "\n")
 	}
@@ -1011,6 +1030,16 @@ func (a *Service) reportText(j *state.Job) string {
 	var s strings.Builder
 	if res.Reason != "" {
 		fmt.Fprintf(&s, "结论：%s\n", res.Reason)
+	}
+	if v := res.Risk; v != nil && v.Level != RiskLocal { // 局部照现有门，不多写一行
+		fmt.Fprintf(&s, "改错的代价：%s（%s）\n", riskLabel(v.Level), strings.Join(v.Reasons, "；"))
+	}
+	if v := res.Risk; v != nil && v.Flow != "" {
+		flow := "完整"
+		if v.Light {
+			flow = "轻量：审查和界面审查换便宜一档的模型，强度照旧 medium"
+		}
+		fmt.Fprintf(&s, "流程：%s（%s）\n", flow, v.Flow)
 	}
 	for _, r := range res.Results {
 		fmt.Fprintf(&s, "%s（%s 档）：%s %s\n", r.Gate, r.Level, r.Outcome, r.Summary)
@@ -1123,6 +1152,12 @@ func (a *Service) printReport(j *state.Job) error {
 	}
 	if g.WrapErr != "" {
 		fmt.Fprintf(w, "收尾没写上，下次 tick 再写：%s\n", g.WrapErr)
+	}
+	if len(j.GateScope) > 0 {
+		fmt.Fprintf(w, "这一轮限定的范围：%s\n", strings.Join(j.GateScope, "、"))
+	}
+	if len(g.Scope) > 0 {
+		fmt.Fprintf(w, "退回时定的范围：%s\n", strings.Join(g.Scope, "、"))
 	}
 	if text := a.reportText(j); text != "" {
 		fmt.Fprintf(w, "\n%s", text)

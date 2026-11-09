@@ -747,7 +747,7 @@ func (a *Service) releaseStartPrep(rep releaseReport) {
 			why = "没配 Telegram，提示发不出去，你也就回复不了：" + textfmt.ErrText(err)
 			break
 		}
-		if ok, w := state.Capacity(st, a.Cfg, m.Project.Name); !ok {
+		if ok, w := runner.ProjectSlot(st, a.Cfg, m.Project.Name, ""); !ok {
 			why = w
 		} else if w := a.Runner.Lacks(backend.MustRelease); w != "" {
 			why = w

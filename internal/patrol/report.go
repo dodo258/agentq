@@ -51,7 +51,7 @@ func (a *Service) patrolAnalyze(st *state.State, ps *PatrolState, r *PatrolRepor
 		ps.AnalysisDay, ps.AnalysisCount = day, 0
 	}
 	no := func(why string) { r.Analysis = "没启动 " + a.HeadlessWord(a.Cfg.Backend) + " 分析：" + why }
-	lvl, _, _ := backend.UsageLevel(st.Usage, now, a.Cfg.Model)
+	lvl, _, _ := backend.UsageLevel(st.Usage, now, a.Cfg.UsagePolicy())
 	switch {
 	case !a.Cfg.PatrolAnalyze:
 		no("patrol_analyze=false")
@@ -69,7 +69,7 @@ func (a *Service) patrolAnalyze(st *state.State, ps *PatrolState, r *PatrolRepor
 		no("连环失败熔断中，到 " + textfmt.WhenCN(st.BreakerUntil))
 		return
 	case lvl >= backend.UsageStop:
-		no(fmt.Sprintf("订阅额度 ≥%d%%", backend.UsageStopAt))
+		no("订阅额度到了后台上限")
 		return
 	}
 	for _, j := range st.Running() {

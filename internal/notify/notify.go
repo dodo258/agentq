@@ -807,7 +807,7 @@ func (a *Service) PushMorning(s *State, st *state.State, c *telegram.TgCreds, cr
 	if n := counts["gate"]; n > 0 {
 		tasks = strings.Replace(tasks, "（24 小时内）", fmt.Sprintf("，没过门 %d（24 小时内）", n), 1)
 	}
-	secs = append(secs, MsgSection{Emoji: "📊", Head: tasks, Lines: append([]string{"额度　" + backend.UsageDescribe(st.Usage, now, a.Cfg.Model)}, st.OtherUsageLines(a.Cfg, now)...)})
+	secs = append(secs, MsgSection{Emoji: "📊", Head: tasks, Lines: append([]string{"额度　" + backend.UsageDescribe(st.Usage, now, a.Cfg.UsagePolicy())}, st.OtherUsageLines(a.Cfg, now)...)})
 	if first := reportFirstLine(path); first != "" {
 		secs = append(secs, MsgSection{Emoji: "📝", Head: first})
 	}

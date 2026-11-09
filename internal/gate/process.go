@@ -68,6 +68,7 @@ const (
 	outWait    = "wait"    // 门过了，主目录挡着：保留结论，下次 tick 重试
 	outDefer   = "defer"   // 撞限、认证：过一会儿重跑
 	outBypass  = "bypass"  // 分支已经在 main 上，不是引擎合的：没过门
+	outHold    = "hold"    // 门没挡，改错了难撤回或影响面广又没有确定性检查：不合并，等用户拍板
 )
 
 // Plan 是 tick 交给后台进程的任务说明，在拿不到 state.json 的进程里够用。
@@ -94,6 +95,9 @@ type Plan struct {
 	Upstream int  `json:"upstream,omitempty"`
 	// Timeout 是每个脚本、每次审查的超时。
 	Timeout string `json:"timeout"`
+	// Scope、ScopeFrom：退回时定的范围和上一轮的分支尖，scope 门用。不是退回的轮次为空。
+	Scope     []string `json:"scope,omitempty"`
+	ScopeFrom string   `json:"scope_from,omitempty"`
 }
 
 // RunResult 是后台进程写的 result.json。tick 看到它就算这次过门结束了：worktree 已经清完。
@@ -116,6 +120,10 @@ type RunResult struct {
 	Tally map[string]*state.GateTally `json:"tally,omitempty"`
 	// Off 是这次关着的门。
 	Off []string `json:"off,omitempty"`
+	// Risk 是这次的风险档位和依据，建出候选之后才有。
+	Risk *RiskVerdict `json:"risk,omitempty"`
+	// Scope：没过（outFail）时引擎算的下一轮范围，见 scope.go。
+	Scope []string `json:"scope,omitempty"`
 }
 
 // Dir 是这个任务过门的目录。
@@ -237,23 +245,35 @@ func (a *Service) Process(ctx context.Context, dir string, p Plan, timeout time.
 		}
 		c, res, ok := a.build(ctx, dir, p)
 		if !ok {
+			if res.Outcome == outFail {
+				res.Scope = a.returnScope(ctx, p.ProjectDir, res.Head, res.Results, nil)
+			}
 			addTally(tally, res.Results)
 			res.Usage, res.Tally = usage, tally
 			return res
 		}
 		c.Timeout, c.Fresh, c.Upstream = timeout, p.Rerun, p.Upstream
+		risk := a.classify(ctx, c)
+		c.Risk, c.Light = risk.Level, risk.Light
 		results, notes, off, blocked := a.runGates(ctx, dir, p, c)
 		addTally(tally, results)
 		for i := range results {
 			usage = backend.AddUsage(usage, results[i].Usage)
 			results[i].Usage = nil
 		}
-		last = RunResult{Base: c.Base, Head: c.Head, Tree: c.Tree, Results: results, Notes: notes, Usage: usage, Tally: tally, Off: off}
+		last = RunResult{Base: c.Base, Head: c.Head, Tree: c.Tree, Results: results, Notes: notes, Usage: usage, Tally: tally, Off: off, Risk: risk}
 		if blocked != "" {
+			if blocked == outFail {
+				last.Scope = a.returnScope(ctx, p.ProjectDir, c.Merge, results, c.Files)
+			}
 			last.Outcome, last.Reason = blocked, summarize(results)
 			if d := deferred(results); d != "" {
 				last.Reason = d
 			}
+			return last
+		}
+		if hold := holdReason(p, risk, results); hold != "" {
+			last.Outcome, last.Reason = outHold, hold
 			return last
 		}
 		out, moved := a.integrate(ctx, dir, p, c)
@@ -311,6 +331,11 @@ func (a *Service) build(ctx context.Context, dir string, p Plan) (Candidate, Run
 	head := p.Head
 	fail := func(outcome, why string) (Candidate, RunResult, bool) {
 		return Candidate{}, RunResult{Outcome: outcome, Reason: why, Head: head, Results: []Result{{Gate: "merge", Outcome: outcomeOf(outcome), Summary: why, Level: LevelError}}}, false
+	}
+	conflict := func(why string, files []string) (Candidate, RunResult, bool) {
+		c, res, ok := fail(outFail, why)
+		res.Results[0].Files = files
+		return c, res, ok
 	}
 	def := p.DefaultBranch
 	base, err := a.git(ctx, p.ProjectDir, "rev-parse", "--verify", "refs/heads/"+def)
@@ -371,7 +396,7 @@ func (a *Service) build(ctx context.Context, dir string, p Plan) (Candidate, Run
 		// 默认分支上残留的 ready.json 和任务的撞了不算冲突：两份都不进 M，下面就删
 		conflicts := slices.DeleteFunc(strings.Split(names, "\n"), func(f string) bool { return f == ReadyFile })
 		if len(conflicts) > 0 {
-			return fail(outFail, "和最新 "+def+" 有冲突："+textfmt.OneLine(strings.Join(conflicts, "、"), 300)+"；从最新 "+def+" 合入，解决后再写 ready.json")
+			return conflict("和最新 "+def+" 有冲突："+textfmt.OneLine(strings.Join(conflicts, "、"), 300)+"；从最新 "+def+" 合入，解决后再写 ready.json", conflicts)
 		}
 	}
 	if _, err := a.git(ctx, wt, "rm", "-q", "-f", "--ignore-unmatch", ReadyFile); err != nil {
@@ -405,7 +430,7 @@ func (a *Service) build(ctx context.Context, dir string, p Plan) (Candidate, Run
 	}
 	return Candidate{JobID: p.JobID, Project: p.Project, ProjectDir: p.ProjectDir, Title: p.Title, Item: p.Item, Backend: p.Backend, Branch: p.Branch, DefaultBranch: def,
 		Head: head, Base: base, Merge: merge, Tree: tree, PatchID: a.patchID(ctx, wt, base, merge), Dir: wt, WorkDir: dir, Files: files,
-		Type: p.Ready.Type, Ready: p.Ready, Round: p.Round, Product: p.Product}, RunResult{}, true
+		Type: p.Ready.Type, Ready: p.Ready, Round: p.Round, Product: p.Product, Scope: p.Scope, ScopeFrom: p.ScopeFrom}, RunResult{}, true
 }
 
 func outcomeOf(out string) Outcome {
@@ -544,6 +569,10 @@ func (a *Service) runGates(ctx context.Context, dir string, p Plan, c Candidate)
 	var off []string
 	for _, reg := range registered() {
 		lvl := levelOf(reg.name, levels)
+		if c.Risk == RiskBroad && lvl == LevelWarn && slices.Contains(deterministicGates, reg.name) {
+			lvl = LevelError
+			notes = append(notes, reg.name+" 门这次按 error 算：影响面广")
+		}
 		if lvl == LevelOff {
 			notes = append(notes, reg.name+" 门关着")
 			off = append(off, reg.name)
@@ -843,5 +872,5 @@ func (a *Service) dropBranch(p Plan) {
 func PlanOf(a *Service, j *state.Job) Plan {
 	return Plan{JobID: j.ID, Project: j.Project, ProjectDir: j.ProjectDir, Title: j.Title, Item: j.Item, Fingerprint: j.Fingerprint, Backend: j.Backend,
 		DefaultBranch: j.DefaultBranch, Branch: j.Gate.Branch, Head: j.Gate.Head, Ready: j.Gate.Ready, Round: j.Gate.Round, Override: j.Gate.Override, Product: j.NewReport != nil || backlog.ProductItem(j.Item), Rerun: j.Gate.Rerun, Upstream: j.Gate.Upstream,
-		Timeout: a.Cfg.VerifyTimeout.Duration.String()}
+		Timeout: a.Cfg.VerifyTimeout.Duration.String(), Scope: j.GateScope, ScopeFrom: j.GateScopeFrom}
 }

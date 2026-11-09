@@ -352,7 +352,7 @@ func (a *Service) goneHow(st *state.State, r *PatrolReport, is PatrolIssue, now 
 			return ""
 		}
 	case "usage": // 一个窗口重置了，别的窗口仍 ≥90% 时不算恢复（那个窗口会作为新指纹报出来）
-		if lvl, _, _ := backend.UsageLevel(st.Usage, now, a.Cfg.Model); lvl >= backend.UsageStop {
+		if lvl, _, _ := backend.UsageLevel(st.Usage, now, a.Cfg.UsagePolicy()); lvl >= backend.UsageStop {
 			return ""
 		}
 	}

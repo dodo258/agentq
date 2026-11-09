@@ -161,6 +161,12 @@ type Item struct {
 	Fingerprint string
 	InProgress  bool
 	Stuck       bool
+	// Deps：（依赖：…）写的字，一个标记一段；Scope：（范围：…）写的路径前缀。见 ItemDeps、ItemScope。
+	Deps  []string
+	Scope []string
+	// DepsWaiting：还没满足的依赖（「已完成」里没有标题含这段字的条目）；DepsMissing 是其中整份 BACKLOG 都找不到的，多半写错了。Items 按整份 BACKLOG 和归档填。
+	DepsWaiting []string
+	DepsMissing []string
 }
 
 func (it Item) Eligible() bool { return !it.InProgress && !it.Stuck }
@@ -238,9 +244,139 @@ func ParseBacklog(text string) []Item {
 			Fingerprint: Fingerprint(line),
 			InProgress:  strings.Contains(line, "（进行中"),
 			Stuck:       isStuck(text),
+			Deps:        ItemDeps(text),
+			Scope:       ItemScope(text),
 		})
 	})
+	resolveDeps(items, text, "")
 	return items
+}
+
+// 依赖和范围标记只认括号紧挨「依赖」「范围」再接冒号的写法（全角或半角括号、冒号都行），正文里顺带提到不算，
+// dispatch 模板里「；范围：已知页面/文件」这种不带括号的写法也不算。
+var (
+	depRe   = regexp.MustCompile(`[（(]\s*依赖\s*[：:]\s*([^）)]*)[）)]`)
+	scopeRe = regexp.MustCompile(`[（(]\s*范围\s*[：:]\s*([^）)]*)[）)]`)
+	scopeSp = regexp.MustCompile(`[,，、]`)
+)
+
+// ItemDeps：条目写的依赖，每个（依赖：…）一段，去掉首尾空白，空的不算。
+func ItemDeps(text string) []string {
+	var out []string
+	for _, m := range depRe.FindAllStringSubmatch(text, -1) {
+		if d := strings.TrimSpace(m[1]); d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// ItemScope：条目写的范围，路径前缀，逗号或顿号分隔，可以写多个标记。去掉反引号、开头的「./」「/」；只写「.」「/」的是整个仓库，记成空串（是任何路径的前缀）。
+func ItemScope(text string) []string {
+	var out []string
+	for _, m := range scopeRe.FindAllStringSubmatch(text, -1) {
+		for _, s := range scopeSp.Split(m[1], -1) {
+			s = strings.Trim(strings.TrimSpace(s), "`")
+			if s == "" {
+				continue
+			}
+			for strings.HasPrefix(s, "./") {
+				s = s[2:]
+			}
+			s = strings.TrimLeft(s, "/")
+			if s == "." {
+				s = ""
+			}
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// ScopesOverlap：两组范围有一对是另一条的前缀（相等也算）。只比字符串前缀，宁可多判重叠：多判只是少并行。
+func ScopesOverlap(a, b []string) (string, string, bool) {
+	for _, x := range a {
+		for _, y := range b {
+			if strings.HasPrefix(x, y) || strings.HasPrefix(y, x) {
+				return x, y, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// ParallelBlock：同项目有这些条目（running，任务记的条目原文）在跑时，it 能不能一起跑；能返回空，不能返回原因。
+// 要 it 写了范围、在跑的每条都写了范围、两两不重叠；没写范围的当会撞。
+func ParallelBlock(it Item, running []string) string {
+	if len(running) == 0 {
+		return ""
+	}
+	if len(it.Scope) == 0 {
+		return "没写（范围：…），不和在跑的任务并行"
+	}
+	for _, r := range running {
+		sc := ItemScope(r)
+		if len(sc) == 0 {
+			return "在跑的「" + ItemTitle(r) + "」没写范围，不并行"
+		}
+		if x, y, ok := ScopesOverlap(it.Scope, sc); ok {
+			return fmt.Sprintf("范围 %s 和在跑的「%s」的 %s 重叠，不并行", x, ItemTitle(r), y)
+		}
+	}
+	return ""
+}
+
+// resolveDeps 填每条的 DepsWaiting、DepsMissing。「已完成」节（和归档）里的「- [x]」标题含这段字才算满足；
+// 别的节里还没勾的条目（不算自己）有匹配就是在等它，两边都没有就是找不到。
+func resolveDeps(items []Item, text, archive string) {
+	var done, open []string
+	var openFP []string
+	EachBacklogLine(text, func(section, line string) {
+		switch {
+		case strings.HasPrefix(section, "已完成") && (strings.HasPrefix(line, "- [x]") || strings.HasPrefix(line, "- [X]")):
+			done = append(done, ItemTitle(strings.TrimSpace(line[len("- [x]"):])))
+		case !strings.HasPrefix(section, "已完成") && strings.HasPrefix(line, "- [ ]"):
+			open = append(open, ItemTitle(strings.TrimSpace(strings.TrimPrefix(line, "- [ ]"))))
+			openFP = append(openFP, Fingerprint(line))
+		}
+	})
+	EachBacklogLine(archive, func(_, line string) {
+		if strings.HasPrefix(line, "- [x]") || strings.HasPrefix(line, "- [X]") {
+			done = append(done, ItemTitle(strings.TrimSpace(line[len("- [x]"):])))
+		}
+	})
+	contains := func(titles []string, d string, skip string) bool {
+		for i, t := range titles {
+			if strings.Contains(t, d) && (skip == "" || openFP[i] != skip) {
+				return true
+			}
+		}
+		return false
+	}
+	for i := range items {
+		items[i].DepsWaiting, items[i].DepsMissing = nil, nil
+		for _, d := range items[i].Deps {
+			if contains(done, d, "") {
+				continue
+			}
+			items[i].DepsWaiting = append(items[i].DepsWaiting, d)
+			if !contains(open, d, items[i].Fingerprint) {
+				items[i].DepsMissing = append(items[i].DepsMissing, d)
+			}
+		}
+	}
+}
+
+func hasDeps(items []Item) bool {
+	return slices.ContainsFunc(items, func(it Item) bool { return len(it.Deps) > 0 })
+}
+
+// DepNote：依赖找不到时给 status 的一句话，没有是空。
+func (it Item) DepNote() string {
+	if len(it.DepsMissing) == 0 {
+		return ""
+	}
+	return "「" + it.Title + "」依赖『" + strings.Join(it.DepsMissing, "』『") + "』找不到：BACKLOG 和归档里都没有标题含这段字的条目，写错了就改，不改会一直等"
 }
 
 // doneCommitRe：agent-task 移到「已完成」时写的「合并提交 <号>」。
@@ -270,7 +406,7 @@ func DoneMergeCommit(text, title string) string {
 }
 
 func ItemTitle(text string) string {
-	t := directionRe.ReplaceAllString(waitCondRe.ReplaceAllString(InProgressRe.ReplaceAllString(text, ""), ""), "")
+	t := stripMarks(waitCondRe.ReplaceAllString(InProgressRe.ReplaceAllString(text, ""), ""))
 	if i := strings.Index(t, "——"); i >= 0 {
 		t = t[:i]
 	}
@@ -289,10 +425,21 @@ const ProductMark = "（成品）"
 // ProductItem：条目标了（成品）。写法同（低风险），正文顺带提到的不算。
 func ProductItem(text string) bool { return markedItem(text, ProductMark) }
 
+// IrreversibleMark 标在条目上：这一条改错了难撤回，门过了也等用户拍板才合。
+const IrreversibleMark = "（难撤回）"
+
+// IrreversibleItem：条目标了（难撤回）。写法同（低风险），正文顺带提到的不算。
+func IrreversibleItem(text string) bool { return markedItem(text, IrreversibleMark) }
+
 func markedItem(text, mark string) bool {
 	t := ItemTitle(text)
 	return strings.HasPrefix(t, mark) || strings.HasSuffix(t, mark) ||
-		strings.HasSuffix(strings.TrimSpace(directionRe.ReplaceAllString(InProgressRe.ReplaceAllString(text, ""), "")), mark)
+		strings.HasSuffix(strings.TrimSpace(stripMarks(InProgressRe.ReplaceAllString(text, ""))), mark)
+}
+
+// stripMarks 去掉方向、依赖、范围标记：它们写在哪都不改变标题，也不挡（低风险）这类标记的位置判断。
+func stripMarks(s string) string {
+	return scopeRe.ReplaceAllString(depRe.ReplaceAllString(directionRe.ReplaceAllString(s, ""), ""), "")
 }
 
 // DiscussMark 标在条目上：这一条开工前要和用户商量大方向（设计、界面、前后端选型）。写法同（低风险）。
@@ -349,6 +496,10 @@ func (p Project) Items() ([]Item, error) {
 		return nil, err
 	}
 	items := ParseBacklog(string(b))
+	if hasDeps(items) { // 依赖也认已经归档的条目；归档读不出就只看 BACKLOG（多等，不会误放）
+		arch, _ := os.ReadFile(p.ArchivePath())
+		resolveDeps(items, string(b), string(arch))
+	}
 	for i := range items {
 		items[i].Project = p.Name
 	}

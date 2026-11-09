@@ -19,6 +19,7 @@ import (
 	"agentq/internal/config"
 	"agentq/internal/discuss"
 	"agentq/internal/env"
+	"agentq/internal/evolve"
 	"agentq/internal/fsx"
 	"agentq/internal/gate"
 	"agentq/internal/inbox"
@@ -42,6 +43,7 @@ type Service struct {
 	Backlog  *backlog.Service
 	Chat     *chat.Service
 	Discuss  *discuss.Service
+	Evolve   *evolve.Service
 	Gate     *gate.Service
 	Inbox    *inbox.Service
 	Ledger   *ledger.Service
@@ -194,6 +196,7 @@ func (a *Service) Tick(after string) error {
 	}
 	a.Logf("%s", msg)
 	a.Patrol.PatrolIfDue(st)
+	a.Evolve.CollectIfDue() // 自我进化的信号：只读本机文件，不调模型
 	a.NotifyTick(st)
 	if !recovered {
 		a.retention(st) // 不调模型，删不掉只记日志
@@ -434,7 +437,7 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob) (int, st
 				seen = true
 				notes = append(notes, why)
 			} else {
-				switch lvl, until, why := backend.UsageLevel(a.Runner.UsageOn(st, name), a.Now(), a.Cfg.ForBackend(name).Model); {
+				switch lvl, until, why := backend.UsageLevel(a.Runner.UsageOn(st, name), a.Now(), a.Cfg.ForBackend(name).UsagePolicy()); {
 				case lvl >= backend.UsageStop:
 					seen = true
 					notes = append(notes, whose+backend.UsageGateNote(lvl, until, why))
@@ -510,6 +513,10 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob) (int, st
 			started++
 			continue
 		}
+		if runner.ScopeBlocked(st, a.Cfg, orig.Project, orig.Item) != "" { // 先等它续跑：这次不让同项目写了范围的新条目插队，原因在 status
+			resumed[orig.Project] = true
+			continue
+		}
 		if ok, _ := state.Capacity(st, a.Cfg, orig.Project); !ok || resumed[orig.Project] {
 			continue
 		}
@@ -550,6 +557,10 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob) (int, st
 		if ok, _ := state.Capacity(st, a.Cfg, ""); !ok || breaker() {
 			break
 		}
+		if runner.ScopeBlocked(st, a.Cfg, o.Project.Name, o.Item.Text) != "" { // 同上：先等接手，这次不挑新条目
+			resumed[o.Project.Name] = true
+			continue
+		}
 		if ok, _ := state.Capacity(st, a.Cfg, o.Project.Name); !ok || resumed[o.Project.Name] {
 			continue
 		}
@@ -582,6 +593,7 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob) (int, st
 		a.Logf("接手任务 %s：%s「%s」分支 %s pid %d", j.ID, j.Project, j.Title, o.Facts.Branch, j.PID)
 		started++
 	}
+projects:
 	for _, p := range projects {
 		if ok, _ := state.Capacity(st, a.Cfg, ""); !ok || breaker() {
 			break
@@ -611,39 +623,47 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob) (int, st
 			items = []backlog.Item{hold.Item}
 		}
 		name := a.Cfg.ProjectBackend(p.Name)
-		var it backlog.Item
-		ok, verdict := false, discuss.Proceed
-		for { // 在等商量的跳过，同项目下一条照常：不挡别的条目
-			if it, ok = a.Runner.Pick(st, items, "", true); !ok {
+		// 同项目可以连挑，直到 per_project 或全局上限：第二条起要写了范围、和在跑的都不重叠（Pick 判），没写范围的照旧一次一条。
+		for n := 0; ; n++ {
+			if n > 0 {
+				if ok, _ := state.Capacity(st, a.Cfg, p.Name); !ok || breaker() {
+					break
+				}
+			}
+			var it backlog.Item
+			ok, verdict := false, discuss.Proceed
+			for { // 在等商量的跳过，同项目下一条照常：不挡别的条目
+				if it, ok = a.Runner.Pick(st, items, "", true); !ok {
+					break
+				}
+				if a.Runner.PermissionBlocked(name) || a.branchBlocked(st, p.Name, p.Dir, "", &notes) {
+					ok = false
+					break
+				}
+				if it, verdict = a.Discuss.Hold(st, p, it, func() bool { return ready(name) }); verdict != discuss.Wait {
+					break
+				}
+				waited := it
+				items = slices.DeleteFunc(slices.Clone(items), func(x backlog.Item) bool { return x.Title == waited.Title })
+			}
+			if verdict == discuss.NotReady || ok && !ready(name) {
+				if done(name) {
+					notReady = true
+					break projects
+				}
 				break
 			}
-			if a.Runner.PermissionBlocked(name) || a.branchBlocked(st, p.Name, p.Dir, "", &notes) {
-				ok = false
+			if !ok {
 				break
 			}
-			if it, verdict = a.Discuss.Hold(st, p, it, func() bool { return ready(name) }); verdict != discuss.Wait {
+			j, err := a.Runner.Launch(st, p, it)
+			if err != nil {
+				notes = append(notes, p.Name+" 启动失败："+err.Error())
 				break
 			}
-			waited := it
-			items = slices.DeleteFunc(slices.Clone(items), func(x backlog.Item) bool { return x.Title == waited.Title })
+			a.Logf("启动任务 %s：%s「%s」pid %d", j.ID, p.Name, j.Title, j.PID)
+			started++
 		}
-		if verdict == discuss.NotReady || ok && !ready(name) {
-			if done(name) {
-				notReady = true
-				break
-			}
-			continue
-		}
-		if !ok {
-			continue
-		}
-		j, err := a.Runner.Launch(st, p, it)
-		if err != nil {
-			notes = append(notes, p.Name+" 启动失败："+err.Error())
-			continue
-		}
-		a.Logf("启动任务 %s：%s「%s」pid %d", j.ID, p.Name, j.Title, j.PID)
-		started++
 	}
 	// 任务箱排在项目待做之后：项目都接完还有名额才接，同一时间最多一个。
 	if ok, _ := state.Capacity(st, a.Cfg, inbox.InboxJobName); ok && !notReady && !breaker() && !state.HasRunning(st, state.KindInbox) && !a.Runner.PermissionBlocked(a.Cfg.ProjectBackend(inbox.InboxJobName)) {

@@ -136,17 +136,17 @@ func TestStatsGroups(t *testing.T) {
 	var b strings.Builder
 	res.print(&b)
 	out := b.String()
-	for _, want := range []string{"最近 7 天：7 次　成 1　败 3　中断 2　在跑 1", "按种类：", "按项目：", "按模型：", "待做任务　6 次", "alpha　5 次", "sonnet　1 次", "约 $15.00", "2 个任务没有用量记录"} {
+	for _, want := range []string{"最近 7 天：7 次　成 1　败 3　中断 2　在跑 1", "按种类：", "按项目：", "按模型：", "待做任务　6 次", "alpha　5 次", "sonnet　1 次", "在跑 1　token 150\n", "2 个任务没有用量记录", "最后一列是 token 占比"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("缺 %q：\n%s", want, out)
 		}
 	}
-	// 费用占比，贵的在前
-	if !strings.Contains(out, "alpha　5 次　成 1　败 2　中断 1　在跑 1　token 130　约 $13.00　87%") {
+	// token 占比，多的在前，不显示金额
+	if strings.Contains(out, "$") || !strings.Contains(out, "alpha　5 次　成 1　败 2　中断 1　在跑 1　token 130　87%") {
 		t.Errorf("%s", out)
 	}
 	if strings.Index(out, "alpha　") > strings.Index(out, "beta　") {
-		t.Errorf("贵的在前：%s", out)
+		t.Errorf("用量多的在前：%s", out)
 	}
 }
 

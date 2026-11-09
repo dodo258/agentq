@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"agentq/internal/backend"
+	"agentq/internal/backlog"
 	"agentq/internal/config"
 	"agentq/internal/proc"
 	"agentq/internal/textfmt"
@@ -290,7 +291,8 @@ func UIReviewRequest(cfg config.Config, c Candidate, shotsDir string, shots, bas
 	for _, s := range shots[:min(len(shots), maxShotFiles)] {
 		images = append(images, filepath.Join(shotsDir, s))
 	}
-	return backend.Request{Prompt: uiPrompt(c, shotsDir, shots, baseline), Dir: c.Dir, Label: proc.NameMarker(c.Project) + "界面审查", Model: cfg.Model, Effort: reviewEffort, Permission: cfg.PermissionMode,
+	model := reviewModel(cfg.Model, cfg.LightReviewModel, c)
+	return backend.Request{Prompt: uiPrompt(c, shotsDir, shots, baseline), Dir: c.Dir, Label: proc.NameMarker(c.Project) + "界面审查", Model: model, Effort: reviewEffort, Permission: cfg.PermissionMode,
 		Profile: backend.ProfileReview, Schema: uiSchema, BudgetUSD: cfg.JobBudgetUSD, Must: backend.MustReview | backend.MustImages, AddDirs: []string{shotsDir}, Images: images}
 }
 
@@ -323,5 +325,9 @@ func uiPrompt(c Candidate, shotsDir string, shots, baseline []string) string {
 		fmt.Fprintf(&b, "任务改了给模型看的指令文件：%s。工作目录里已换回基点的版本。\n", strings.Join(list, "、"))
 	}
 	fmt.Fprintf(&b, "条目：%s\n改动的文件：%s\n", textfmt.OneLine(c.Item, 1000), textfmt.OneLine(strings.Join(c.Files, "、"), 800))
+	if dir := backlog.Direction(c.Item); dir != "" {
+		fmt.Fprintf(&b, "开工前定的大方向：%s。照这个方向做的设计不提意见。\n", dir)
+	}
+	b.WriteString(specLine(c, true))
 	return b.String()
 }

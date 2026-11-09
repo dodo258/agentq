@@ -14,7 +14,7 @@ tail -50 ~/.agentq/launchd.log
 | --- | --- | --- |
 | 调度：已暂停 | `paused=true`，新安装的默认值 | `agentq start` 或 `agentq resume` |
 | 调度：用量冷却中 | 撞上用量上限 | 等到显示的时间。`agentq run` 也会拒绝 |
-| 调度：订阅额度快用完 | 计入的窗口 ≥90% | 到重置时间自动恢复。`agentq run` 还能用，≥98% 时也拒绝 |
+| 调度：订阅额度到了后台上限 | 会话窗口到 70% 或周窗口到 90%（可在配置里改） | 到重置时间自动恢复。`agentq run` 还能用，≥98% 时也拒绝 |
 | 调度：连环失败熔断中 | 连续 3 个任务启动后立刻退出 | 查看当天汇总的「熔断：…」。修好后用 `agentq run` 试跑一条，跑完就解除 |
 | 没有报错，但不启动任务 | 没有定时服务 | 运行 `agentq start`。macOS 用 `launchctl print gui/$(id -u)/io.agentq.agentq` 确认，Linux 用 `systemctl --user status io.agentq.agentq.timer` |
 | 某个项目一直不启动 | 它在 `exclude_projects` 里 | `agentq status` 列出被排除的项目。要恢复就从配置里去掉，只运行一次用 `agentq run` |

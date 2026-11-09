@@ -16,9 +16,14 @@ import (
 	"time"
 
 	"agentq/internal/backend"
+	"agentq/internal/backlog"
 	"agentq/internal/env"
 	"agentq/internal/fsx"
+	"agentq/internal/gate"
+	"agentq/internal/ledger"
+	"agentq/internal/notify"
 	"agentq/internal/proc"
+	"agentq/internal/suggest"
 	"agentq/internal/textfmt"
 )
 
@@ -34,9 +39,14 @@ const (
 	runIDForm = "20060102-150405"
 )
 
-// Service 是 agentq eval。
+// Service 是 agentq eval 和自我进化的信号、约束、提案（agentq evolve）。
 type Service struct {
 	*env.Env
+	Backlog *backlog.Service
+	Gate    *gate.Service
+	Ledger  *ledger.Service
+	Notify  *notify.Service
+	Suggest *suggest.Service
 	// Evals 是编译进二进制的评测集，根下有 evals/。评判用运行中这一代的原件，任务分支上改的题不算。
 	Evals fs.FS
 	// Version 记进结果，比较时能分清是哪一代跑的。

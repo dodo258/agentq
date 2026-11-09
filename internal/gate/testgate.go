@@ -42,7 +42,7 @@ func (g testGate) Run(ctx context.Context, c Candidate) Result {
 		}
 	}
 	if len(baseline) > 0 {
-		return Result{Outcome: Fail, Summary: "任务动了 " + BaselineDir + "：基线只认用户确认过的，引擎和任务都不更新。用户要改就直接提交到默认分支，或 agentq gate pass", Evidence: baseline}
+		return Result{Outcome: Fail, Summary: "任务动了 " + BaselineDir + "：基线只认用户确认过的，引擎和任务都不更新。用户要改就直接提交到默认分支，或 agentq gate pass", Evidence: baseline, Files: baseline}
 	}
 	first, note, err := locateScript(ctx, g.d, c, VerifyScript)
 	if err != nil {
@@ -115,9 +115,9 @@ func (g testGate) runConfirmed(ctx context.Context, c Candidate, first bool) Res
 	case 2:
 		return Result{Outcome: Pass, Summary: VerifyScript + " 不稳定（flaky）：第一次失败，连跑两次都过", Evidence: ev}
 	case 1:
-		return Result{Outcome: Fail, Summary: VerifyScript + " 没过，结果不一致（flaky）：" + r.Note, Evidence: ev}
+		return Result{Outcome: Fail, Summary: VerifyScript + " 没过，结果不一致（flaky）：" + r.Note, Evidence: ev, Files: filesInLog(ctx, g.d, c, filepath.Join(c.WorkDir, "test.log"))}
 	}
-	return Result{Outcome: Fail, Summary: VerifyScript + " 没过：" + r.Note, Evidence: ev}
+	return Result{Outcome: Fail, Summary: VerifyScript + " 没过：" + r.Note, Evidence: ev, Files: filesInLog(ctx, g.d, c, filepath.Join(c.WorkDir, "test.log"))}
 }
 
 // checkFix：修 bug 附了新测试时，把非测试文件还原到基点再跑一次，必须失败。
@@ -161,7 +161,7 @@ func (g testGate) checkFix(ctx context.Context, c Candidate, first, newTests boo
 		return res
 	case ScriptPassed:
 		return Result{Outcome: Fail, Summary: "撤掉修复测试还是过：新测试证明不了修复，" + log,
-			Evidence: append(res.Evidence, "还原到基点的文件："+strings.Join(code, "、"))}
+			Evidence: append(res.Evidence, "还原到基点的文件："+strings.Join(code, "、")), Files: code}
 	}
 	return Result{Outcome: Unknown, Summary: "撤掉修复后判不了：" + textfmt.OneLine(r.Note, 200), Evidence: append(res.Evidence, log)}
 }

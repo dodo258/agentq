@@ -47,7 +47,7 @@ func TestFreshConfigHasNoModelNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := testkit.ReadFile(t, path)
-	testkit.AssertContains(t, text, `"model": ""`, `"effort": ""`, `"router_model": ""`, `"suggest_model": ""`, `"sense_model": ""`)
+	testkit.AssertContains(t, text, `"model": ""`, `"effort": ""`, `"router_model": ""`, `"suggest_model": ""`, `"sense_model": ""`, `"light_review_model": ""`)
 	for _, name := range []string{"opus", "sonnet"} {
 		if strings.Contains(text, name) {
 			t.Fatalf("写死了 %s：\n%s", name, text)

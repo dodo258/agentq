@@ -148,11 +148,20 @@ func Wire(a *App, assets Assets) *App {
 	a.Stats = orNew(a.Stats)
 	a.Stats.Env = a.Env
 	a.Stats.Ledger = a.Ledger
+	a.Evolve = orNew(a.Evolve)
+	a.Evolve.Env = a.Env
+	a.Evolve.Backlog = a.Backlog
+	a.Evolve.Gate = a.Gate
+	a.Evolve.Ledger = a.Ledger
+	a.Evolve.Notify = a.Notify
+	a.Evolve.Suggest = a.Suggest
+	a.Evolve.Evals = assets.Evals
 	a.Sched = orNew(a.Sched)
 	a.Sched.Env = a.Env
 	a.Sched.Backlog = a.Backlog
 	a.Sched.Chat = a.Chat
 	a.Sched.Discuss = a.Discuss
+	a.Sched.Evolve = a.Evolve
 	a.Sched.Gate = a.Gate
 	a.Sched.Inbox = a.Inbox
 	a.Sched.Ledger = a.Ledger
@@ -174,9 +183,6 @@ func Wire(a *App, assets Assets) *App {
 	a.Onboard.Service = a.Service
 	a.Onboard.Telegram = a.Telegram
 	a.Onboard.Assets = assets.Install
-	a.Evolve = orNew(a.Evolve)
-	a.Evolve.Env = a.Env
-	a.Evolve.Evals = assets.Evals
 	a.Notify.MorningGates = a.Gate.MorningLines
 	a.Sense.TriageSkill = assets.TriageSkill
 	a.Routine.RoutineText = assets.RoutineText
@@ -206,6 +212,7 @@ func (a *App) wiredHooks() runner.Hooks {
 		DiscussRequest:    discuss.Request,
 		ReleaseRequest:    release.ReleaseRequest,
 		WriteSenseRunFile: a.Sense.WriteSenseRunFile,
+		ConstraintsNote:   a.Evolve.ConstraintsNote,
 
 		MissingReport:  a.Routine.MissingReport,
 		CheckNewResult: a.Newproj.CheckNewResult,

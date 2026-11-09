@@ -16,7 +16,7 @@ Go 标准库，单二进制，分模块见下一节。平台差异只在 `*_darw
 | 2 | `state` `backlog` `telegram` `asc` | state.json 和 Job；BACKLOG 文本和提交；Telegram 客户端；App Store Connect 只读客户端 |
 | 3 | `quality` `ledger` `service` `envlayer` `notify` | 满意率；meta.json 和当天汇总；launchd、systemd；通用工程规则（`rules/`）放到后端的规则目录；通知队列、早报 |
 | 4 | `gate` `runner` | 合并前的质量门和引擎合并（门队列、`_gate` 进程、收尾，加门走 `gate.Register`；`agentq health`）；任务从启动到收尾（任务外壳、续跑、超时、熔断、预算、额度门，功能走 `runner.Hooks`） |
-| 5 | `orphan` `inbox` `discuss` `newproj` `suggest` `release` `sense` `routine` `patrol` `evolve` | 孤儿条目；任务箱；开工前商量大方向；`agentq new`（用 `discuss`）；闲时找活；发版助手；主动感知；夜班和复盘；巡逻；评测集和判分（`agentq eval`，tick 不调用） |
+| 5 | `orphan` `inbox` `discuss` `newproj` `suggest` `release` `sense` `routine` `patrol` `evolve` | 孤儿条目；任务箱；开工前商量大方向；`agentq new`（用 `discuss`）；闲时找活；发版助手；主动感知；夜班和复盘；巡逻；评测集和判分（`agentq eval`，tick 不调用），自我进化的信号、学到的约束和 L0 提案（`agentq evolve`，tick 每小时收，不调模型；用 `suggest` 的建议编号和不做清单，只读 `gate` 的结果类型） |
 | 6 | `chat` `stats` | 用户消息（长轮询、Fast Path、Router、回复链）；任务统计 |
 | 7 | `sched` `setup` `onboard` | 一次 tick 的固定流程和磁盘清理；安装引擎；`init`、`add`、`start`、`env` 和接手时判断检查命令 |
 | 8 | `app` | 建每个模块的唯一实例、接钩子；`status`、`run`、`stop`、`logs`、`notify`、`backlog archive` |

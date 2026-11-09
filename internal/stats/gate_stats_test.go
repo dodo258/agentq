@@ -44,7 +44,7 @@ func TestStatsByGate(t *testing.T) {
 		}
 	}
 	gateSection := out[strings.Index(out, "按门（"):]
-	gateSection = gateSection[:strings.Index(gateSection, "费用按 API")]
+	gateSection = gateSection[:strings.Index(gateSection, "最后一列是 token 占比")]
 	if strings.Contains(gateSection, "$") {
 		t.Errorf("门的统计不写费用：\n%s", gateSection)
 	}

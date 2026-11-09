@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -117,6 +118,9 @@ func waitingBranch(st *state.State, project string) string {
 func (a *Service) ResumeBlockLines(st *state.State) []string {
 	var out []string
 	for _, j := range st.PendingResumes() {
+		if why := ScopeBlocked(st, a.Cfg, j.Project, j.Item); j.Kind == "" && why != "" {
+			out = append(out, fmt.Sprintf("等续跑：%s「%s」，任务 %s：%s；这个项目先不起新条目", j.Project, textfmt.TruncRunes(j.Title, 30), j.ID, why))
+		}
 		if j.DefaultBranch == "" {
 			continue
 		}
@@ -232,7 +236,15 @@ func (a *Service) Launch(st *state.State, p backlog.Project, it backlog.Item) (*
 		return j, err
 	}
 	j.NewReport = firstReport(st, p, it)
-	return a.Start(st, j, BuildPrompt(p.Dir, it.Text)+contract+a.Gate.PatchNote(p.Dir, def, it.Text)+directionNote(it.Text), "")
+	return a.Start(st, j, BuildPrompt(p.Dir, it.Text)+contract+a.Gate.PatchNote(p.Dir, def, it.Text)+directionNote(it.Text)+a.constraintsNote(p.Name), "")
+}
+
+// constraintsNote：项目学到的约束，接在新任务合同末尾。没接钩子或没有约束时是空的，提示词一字不变。
+func (a *Service) constraintsNote(project string) string {
+	if a.Hooks.ConstraintsNote == nil {
+		return ""
+	}
+	return a.Hooks.ConstraintsNote(project)
 }
 
 // LaunchResume 用中断任务的会话（claude -r）续跑一次，记成一个新任务。
@@ -258,9 +270,10 @@ func (a *Service) ResumeJob(st *state.State, orig *state.Job, id, extra string) 
 		ID:            id,
 		DefaultBranch: def,
 		Project:       orig.Project, ProjectDir: orig.ProjectDir, Item: orig.Item, Title: orig.Title,
-		Fingerprint: orig.Fingerprint, SessionID: orig.SessionID, ResumeOf: orig.ID, Takeover: orig.Takeover, Backend: orig.Backend, GateRound: nextGateRound(orig), NewReport: orig.NewReport.Next(),
+		Fingerprint: orig.Fingerprint, SessionID: orig.SessionID, ResumeOf: orig.ID, Takeover: orig.Takeover, Backend: orig.Backend, NewReport: orig.NewReport.Next(),
 		Summary: "上次中断（任务 " + orig.ID + "），已用同一会话 " + orig.SessionID + " 续跑",
 	}
+	carryGate(j, orig)
 	pending, stuck := orig.ResumePending, orig.StuckPending
 	orig.ResumePending, orig.StuckPending = false, "" // 接着做了，卡住标记不用再写（用户回复接回时）
 	j, err = a.Start(st, j, BuildResumePrompt(orig.ProjectDir, orig.Item)+contract+extra, orig.SessionID)
@@ -284,12 +297,19 @@ func directionNote(item string) string {
 	return "\n\n条目里的（方向：…）是开工前定的大方向，按它做，细节自己定；要偏离就写进方案和 ready.json 的 progress。"
 }
 
-// nextGateRound：退回的任务接着做算下一轮，其余的续跑还是这一轮。
-func nextGateRound(orig *state.Job) int {
-	if orig.Gate != nil && orig.Gate.State == state.GateReturned {
-		return orig.Gate.Round + 1
+// carryGate：退回的任务接着做算下一轮，带上退回时定的范围和上一轮的分支尖（scope 门比较它之后的改动）；其余的续跑还是这一轮。
+func carryGate(j, orig *state.Job) {
+	if g := orig.Gate; g != nil && g.State == state.GateReturned {
+		j.GateRound, j.GateScope, j.GateScopeFrom = g.Round+1, nil, ""
+		if len(g.Scope) > 0 && g.Head != "" {
+			j.GateScope, j.GateScopeFrom = slices.Clone(g.Scope), g.Head
+		}
+		return
 	}
-	return orig.GateRound
+	j.GateRound, j.GateScope, j.GateScopeFrom = orig.GateRound, nil, ""
+	if orig.Gate == nil { // 这一轮做到一半中断的续跑：范围照旧。卡在门上的（用户去掉卡住标记重做）不再限定
+		j.GateScope, j.GateScopeFrom = slices.Clone(orig.GateScope), orig.GateScopeFrom
+	}
 }
 
 // GateTakeoverNote：接手任务接的是门退回的任务时，提示词后面要多门的报告，轮数接着算。
@@ -299,7 +319,7 @@ func (a *Service) GateTakeoverNote(st *state.State, j *state.Job, p backlog.Proj
 	if last == nil || last.Gate == nil || (last.Gate.State != state.GateReturned && last.Gate.State != state.GateStuck) {
 		return ""
 	}
-	j.GateRound = nextGateRound(last)
+	carryGate(j, last)
 	return a.Gate.ReturnNote(last)
 }
 

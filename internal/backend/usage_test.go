@@ -37,16 +37,16 @@ func TestWhenCN(t *testing.T) {
 	}
 	reset := time.Date(2026, 10, 13, 21, 0, 0, 0, time.Local)
 	u := &UsageInfo{Windows: []UsageWindow{{Label: "week", Used: 95, ResetsAt: &reset}}}
-	if got := UsageDescribe(u, reset.Add(-48*time.Hour), "opus"); !strings.Contains(got, "（10-13 周二 21:00 重置）") {
+	if got := UsageDescribe(u, reset.Add(-48*time.Hour), UsagePolicy{Model: "opus"}); !strings.Contains(got, "（10-13 周二 21:00 重置，后台上限 90%）") {
 		t.Errorf("额度说明里的重置时间应带星期：%q", got)
 	}
 	// 模型跟随 CLI：只限某个模型的窗口不计入（不知道实际用哪个），话要说全
 	scoped := &UsageInfo{Windows: []UsageWindow{{Label: "week (Fable)", Scope: "Fable", Used: 100, ResetsAt: &reset}}}
-	got := UsageDescribe(scoped, reset.Add(-48*time.Hour), "")
+	got := UsageDescribe(scoped, reset.Add(-48*time.Hour), UsagePolicy{})
 	if !strings.Contains(got, "任务跟随 CLI 选的模型，不计入") || strings.Contains(got, "任务用 ，") {
 		t.Errorf("%q", got)
 	}
-	if lvl, _, _ := UsageLevel(scoped, reset.Add(-48*time.Hour), ""); lvl != UsageOK {
+	if lvl, _, _ := UsageLevel(scoped, reset.Add(-48*time.Hour), UsagePolicy{}); lvl != UsageOK {
 		t.Errorf("%d", lvl)
 	}
 }
@@ -84,7 +84,7 @@ func TestUsageLevel(t *testing.T) {
 		{"Sonnet only 的写法", usageAt(95, &reset, "Sonnet only"), "sonnet", now, UsageStop},
 	}
 	for _, c := range cases {
-		if got, _, _ := UsageLevel(c.u, c.at, c.model); got != c.want {
+		if got, _, _ := UsageLevel(c.u, c.at, UsagePolicy{Model: c.model}); got != c.want {
 			t.Errorf("%s：档位 %d，想要 %d", c.name, got, c.want)
 		}
 	}
@@ -96,13 +96,32 @@ func TestUsageLevel(t *testing.T) {
 		{Label: "week", Used: 91, ResetsAt: &later},
 		{Label: "week (Fable)", Scope: "Fable", Used: 100},
 	}}
-	lvl, until, why := UsageLevel(u, now, "opus")
-	if lvl != UsageStop || !until.Equal(later.Add(UsageResetSlack)) || why != "会话 95%、本周 91%" {
+	lvl, until, why := UsageLevel(u, now, UsagePolicy{Model: "opus"})
+	if lvl != UsageStop || !until.Equal(later.Add(UsageResetSlack)) || why != "会话 95%，后台上限 90%、本周 91%，后台上限 90%" {
 		t.Errorf("%d %v %q", lvl, until, why)
 	}
 	u.Windows[1].ResetsAt = nil
-	if _, until, _ := UsageLevel(u, now, "opus"); !until.IsZero() {
+	if _, until, _ := UsageLevel(u, now, UsagePolicy{Model: "opus"}); !until.IsZero() {
 		t.Errorf("有窗口没写重置时间时不该给恢复时刻：%v", until)
+	}
+	// 后台上限：会话、周分开配，没配的当 90
+	pol := UsagePolicy{Model: "opus", Session: 70, Week: 95}
+	u = &UsageInfo{Windows: []UsageWindow{{Label: "session", Used: 69.9, ResetsAt: &reset}, {Label: "week", Used: 94, ResetsAt: &later}}}
+	if lvl, _, _ := UsageLevel(u, now, pol); lvl != UsageOK {
+		t.Errorf("都没到上限：%d", lvl)
+	}
+	u.Windows[0].Used = 70
+	if lvl, until, why := UsageLevel(u, now, pol); lvl != UsageStop || !until.Equal(reset.Add(UsageResetSlack)) || why != "会话 70%，后台上限 70%" {
+		t.Errorf("会话到 70 停：%d %v %q", lvl, until, why)
+	}
+	if got := UsageDescribe(u, now, pol); !strings.Contains(got, "会话 70%（"+textfmt.WhenCN(reset)+" 重置，后台上限 70%）") || !strings.Contains(got, "后台上限 95%") {
+		t.Errorf("describe 要写上限：%s", got)
+	}
+	if lvl, _, _ := UsageLevel(u, now, UsagePolicy{Model: "opus", Week: 95}); lvl != UsageOK {
+		t.Errorf("会话没配当 90：%d", lvl)
+	}
+	if note := UsageGateNote(UsageStop, reset, "会话 70%，后台上限 70%"); !strings.Contains(note, "后台上限") || !strings.Contains(note, "agentq run 仍可用") {
+		t.Errorf("说明：%s", note)
 	}
 	note := UsageGateNote(UsageRefuse, reset, "会话 99%")
 	if !strings.Contains(note, "agentq run 也拒绝") || !strings.Contains(note, textfmt.WhenCN(reset)+" 重置后自动恢复") {

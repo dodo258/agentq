@@ -54,7 +54,7 @@ func TestIntegrationStats(t *testing.T) {
 	beforeMeta, _ := os.ReadFile(metaPath)
 	statusBefore := e.mustRun("status")
 	out := e.mustRun("stats")
-	for _, want := range []string{"最近 7 天：1 次　成 1　败 0", "待做任务　1 次", "demo　1 次", "opus　1 次", "约 $4.61"} {
+	for _, want := range []string{"最近 7 天：1 次　成 1　败 0", "待做任务　1 次", "demo　1 次", "opus　1 次", "token 6.75M"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("缺 %q：\n%s", want, out)
 		}

@@ -177,7 +177,7 @@ func TestQualityInNightlyFooter(t *testing.T) {
 	a.Ledger.UpdateCostFooter(&State{Jobs: []*Job{{ID: "j0", EndedAt: &end}}}, now)
 	b, _ := os.ReadFile(a.NightlyPath(now))
 	s := string(b)
-	if !strings.Contains(s, ledger.CostBegin) || strings.Contains(s, "## 当天花费") || !strings.Contains(s, "## 一次满意率和返工率") ||
+	if !strings.Contains(s, ledger.CostBegin) || strings.Contains(s, "## 当天用量") || !strings.Contains(s, "## 一次满意率和返工率") ||
 		!strings.Contains(s, "- p：合并 1 条，一次满意率 100%（1/1）；返工率 0%（0/1）") {
 		t.Fatalf("没有用量记录时小结只有一次满意率这一节：\n%s", s)
 	}
@@ -187,8 +187,8 @@ func TestQualityInNightlyFooter(t *testing.T) {
 	a.Ledger.AppendNightlyLine(now, "之后的一行")
 	b, _ = os.ReadFile(a.NightlyPath(now))
 	s = string(b)
-	i, k, q, e := strings.Index(s, "之后的一行"), strings.Index(s, "## 当天花费"), strings.Index(s, "## 一次满意率和返工率"), strings.Index(s, ledger.CostEnd)
+	i, k, q, e := strings.Index(s, "之后的一行"), strings.Index(s, "## 当天用量"), strings.Index(s, "## 一次满意率和返工率"), strings.Index(s, ledger.CostEnd)
 	if strings.Count(s, ledger.CostBegin) != 1 || !(i >= 0 && i < k && k < q && q < e) {
-		t.Fatalf("应依次是普通行、当天花费、一次满意率和返工率、结束标记：\n%s", s)
+		t.Fatalf("应依次是普通行、当天用量、一次满意率和返工率、结束标记：\n%s", s)
 	}
 }

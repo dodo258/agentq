@@ -19,24 +19,24 @@ func TestCostFooter(t *testing.T) {
 	day := time.Date(2026, 10, 11, 12, 0, 0, 0, loc)
 	at := func(h int) *time.Time { t := time.Date(2026, 10, 11, h, 0, 0, 0, loc); return &t }
 	st := &State{Jobs: []*Job{
-		{ID: "j1", Project: "a", Title: "便宜", EndedAt: at(1), Usage: &backend.JobUsage{Input: 100, CacheRead: 800, CacheWrite: 100, CostUSD: 1}},
-		{ID: "j2", Project: "b", Title: "最贵", EndedAt: at(2), Usage: &backend.JobUsage{Input: 0, CacheRead: 1000, CostUSD: 9}},
-		{ID: "j3", Project: "c", Title: "次贵", EndedAt: at(3), Usage: &backend.JobUsage{CacheRead: 100, CacheWrite: 900, Output: 5, CostUSD: 5}},
-		{ID: "j4", Project: "d", Title: "第三", EndedAt: at(4), Usage: &backend.JobUsage{CacheRead: 1000, CostUSD: 2}},
+		{ID: "j1", Project: "a", Title: "最少", EndedAt: at(1), Usage: &backend.JobUsage{Input: 100, CacheRead: 800, CacheWrite: 100, CostUSD: 9}},
+		{ID: "j2", Project: "b", Title: "最多", EndedAt: at(2), Usage: &backend.JobUsage{Input: 0, CacheRead: 3000, CostUSD: 1}},
+		{ID: "j3", Project: "c", Title: "次多", EndedAt: at(3), Usage: &backend.JobUsage{CacheRead: 100, CacheWrite: 1900, Output: 5, CostUSD: 5}},
+		{ID: "j4", Project: "d", Title: "第三", EndedAt: at(4), Usage: &backend.JobUsage{CacheRead: 1500, CostUSD: 2}},
 		{ID: "j5", Project: "e", Title: "缺用量", EndedAt: at(5)},
 		{ID: "j6", Project: "f", Title: "昨天的", EndedAt: ptime(day.Add(-24 * time.Hour)), Usage: &backend.JobUsage{CacheRead: 1, CostUSD: 99}},
 		{ID: "j7", Project: "g", Title: "还在跑", Status: state.StatusRunning},
 	}}
 	a := wireApp(&App{Env: &env.Env{}})
 	f := a.Ledger.CostFooter(st, day)
-	// 命中率 = (800+1000+100+1000) / (那四项 + 缓存写 100+900 + 输入 100) = 2900/4000
-	for _, want := range []string{ledger.CostBegin, "合计 4 个任务", "约 $17.00", "缓存命中率 72.5%",
-		"1. b「最贵」token 1.0K，约 $9.00；j2", "2. c「次贵」token 1.0K，约 $5.00；j3", "3. d「第三」token 1.0K，约 $2.00；j4", ledger.CostEnd} {
+	// 按 token 排，不按金额（j1 金额最高但 token 最少）；命中率 = (800+3000+100+1500) / (那四项 + 缓存写 100+1900 + 输入 100) = 5400/7500
+	for _, want := range []string{ledger.CostBegin, "## 当天用量", "合计 4 个任务", "缓存命中率 72.0%",
+		"1. b「最多」token 3.0K；j2", "2. c「次多」token 2.0K；j3", "3. d「第三」token 1.5K；j4", ledger.CostEnd} {
 		if !strings.Contains(f, want) {
 			t.Errorf("花费小结缺 %q：\n%s", want, f)
 		}
 	}
-	for _, bad := range []string{"便宜", "昨天的", "缺用量", "4. "} {
+	for _, bad := range []string{"最少", "昨天的", "缺用量", "4. ", "$"} {
 		if strings.Contains(f, bad) {
 			t.Errorf("花费小结不应有 %q：\n%s", bad, f)
 		}
@@ -64,7 +64,7 @@ func TestNightlyCostFooterStaysLast(t *testing.T) {
 	}
 	f.WriteString("- 09:31 已自动回滚：保护脚本追加的\n")
 	f.Close()
-	st.Jobs = append(st.Jobs, &Job{ID: "j2", Project: "b", Title: "乙", EndedAt: &end, Usage: &backend.JobUsage{CacheRead: 0, Input: 10, CostUSD: 3}})
+	st.Jobs = append(st.Jobs, &Job{ID: "j2", Project: "b", Title: "乙", EndedAt: &end, Usage: &backend.JobUsage{CacheRead: 0, Input: 20, CostUSD: 3}})
 	a.Ledger.UpdateCostFooter(st, now)
 	a.Ledger.AppendNightlyLine(now, "第三行")
 

@@ -89,12 +89,12 @@ func (a *App) CmdStatus() error {
 	if u.Stale(now) {
 		u = a.Runner.ReadUsage(now)
 	}
-	ulvl, uuntil, uwhy := backend.UsageLevel(u, now, a.Cfg.Model)
+	ulvl, uuntil, uwhy := backend.UsageLevel(u, now, a.Cfg.UsagePolicy())
 	fmt.Fprintf(w, "调度：%s\n", a.Runner.SchedNote(st, stErr, now, ulvl, uuntil, uwhy))
 	if pid, since, held := fsx.LockHolder(a.LockPath()); held {
 		fmt.Fprintf(w, "tick.lock：pid %d 拿着 tick.lock，已 %s（这期间别的 tick 只跳过，不收尾也不接活；一直这样就是卡住了，run、stop、升级也拿不到锁）\n", pid, time.Since(since).Round(time.Second))
 	}
-	fmt.Fprintf(w, "额度：%s（%s 读取）\n", backend.UsageDescribe(u, now, a.Cfg.Model), textfmt.WhenCN(u.CheckedAt))
+	fmt.Fprintf(w, "额度：%s（%s 读取）\n", backend.UsageDescribe(u, now, a.Cfg.UsagePolicy()), textfmt.WhenCN(u.CheckedAt))
 	if st != nil { // 别的后端只看缓存：status 不替它们读
 		for _, line := range st.OtherUsageLines(a.Cfg, now) {
 			fmt.Fprintf(w, "额度（%s\n", strings.Replace(line, "：", "）：", 1))
@@ -209,6 +209,11 @@ func (a *App) CmdStatus() error {
 			}
 		}
 		fmt.Fprintf(w, "  %s：%d 条（进行中 %d，卡住 %d）\n", p.Name, len(items), inProg, stuck)
+		for _, it := range items {
+			if n := it.DepNote(); n != "" {
+				fmt.Fprintf(w, "    %s\n", n)
+			}
+		}
 		if err := a.Runner.ProjectBlock(st, p.Name, p.Dir); err != nil {
 			fmt.Fprintf(w, "    %v\n", err)
 		}

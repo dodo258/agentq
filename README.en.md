@@ -129,7 +129,7 @@ Direction questions (design, UI, technology choices) get asked once before work 
 | :-- | :-- |
 | **A process exits midway, or the machine reboots** | Checks the BACKLOG and resumes the same session. Merged work isn't redone |
 | **A usage limit is hit** | Cools down until the reset time, then resumes the same session |
-| **Quota is nearly gone** | Starts no new tasks at 90%. `agentq run` is refused at 98% |
+| **Quota is nearly gone** | Starts no new tasks once the 5-hour window reaches 70% or the weekly quota reaches 90%, leaving the rest for you. `agentq run` is refused at 98% |
 | **Tasks fail right after starting** | Three tasks exiting within 3 minutes trip a breaker that stops new starts for 30 minutes. Another failure doubles that, up to 4 hours |
 | **A task runs away** | Each run has a budget cap, subagent runaway stops it automatically, and the default timeout is 4 hours. Its changes are kept |
 | **The state file breaks** | Unreadable: nothing is wrapped up or started. Corrupt: the bad file is backed up, state is rebuilt from task records, and no new task starts that round |

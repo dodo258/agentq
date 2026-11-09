@@ -228,3 +228,28 @@ func TestBuildPromptAndArgs(t *testing.T) {
 		t.Error("--name 里标题应截到 20 字")
 	}
 }
+
+// 续跑、接手、发版准备、回复续跑都走 ProjectSlot：名额够了还要看范围，没有条目的当没写范围。
+func TestProjectSlot(t *testing.T) {
+	cfg := config.Default() // max_parallel 2、per_project 2
+	st := &state.State{Jobs: []*state.Job{{Project: "a", Status: state.StatusRunning, Item: "甲（范围：x/）"}}}
+	cases := []struct {
+		project, item string
+		ok            bool
+	}{
+		{"a", "乙（范围：y/）", true},
+		{"a", "乙（范围：x/z）", false},
+		{"a", "乙", false},
+		{"a", "", false},
+		{"b", "", true},
+	}
+	for _, c := range cases {
+		if ok, why := ProjectSlot(st, cfg, c.project, c.item); ok != c.ok {
+			t.Errorf("%s %q：%v %s", c.project, c.item, ok, why)
+		}
+	}
+	st.Jobs = append(st.Jobs, &state.Job{Project: "b", Status: state.StatusRunning, Item: "丙（范围：q/）"})
+	if ok, why := ProjectSlot(st, cfg, "a", "乙（范围：y/）"); ok || !strings.Contains(why, "max_parallel") {
+		t.Errorf("全局满了先说名额：%v %s", ok, why)
+	}
+}

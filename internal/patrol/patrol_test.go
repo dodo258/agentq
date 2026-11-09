@@ -371,8 +371,8 @@ func TestPatrolFindsEachCheck(t *testing.T) {
 	if !strings.Contains(s, "巡逻发现：今天的备份有 1 个仓库推送失败；证据：") {
 		t.Errorf("汇总内容：\n%s", s)
 	}
-	// 额度到了 90%：不启动分析
-	if len(e.analyzed) != 0 || !strings.Contains(r.Analysis, "订阅额度 ≥90%") {
+	// 额度到了后台上限：不启动分析
+	if len(e.analyzed) != 0 || !strings.Contains(r.Analysis, "订阅额度到了后台上限") {
 		t.Errorf("额度到 90%% 不该分析（%d 次）：%q", len(e.analyzed), r.Analysis)
 	}
 	ps, _ := e.a.LoadPatrol()
@@ -534,7 +534,7 @@ func TestPatrolAnalyzeLimits(t *testing.T) {
 		{"已暂停", func() { e.a.Cfg.Paused = true }, func() { e.a.Cfg.Paused = false }},
 		{"用量冷却中", func() { e.st.CooldownUntil = e.now.Add(2 * time.Hour) }, func() { e.st.CooldownUntil = time.Time{} }},
 		{"连环失败熔断中", func() { e.st.BreakerUntil = e.now.Add(2 * time.Hour) }, func() { e.st.BreakerUntil = time.Time{} }},
-		{"订阅额度 ≥90%", func() {
+		{"订阅额度到了后台上限", func() {
 			e.st.Usage = &backend.UsageInfo{CheckedAt: e.now, Windows: []backend.UsageWindow{{Label: "session", Used: 91}}}
 		}, func() { e.st.Usage = nil }},
 		{"上一次分析还在跑", func() {

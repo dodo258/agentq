@@ -234,7 +234,8 @@ case "$prompt" in
     wt=$PWD/.claude/worktrees/$(basename "$b")
     def=$(printf '%s' "$prompt" | sed -n 's/.*默认分支是 \([^，]*\)，.*/\1/p'); [ -z "$def" ] && def=main # 只照提示词说的：合同没写清就开不出分支
     if [ -z "$resume" ]; then
-      sedi "/^- \[ \] .*READYMERGE/ s#\$#（进行中：$b 2026-01-01 10:00）#" docs/BACKLOG.md
+      pat="READYMERGE"; case "$prompt" in *BRANCH=*) pat="READYMERGE.*BRANCH=$b([^a-z0-9/-]|\$)" ;; esac # 同项目并行时只认领自己那一条
+      sedi -E "\#^- \[ \] .*$pat# s#\$#（进行中：$b 2026-01-01 10:00）#" docs/BACKLOG.md
       git add docs/BACKLOG.md; git -c user.name=t -c user.email=t commit -q -m "待办：认领"
       git worktree add -q "$wt" -b "$b" "$def"
     else
@@ -486,7 +487,7 @@ func TestWaitShellsWaitsForUnfinishedLog(t *testing.T) {
 
 func TestIntegrationLifecycle(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, nil) // 默认 max_parallel 2、per_project 1
+	e := newEnv(t, nil) // 默认 max_parallel 2、per_project 2；条目都没写范围，同项目一次一条
 	alpha := testkit.MkProject(t, e.root, "alpha", "- [ ] 甲一 —— SLEEP=1\n- [ ] 甲二 —— SLEEP=1\n")
 	testkit.MkProject(t, e.root, "beta", "- [ ] 乙一 —— SLEEP=1\n")
 	testkit.MkProject(t, e.root, "项目丙", "- [ ] 丙一 —— SLEEP=8\n")
@@ -785,19 +786,16 @@ func TestIntegrationCooldownExpires(t *testing.T) {
 	waitExit(t, st.Jobs[1].PID, 10*time.Second)
 }
 
-// 每个项目每次 tick 最多启动 1 个，即使 per_project 允许更多。
-func TestIntegrationOnePerProjectPerTick(t *testing.T) {
+// 没写范围的条目同项目一次一条，即使 per_project 允许更多（之前手设 per_project≥2 时会并行，现在改成串行）。
+func TestIntegrationUnscopedItemsSerial(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]any{"per_project": 2, "max_parallel": 3})
 	testkit.MkProject(t, e.root, "alpha", "- [ ] 甲一 —— SLEEP=5\n- [ ] 甲二 —— SLEEP=5\n- [ ] 甲三 —— SLEEP=5\n")
 	if out := e.mustRun("tick"); !strings.Contains(out, "启动 1") {
 		t.Fatalf("第一次 tick 只应启动 1 个：\n%s", out)
 	}
-	if out := e.mustRun("tick"); !strings.Contains(out, "启动 1") {
-		t.Fatalf("第二次 tick 应启动第 2 个（per_project=2）：\n%s", out)
-	}
 	if out := e.mustRun("tick"); !strings.Contains(out, "启动 0") {
-		t.Fatalf("同项目已有 2 个在跑，不应再启动：\n%s", out)
+		t.Fatalf("没写范围的不并行，第二次 tick 不应再启动：\n%s", out)
 	}
 	for _, j := range e.state().Running() {
 		e.mustRun("stop", j.ID)
@@ -850,7 +848,7 @@ func (e *testEnv) launchdLog() string {
 // 任务结束时外壳马上 tick 一次：A 结束后不用再手动 tick，B 几秒内就被启动；B 结束后也被自动收尾。
 func TestIntegrationTickAfterJob(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, map[string]any{"tick_after_job": true}) // per_project 1：甲二只能等甲一结束
+	e := newEnv(t, map[string]any{"tick_after_job": true}) // 没写范围：甲二只能等甲一结束
 	testkit.MkProject(t, e.root, "alpha", "- [ ] 甲一 —— SLEEP=1\n- [ ] 甲二 —— SLEEP=1\n")
 	if out := e.mustRun("tick"); !strings.Contains(out, "启动 1") {
 		t.Fatalf("第一次 tick 应只启动甲一：\n%s", out)
@@ -1301,7 +1299,7 @@ func TestIntegrationJobUsage(t *testing.T) {
 	}
 
 	out := e.mustRun("status")
-	if !strings.Contains(out, "「有用量」跑完：已合并，提交 ccc3333；用户看 README。（token 6.75M，约 $4.61）") {
+	if !strings.Contains(out, "「有用量」跑完：已合并，提交 ccc3333；用户看 README。（token 6.75M）") {
 		t.Errorf("status 最近结束应带 token 量：\n%s", out)
 	}
 	if !strings.Contains(out, "「没用量」跑完：已合并，提交 abc1234；用户看 README。\n") {
@@ -1309,9 +1307,9 @@ func TestIntegrationJobUsage(t *testing.T) {
 	}
 	n := e.nightly()
 	for _, w := range []string{
-		"alpha「有用量」跑完：已合并，提交 ccc3333；用户看 README。；用量 token 6.75M（输入 122、输出 69.8K、缓存读 6.39M、缓存写 292.3K），约 $4.61；日志 ",
+		"alpha「有用量」跑完：已合并，提交 ccc3333；用户看 README。；用量 token 6.75M（输入 122、输出 69.8K、缓存读 6.39M、缓存写 292.3K）；日志 ",
 		"beta「没用量」跑完：已合并，提交 abc1234；用户看 README。；日志 ",
-		"合计 1 个任务（没有用量记录的不算）", "缓存命中率 95.6%", "1. alpha「有用量」token 6.75M，约 $4.61；" + ju.ID,
+		"合计 1 个任务（没有用量记录的不算）", "缓存命中率 95.6%", "1. alpha「有用量」token 6.75M；" + ju.ID,
 	} {
 		if !strings.Contains(n, w) {
 			t.Errorf("当天汇总缺 %q：\n%s", w, n)

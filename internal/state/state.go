@@ -237,6 +237,9 @@ type Job struct {
 	Gate *GateRecord `json:"gate,omitempty"`
 	// GateRound：这个任务是门退回的第几轮，0 是第一次做。
 	GateRound int `json:"gate_round,omitempty"`
+	// GateScope、GateScopeFrom：这一轮是门退回限定了范围的：只该改 GateScope 里的文件，scope 门比较 GateScopeFrom（上一轮过门看的分支尖）之后的改动。不是退回的任务为空。
+	GateScope     []string `json:"gate_scope,omitempty"`
+	GateScopeFrom string   `json:"gate_scope_from,omitempty"`
 	// GateContract：按「任务只做到分支可合并」的合同启动的。升级前启动的任务没有，它们可能自己合并，收尾时不算绕过门。
 	GateContract bool `json:"gate_contract,omitempty"`
 	// DiscussKey：Kind=discuss 的任务在给哪一条生成问题，见 internal/discuss。
@@ -355,7 +358,7 @@ func (s *State) OtherLimitNotes(cfg config.Config, now time.Time) []string {
 			out = append(out, "后端 "+name+" 用量冷却中，到 "+textfmt.WhenCN(until))
 			continue
 		}
-		if lvl, until, why := backend.UsageLevel(s.UsageOf(name, cfg.Backend), now, cfg.ForBackend(name).Model); lvl >= backend.UsageStop {
+		if lvl, until, why := backend.UsageLevel(s.UsageOf(name, cfg.Backend), now, cfg.ForBackend(name).UsagePolicy()); lvl >= backend.UsageStop {
 			out = append(out, "后端 "+name+"："+backend.UsageGateNote(lvl, until, why))
 		}
 	}
@@ -367,7 +370,7 @@ func (s *State) OtherUsageLines(cfg config.Config, now time.Time) []string {
 	var out []string
 	for _, name := range cfg.BackendsInUse() {
 		if name != limitName(cfg.Backend) {
-			out = append(out, name+"："+backend.UsageDescribe(s.UsageOf(name, cfg.Backend), now, cfg.ForBackend(name).Model))
+			out = append(out, name+"："+backend.UsageDescribe(s.UsageOf(name, cfg.Backend), now, cfg.ForBackend(name).UsagePolicy()))
 		}
 	}
 	return out
@@ -766,6 +769,8 @@ type GateRecord struct {
 	Rerun     bool   `json:"rerun,omitempty"`
 	RerunHead string `json:"rerun_head,omitempty"`
 	Reruns    int    `json:"reruns,omitempty"`
+	// Scope：退回时引擎算的范围（没过的门点名的文件，没点名就是这一轮改的文件，加同目录的测试文件，多了按目录折叠），下一轮只该改这些。
+	Scope []string `json:"scope,omitempty"`
 }
 
 // GateTally 是一道门跑的次数。

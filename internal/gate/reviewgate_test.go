@@ -149,6 +149,9 @@ func TestReviewBlocks(t *testing.T) {
 	if !strings.Contains(ev, "new.txt:1 空指针会崩") || !strings.Contains(ev, "go test -run TestX") {
 		t.Errorf("%s", ev)
 	}
+	if len(r.Files) != 1 || r.Files[0] != newFile || len(res.Scope) == 0 || res.Scope[0] != newFile { // 审查点名的文件就是下一轮的范围
+		t.Errorf("Files %v，范围 %v", r.Files, res.Scope)
+	}
 	f.collect(j, res)
 	if j.Gate.State != state.GateReturned || !strings.Contains(f.a.ReturnNote(j), "空指针会崩") {
 		t.Fatalf("%+v", j.Gate)

@@ -24,7 +24,7 @@ import (
 // 结论写到 reviews/<tree>.json，绑定 tree hash：审完又改就失效；main 动过、任务改动没变（patch-id 相同）沿用。
 // 阻塞要证据：文件行号加复现步骤或失败测试。没证据的只记提示。模型判不了、挂了、输出不合格都不放行。
 
-const reviewEffort = "medium"
+const reviewEffort = "medium" // 审查最低这一档，轻量流程也不降
 
 // reviewSchema 是审查要给的结构化结论。
 const reviewSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","block","unknown"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"integer"},"severity":{"type":"string","enum":["blocker","hint"]},"evidence":{"type":"string"},"repro":{"type":"string"}},"required":["file","line","severity","evidence","repro"]}}},"required":["verdict","findings"]}`
@@ -259,7 +259,8 @@ func runModel(ctx context.Context, d Deps, c Candidate, be backend.Backend, req 
 
 // ReviewRequest 是审查进程的启动意图：同一个后端、medium、候选 worktree 作目录、结构化输出。
 func ReviewRequest(cfg config.Config, c Candidate) backend.Request {
-	return backend.Request{Prompt: reviewPrompt(c), Dir: c.Dir, Label: proc.NameMarker(c.Project) + "审查", Model: cfg.Model, Effort: reviewEffort, Permission: cfg.PermissionMode,
+	model := reviewModel(cfg.Model, cfg.LightReviewModel, c)
+	return backend.Request{Prompt: reviewPrompt(c), Dir: c.Dir, Label: proc.NameMarker(c.Project) + "审查", Model: model, Effort: reviewEffort, Permission: cfg.PermissionMode,
 		Profile: backend.ProfileReview, Schema: reviewSchema, BudgetUSD: cfg.JobBudgetUSD, Must: backend.MustReview}
 }
 
@@ -291,11 +292,14 @@ func parseReview(res backend.Result, schema, who string, caps backend.Caps) (Rev
 
 // judge 按证据定结论。blocker 要有文件行号、证据、复现步骤或失败测试，文件要真的在这次候选里；缺一样都只记提示。模型说 block 却拿不出证据的不阻塞。
 func judge(rec ReviewRecord, c Candidate) Result {
-	var blockers, hints []string
+	var blockers, hints, files []string
 	for _, f := range rec.Findings {
 		line := fmt.Sprintf("%s:%d %s", f.File, f.Line, textfmt.OneLine(f.Evidence, 200))
 		if f.Severity == "blocker" && hasEvidence(f, c) {
 			blockers = append(blockers, line+"；复现："+textfmt.OneLine(f.Repro, 200))
+			if file := filepath.ToSlash(filepath.Clean(f.File)); !slices.Contains(files, file) {
+				files = append(files, file)
+			}
 		} else {
 			hints = append(hints, "提示："+line)
 		}
@@ -303,7 +307,7 @@ func judge(rec ReviewRecord, c Candidate) Result {
 	summary := textfmt.OneLine(rec.Summary, 200)
 	switch {
 	case len(blockers) > 0:
-		return Result{Outcome: Fail, Summary: fmt.Sprintf("审查发现 %d 个有证据的问题：%s", len(blockers), textfmt.OneLine(blockers[0], 200)), Evidence: append(blockers, hints...)}
+		return Result{Outcome: Fail, Summary: fmt.Sprintf("审查发现 %d 个有证据的问题：%s", len(blockers), textfmt.OneLine(blockers[0], 200)), Evidence: append(blockers, hints...), Files: files}
 	case rec.Verdict == "unknown":
 		return Result{Outcome: Unknown, Summary: "审查判不了：" + summary, Evidence: hints}
 	}
@@ -351,6 +355,7 @@ func reviewPrompt(c Candidate) string {
 	if dir := backlog.Direction(c.Item); dir != "" {
 		fmt.Fprintf(&b, "开工前定的大方向：%s。实现明显背离用户定的方向算 blocker，要有证据；只是默认答案、任务说明了为什么换的，写 hint。\n", dir)
 	}
+	b.WriteString(specLine(c, false))
 	for _, r := range c.Prior {
 		fmt.Fprintf(&b, "前面的门 %s：%s %s\n", r.Gate, r.Outcome, textfmt.OneLine(r.Summary, 200))
 		for _, e := range r.Evidence {

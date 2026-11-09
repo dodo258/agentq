@@ -66,7 +66,7 @@ func TestOpencodeFullLoopMerges(t *testing.T) {
 	if !strings.Contains(task.Head, "~/.agents/skills/agent-task/SKILL.md") || strings.Contains(task.Head, "~/.claude/skills") {
 		t.Errorf("提示词要写这个后端的技能目录：%s", task.Head)
 	}
-	if !strings.Contains(review.Args, "--auto") || !strings.Contains(review.Args, "--variant medium") {
+	if !strings.Contains(review.Args, "--auto") || !strings.Contains(review.Args, "--variant medium") || strings.Contains(review.Args, "sonnet") { // 小改动走轻量流程也是 medium
 		t.Errorf("%s", review.Args)
 	}
 	for _, c := range []*codexCall{task, review} {

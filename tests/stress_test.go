@@ -3214,7 +3214,7 @@ func scenarioGateQueue(t *testing.T, rng *rand.Rand) {
 		toks := []string{}
 		for k := 0; k < 2+rng.Intn(2); k++ {
 			l, tok := e.item("conflict")
-			lines = append(lines, l)
+			lines = append(lines, l+"（范围：dir-"+tok+"/）") // 写了不重叠的范围才同项目并行；实际都改同一个文件，测的就是范围漏写时靠过门兜住
 			toks = append(toks, tok)
 		}
 		name := fmt.Sprintf("q%d", i)
