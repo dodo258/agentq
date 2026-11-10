@@ -56,6 +56,7 @@ func TestMain(m *testing.M) {
 
 // 假 claude：auth status 回登录状态；否则记录参数/目录/环境，按 prompt 里的关键字睡几秒、写 JSON。
 // READYMERGE：照新合同只做到分支可合并：认领（提交 BACKLOG 的进行中标记）、在任务分支提交改动和 .agentq/ready.json，不合并。
+// 再带 TASKSCRIPT：提交前在任务 worktree 里跑 $HOME/fake-task.sh（用例自己写要改什么）。
 // SELFMERGE：不写 ready.json，自己把条目移到「已完成」并提交，写上合并提交号（绕过门、升级前的老任务）。
 // INTERRUPT：首次运行时像 agent 认领一样给 BACKLOG 那一条加进行中标记，然后停在「继续等通知」；
 // 用 -r 续跑时把那一条勾掉并报已合并，prompt 里还有 AGAIN 就再中断一次。
@@ -243,6 +244,7 @@ case "$prompt" in
     fi
     n=$(printf '%s' "$prompt" | sed -n 's/.*FILE=\([a-z0-9.]*\).*/\1/p'); [ -z "$n" ] && n=work.txt
     echo "$$" >> "$wt/$n"
+    case "$prompt" in *TASKSCRIPT*) (cd "$wt" && sh "$HOME/fake-task.sh") ;; esac
     mkdir -p "$wt/.agentq"
     printf '{"branch":"%s","type":"feature","acceptance":"看 %s","progress":"做好了 %s"}\n' "$b" "$n" "$n" > "$wt/.agentq/ready.json"
     git -C "$wt" add -A; git -C "$wt" -c user.name=t -c user.email=t commit -q -m "做事 $n"

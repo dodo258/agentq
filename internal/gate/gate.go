@@ -62,6 +62,8 @@ type Result struct {
 	Cached bool `json:"cached,omitempty"`
 	// Usage 是这道门调模型花的用量，算在任务头上。
 	Usage *backend.JobUsage `json:"usage,omitempty"`
+	// Hold 非空：这道门没挡，但这次改动不能自动合并（比如候选改了评判它的尺子），等用户放行。原因写在这里。
+	Hold string `json:"hold,omitempty"`
 }
 
 // Ready 是任务写的交付单。
@@ -127,6 +129,8 @@ type Deps struct {
 	Script func(ctx context.Context, o ScriptOpts) ScriptResult
 	// CLI 跑一次后端 CLI，见 RunCLI。要调模型的门都走它。
 	CLI func(ctx context.Context, inv backend.Invocation, o CLIOpts) error
+	// Self 是运行中这一代 agentq 的路径：评判候选用它，不用候选自己。
+	Self func() (string, error)
 }
 
 type registration struct {
@@ -166,6 +170,7 @@ func init() {
 	Register("patch", LevelWarn, func(d Deps) Gate { return patchGate{d} })
 	Register("scope", LevelError, func(d Deps) Gate { return scopeGate{d} })
 	Register("test", LevelError, func(d Deps) Gate { return testGate{d} })
+	Register("eval", LevelError, func(d Deps) Gate { return evalGate{d} })
 	Register("smoke", LevelWarn, func(d Deps) Gate { return smokeGate{d} })
 	Register("review", LevelError, func(d Deps) Gate { return reviewGate{d} })
 	Register("ui", LevelWarn, func(d Deps) Gate { return uiGate{d} })

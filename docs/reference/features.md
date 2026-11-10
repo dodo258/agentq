@@ -111,7 +111,7 @@
 
 `type` 是 `fix`、`feature`、`rewrite`、`docs` 之一。分支以条目的进行中标记为准，写的不一样算不合格。不合格的按没写处理：条目还标进行中就记中断、续跑。
 
-**调档位**：提交 `.agentq/gates.json`，读默认分支上的那份，任务分支上的改动不算。写坏了按默认档位，不放宽。门的名字是 `patch`、`scope`、`test`、`smoke`、`review`、`ui`，按这个顺序跑，默认档位是 `warn`、`error`、`error`、`warn`、`error`、`warn`。`warn` 档没过的合并时写一行日志和当天汇总。
+**调档位**：提交 `.agentq/gates.json`，读默认分支上的那份，任务分支上的改动不算。写坏了按默认档位，不放宽。门的名字是 `patch`、`scope`、`test`、`eval`、`smoke`、`review`、`ui`，按这个顺序跑，默认档位是 `warn`、`error`、`error`、`error`、`warn`、`error`、`warn`。`eval` 只在 agentq 自己的仓库跑，见[评测门](#评测门)。`warn` 档没过的合并时写一行日志和当天汇总。
 
 ```json
 {"levels": {"test": "error", "review": "warn", "patch": "error"}, "ui_files": [".tsx", "View.swift"]}
@@ -195,6 +195,17 @@
 - **机器部分**：跑 `.agentq/ui`，把 PNG 截图写进 `$AGENTQ_ARTIFACTS`，退出码 0。引擎不带浏览器，脚本示例在 `~/.local/share/agentq/templates/gates/`（Playwright 和 `simctl` 两版）。引擎用标准库解码，解不开、几乎全是一个颜色（千分之九百九十九以上）、没有截图都算失败。没有脚本算判不了，`warn` 档不挡合并。
 - **模型部分**：截图交给独立审查进程（任务的后端，medium，单独一次调用，这样界面门的档位管得住它。Claude 打开文件看，Codex 用 `--image` 附上，后端看不到图片算判不了，不放行），提示词第一项加载 `no-ai-look`，找不到技能时说明，算判不了，不算过。只有证据类问题能阻塞：`broken`（渲染坏了）、`overflow`（溢出）、`unreadable`（看不清）、`placeholder`（占位内容），要写明哪张截图、看到什么。好不好看只给意见。结论写到 `~/.agentq/gate/reviews/<项目>/ui/<tree>.json`，沿用规则同审查门。用量算在任务头上，撞限和认证失败和审查门一样推迟。
 - **基线**：只认默认分支上 `docs/design/approved/` 里用户确认过的，审查时对照。引擎和任务都不更新。任务动基线（改、新加、搬走）由测试门挡，见[测试门](#测试门)，不跟这道门的档位走。
+
+### 评测门
+
+默认 `error`。只在 agentq 自己的仓库跑：默认分支（不是任务分支）上 `go.mod` 是 `module agentq`，并且有 `evals/` 和 `internal/evolve/`。别的项目不跑，报告里写「eval 门不适用这次改动」。
+
+- 在一次性 worktree 的合并态上 `go build` 出候选二进制，再由运行中这一代 agentq 跑 `agentq eval judge --bin <候选>`：`--fake` 跑法加程序题，不调模型。题目、假 CLI 和判分都是运行中这一代编译进去的，候选分支上改的 `evals/` 不算；留出集照常用、只写编号。
+- 和 `~/.agentq/evals/baseline.json` 比，比法同 `agentq eval compare`：任一题或任一领域变差就 `fail` 退回，理由写哪题、哪个领域、从多少到多少，不看总平均。候选编译不过也 `fail`。
+- 没有基线，或基线里没有 `--fake` 和程序题的分：只记录不挡，提示先 `agentq eval run --fake` 再 `agentq eval baseline`。
+- 结论写明耗时（构建、评测各多少）。日志 `~/.agentq/gate/<任务>/eval-build.log`、`eval.log`，结论 `eval/verdict.json`；候选二进制用完删掉。评测结果不进 `~/.agentq/evals/runs/`，`eval baseline` 不会拿候选的分当基线。
+- 候选改了评判它的尺子：`evals/`、`assets.go`、`.agentq/`、`internal/gate/` 的代码、`internal/evolve/` 里出题判分比较的 `case.go`、`score.go`、`harness.go`、`cmd.go`、`judge.go`（测试文件不算）。评测没变差也不自动合并，条目标卡住、发卡片「等你拍板」，`agentq gate pass` 才合。
+- `--real`（调模型）不进门。
 
 ### 成品门
 

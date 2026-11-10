@@ -76,6 +76,9 @@ const evalUsage = `agentq eval：评测集，给 agentq 自己打分
       --bin：评判这个 agentq，不写就评判自己
   agentq eval baseline [run]               把一次结果并进基线（默认最近一次）
   agentq eval compare [run]                和基线比（默认最近一次）；任一题或任一领域变差就报，退出码 1
+  agentq eval judge --bin 路径 [--out 文件] [题号…]
+      评测门用：拿这一代的题和判分评判别的 agentq（--fake 跑法，含程序题），和基线比，结论写进 --out；
+      结果不进 runs/，不会被 eval baseline 当成最近一次；变差退出码 1
 `
 
 func (s *Service) evalDir() string      { return filepath.Join(s.DataDir(), "evals") }
@@ -102,6 +105,8 @@ func (s *Service) CmdEval(args []string) error {
 		return s.cmdBaseline(rest)
 	case "compare":
 		return s.cmdCompare(rest)
+	case "judge":
+		return s.cmdJudge(rest)
 	}
 	fmt.Fprint(s.Out, evalUsage)
 	return fmt.Errorf("不认识的子命令 %q", args[0])
@@ -296,24 +301,13 @@ func (s *Service) cmdRun(args []string) error {
 	if len(cases) == 0 {
 		return errors.New("没有要跑的题")
 	}
-	bin := o.bin
-	if bin == "" {
-		if bin, err = os.Executable(); err != nil {
-			return fmt.Errorf("找不到自己：%w", err)
-		}
-	}
-	if bin, err = filepath.Abs(bin); err != nil {
-		return fmt.Errorf("--bin：%w", err)
-	}
-	if bin, err = filepath.EvalSymlinks(bin); err != nil {
-		return fmt.Errorf("--bin：%w", err)
+	bin, err := resolveBin(o.bin)
+	if err != nil {
+		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	h := &harness{home: s.Home, bin: bin, mode: o.mode, poll: fakePoll}
-	if perm, ok := backend.Get(backend.Default, backend.Options{Home: s.Home}).(backend.Permissions); ok {
-		h.fullPerm = perm.FullPermission()
-	}
+	h := s.newHarness(bin, o.mode)
 	backendWord := "假 CLI"
 	switch o.mode {
 	case ModeProgram:
@@ -327,50 +321,85 @@ func (s *Service) cmdRun(args []string) error {
 			return err
 		}
 	}
-	sub, err := fs.Sub(s.Evals, "evals")
-	if err != nil {
-		return fmt.Errorf("读评测集：%w", err)
-	}
-	if h.fakeCLI, err = fs.ReadFile(sub, "_fake/claude.sh"); err != nil {
-		return fmt.Errorf("读假 CLI：%w", err)
-	}
-	if n := cleanStale(os.TempDir(), s.Now()); n > 0 {
-		fmt.Fprintf(s.Out, "清掉了 %d 个超过 7 天的旧现场\n", n)
-	}
-	h.base, err = os.MkdirTemp("", sandboxPrefix+"*")
-	if err != nil {
-		return fmt.Errorf("建临时目录：%w", err)
-	}
-	if h.base, err = filepath.EvalSymlinks(h.base); err != nil { // macOS 的临时目录是软链接，git 和引擎认的是真实路径
-		return fmt.Errorf("建临时目录：%w", err)
-	}
-	if err := os.WriteFile(filepath.Join(h.base, sandboxMark), nil, 0o600); err != nil {
-		return fmt.Errorf("写现场标记：%w", err)
-	}
 	run := Run{Mode: o.mode, At: s.Now(), Version: s.Version}
 	if o.mode == ModeReal {
 		run.Backend = h.backend
 	}
-	labels := heldIndex(cases)
-	for _, c := range cases {
-		score := h.runCase(ctx, c)
-		if c.Kind == KindProgram {
-			score.Mode, score.Model = ModeProgram, ""
-		}
-		printScore(s, score, labels)
-		run.Scores = append(run.Scores, score)
+	if run.Scores, err = s.runCases(ctx, h, cases); err != nil {
+		return err
 	}
-	h.cleanup(run.Scores)
 	if run.ID, err = s.saveRun(run); err != nil {
 		return err
 	}
-	printSummary(s, run)
+	printSummary(s, run.Scores)
+	fmt.Fprintf(s.Out, "结果：%s\n", s.Tilde(filepath.Join(s.runsDir(), run.ID, "results.json")))
 	for _, sc := range run.Scores {
 		if sc.Skipped == "" && !sc.Correct {
 			return env.ErrLogged
 		}
 	}
 	return nil
+}
+
+// resolveBin 是被评判的二进制的真实路径，空的是自己。
+func resolveBin(bin string) (string, error) {
+	var err error
+	if bin == "" {
+		if bin, err = os.Executable(); err != nil {
+			return "", fmt.Errorf("找不到自己：%w", err)
+		}
+	}
+	if bin, err = filepath.Abs(bin); err != nil {
+		return "", fmt.Errorf("--bin：%w", err)
+	}
+	if bin, err = filepath.EvalSymlinks(bin); err != nil {
+		return "", fmt.Errorf("--bin：%w", err)
+	}
+	return bin, nil
+}
+
+func (s *Service) newHarness(bin, mode string) *harness {
+	h := &harness{home: s.Home, bin: bin, mode: mode, poll: fakePoll}
+	if perm, ok := backend.Get(backend.Default, backend.Options{Home: s.Home}).(backend.Permissions); ok {
+		h.fullPerm = perm.FullPermission()
+	}
+	return h
+}
+
+// runCases 在一个新的临时根目录里逐题跑、逐题打印，跑完清现场。题目和假 CLI 都取自运行中这一代。
+func (s *Service) runCases(ctx context.Context, h *harness, cases []Case) ([]Score, error) {
+	sub, err := fs.Sub(s.Evals, "evals")
+	if err != nil {
+		return nil, fmt.Errorf("读评测集：%w", err)
+	}
+	if h.fakeCLI, err = fs.ReadFile(sub, "_fake/claude.sh"); err != nil {
+		return nil, fmt.Errorf("读假 CLI：%w", err)
+	}
+	if n := cleanStale(os.TempDir(), s.Now()); n > 0 {
+		fmt.Fprintf(s.Out, "清掉了 %d 个超过 7 天的旧现场\n", n)
+	}
+	h.base, err = os.MkdirTemp("", sandboxPrefix+"*")
+	if err != nil {
+		return nil, fmt.Errorf("建临时目录：%w", err)
+	}
+	if h.base, err = filepath.EvalSymlinks(h.base); err != nil { // macOS 的临时目录是软链接，git 和引擎认的是真实路径
+		return nil, fmt.Errorf("建临时目录：%w", err)
+	}
+	if err := os.WriteFile(filepath.Join(h.base, sandboxMark), nil, 0o600); err != nil {
+		return nil, fmt.Errorf("写现场标记：%w", err)
+	}
+	labels := heldIndex(cases)
+	var scores []Score
+	for _, c := range cases {
+		score := h.runCase(ctx, c)
+		if c.Kind == KindProgram {
+			score.Mode, score.Model = ModeProgram, ""
+		}
+		printScore(s, score, labels)
+		scores = append(scores, score)
+	}
+	h.cleanup(scores)
+	return scores, nil
 }
 
 // cleanup：都通过就整个删；有留现场的只删构建缓存，现场路径在结果里。
@@ -456,16 +485,15 @@ func printScore(s *Service, sc Score, labels map[string]string) {
 	}
 }
 
-func printSummary(s *Service, run Run) {
+func printSummary(s *Service, scores []Score) {
 	fmt.Fprintln(s.Out, "按领域：")
-	for _, d := range Summarize(run.Scores) {
+	for _, d := range Summarize(scores) {
 		line := fmt.Sprintf("  %-9s %d 题，通过 %d，平均 %.1f 分，平均退回 %.1f 轮，token %d，耗时 %s", d.Domain, d.Cases, d.Correct, d.Points, d.Rounds, d.Tokens, d.Duration.Round(time.Second))
 		if d.Unjudged > 0 {
 			line += fmt.Sprintf("，%d 题没结论", d.Unjudged)
 		}
 		fmt.Fprintln(s.Out, line)
 	}
-	fmt.Fprintf(s.Out, "结果：%s\n", s.Tilde(filepath.Join(s.runsDir(), run.ID, "results.json")))
 }
 
 // saveRun 写结果，时间撞了加序号。
@@ -604,15 +632,7 @@ func (s *Service) cmdCompare(args []string) error {
 	}
 	cmp := Compare(base.Scores, run.Scores)
 	fmt.Fprintf(s.Out, "%s 和基线比了 %d 题\n", run.ID, cmp.Compared)
-	for _, l := range cmp.Better {
-		fmt.Fprintln(s.Out, "变好：", l)
-	}
-	for _, l := range cmp.Notes {
-		fmt.Fprintln(s.Out, "注意：", l)
-	}
-	for _, l := range cmp.Worse {
-		fmt.Fprintln(s.Out, "变差：", l)
-	}
+	printComparison(s, cmp)
 	if len(cmp.Worse) > 0 {
 		fmt.Fprintf(s.Out, "变差了 %d 处\n", len(cmp.Worse))
 		return env.ErrLogged
@@ -622,4 +642,16 @@ func (s *Service) cmdCompare(args []string) error {
 	}
 	fmt.Fprintln(s.Out, "没有变差")
 	return nil
+}
+
+func printComparison(s *Service, cmp Comparison) {
+	for _, l := range cmp.Better {
+		fmt.Fprintln(s.Out, "变好：", l)
+	}
+	for _, l := range cmp.Notes {
+		fmt.Fprintln(s.Out, "注意：", l)
+	}
+	for _, l := range cmp.Worse {
+		fmt.Fprintln(s.Out, "变差：", l)
+	}
 }

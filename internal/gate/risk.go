@@ -286,20 +286,27 @@ func addedLines(diff string) map[string]string {
 	return out
 }
 
-// holdReason：门都过了还不能自动合的原因，能合是空。用户放行过的不再挡。
+// holdReason：门都过了还不能自动合的原因，能合是空。用户放行过的不再挡。门自己要求等用户的（Result.Hold）也算。
 func holdReason(p Plan, v *RiskVerdict, results []Result) string {
-	if p.Override != "" || v == nil {
+	if p.Override != "" {
 		return ""
 	}
-	switch v.Level {
-	case RiskIrreversible:
-		return "难撤回，门过了也不自动合并，等你看过再放行：" + strings.Join(v.Reasons, "；")
-	case RiskBroad:
+	var why []string
+	switch {
+	case v == nil:
+	case v.Level == RiskIrreversible:
+		why = append(why, "难撤回，门过了也不自动合并，等你看过再放行："+strings.Join(v.Reasons, "；"))
+	case v.Level == RiskBroad:
 		if _, ran := resultNamed(results, "test"); !ran {
-			return "影响面广但没有确定性检查（测试门关着或不适用），判不了，等你定：" + strings.Join(v.Reasons, "；")
+			why = append(why, "影响面广但没有确定性检查（测试门关着或不适用），判不了，等你定："+strings.Join(v.Reasons, "；"))
 		}
 	}
-	return ""
+	for _, r := range results {
+		if r.Hold != "" {
+			why = append(why, r.Hold)
+		}
+	}
+	return strings.Join(why, "；")
 }
 
 func riskLabel(r Risk) string {

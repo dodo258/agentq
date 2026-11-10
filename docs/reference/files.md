@@ -37,7 +37,7 @@
 | `sense/<日期>.md`、`sense/runs/<任务id>/` | 外部反馈原文、这次判断的提示词、批次和 claude 的输出。目录 700、文件 600 | |
 | `release.json`、`release.lock` | 发版助手每个构建的记录（状态、提示的消息 id、提交走到哪一步）、本地提交时间、今天查过没有 | 备份并重置，之后 14 天内不提示 |
 | `discuss/<编号>.json`、`discuss/<编号>.answer` | 一次大方向商量：问题、默认答案、到点时间、结果；用户的回答（下次 tick 收走）。随 `retention_days` 清，还在商量的不清 | 坏了就不再问，按默认开工 |
-| `gate/<任务id>/` | 过门的 `plan.json`、`result.json`（下次 tick 收走后改名 `last.json`）、`decision.json`（卡片和 `agentq gate pass` 的决定）、门的输出 `test*.log`（权限 600，每个最多 2MB）、`smoke.log`、`ui.log`、截图 `ui-artifacts/`、交付单 `delivery.md`、`review-<次>/`、`ui-review-<次>/`、进程组号 `pgid`、活着的锁 `lock`，跑的时候还有一次性 worktree `wt/` | |
+| `gate/<任务id>/` | 过门的 `plan.json`、`result.json`（下次 tick 收走后改名 `last.json`）、`decision.json`（卡片和 `agentq gate pass` 的决定）、门的输出 `test*.log`（权限 600，每个最多 2MB）、`smoke.log`、`ui.log`、评测门的 `eval-build.log`、`eval.log` 和结论 `eval/verdict.json`、截图 `ui-artifacts/`、交付单 `delivery.md`、`review-<次>/`、`ui-review-<次>/`、进程组号 `pgid`、活着的锁 `lock`，跑的时候还有一次性 worktree `wt/` | |
 | `gate/reviews/<项目>/<tree>.json`、`gate/reviews/<项目>/ui/<tree>.json` | 审查门、界面门模型部分的结论，绑定 tree hash。随 `retention_days` 清，任务还在记录里（在跑、在过门、卡住的）不清 | 删了就重审 |
 | `gate/audit.log` | 人工放行、再审、退回、放弃的记录。进早报 | |
 | `evals/runs/<时间>/results.json`、`evals/baseline.json` | `agentq eval` 的结果和基线，只有明确运行才写 | |

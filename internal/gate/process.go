@@ -56,8 +56,8 @@ const (
 	MaxUpstream = 2
 	// MaxReruns：同一提交用户最多要几次再审。
 	MaxReruns = 2
-	// deadlineRuns：期限按几次超时算：测试门最多跑 4 次脚本，成品门 1 次，审查最多 2 次，界面门脚本 1 次加审查最多 2 次。
-	deadlineRuns = 10
+	// deadlineRuns：期限按几次超时算：测试门最多跑 4 次脚本，评测门 2 次（构建、评测），成品门 1 次，审查最多 2 次，界面门脚本 1 次加审查最多 2 次。
+	deadlineRuns = 12
 )
 
 // 进程的结论。
@@ -166,7 +166,7 @@ func (a *Service) gitIn(ctx context.Context, dir string, stdin []byte, args ...s
 }
 
 func (a *Service) deps() Deps {
-	return Deps{Env: a.Env, Git: a.git, Script: RunScript, CLI: RunCLI}
+	return Deps{Env: a.Env, Git: a.git, Script: RunScript, CLI: RunCLI, Self: a.selfPath}
 }
 
 // RunShell 是后台进程本身：agentq _gate <任务id>。结果写完才退出；被 SIGTERM 时清干净 worktree 就走，不写结果，tick 按进程没了重跑。

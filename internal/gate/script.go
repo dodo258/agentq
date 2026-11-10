@@ -41,8 +41,9 @@ const ScriptCannotRun = 125
 
 // ScriptOpts 是一次隔离运行：独立进程组、超时、输出落盘有上限。
 type ScriptOpts struct {
-	// Script 是要跑的可执行文件。
+	// Script 是要跑的可执行文件，Args 是它的参数。
 	Script string
+	Args   []string
 	// Dir 是工作目录。
 	Dir string
 	// Log 是输出文件，覆盖写。
@@ -100,7 +101,7 @@ func RunScript(ctx context.Context, o ScriptOpts) ScriptResult {
 	run, cancel := context.WithTimeout(ctx, o.Timeout)
 	defer cancel()
 	out := &limitWriter{w: logf, left: LogMax}
-	cmd := exec.CommandContext(run, o.Script)
+	cmd := exec.CommandContext(run, o.Script, o.Args...)
 	cmd.Dir = o.Dir
 	cmd.Env = append(append(proc.ChildEnv(), proc.JobEnv+"="+o.Mark), o.Env...)
 	cmd.Stdout, cmd.Stderr = out, out

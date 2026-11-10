@@ -13,6 +13,8 @@ import (
 
 	"agentq/internal/evolve"
 	"agentq/internal/fsx"
+	"agentq/internal/gate"
+	"agentq/internal/testkit"
 )
 
 // evalHome 建一个临时 HOME，TMPDIR 单独放：现场在里面，清不干净也不让用例失败（任务外壳可能还在写）。
@@ -423,5 +425,75 @@ func TestEvalCleansStaleSandboxes(t *testing.T) {
 	}
 	if _, err := os.Stat(unmarked); err != nil {
 		t.Errorf("没标记的不是自家的：%v", err)
+	}
+}
+
+// eval judge：评测门用的那一步。分组变差即使平均涨了也算变差；结果不进 runs/（不会被 eval baseline 当成最近一次）；没有基线只记录。
+func TestEvalJudgeGroupWorseEvenIfAverageUp(t *testing.T) {
+	home, tmp := evalHome(t)
+	if out, code := runEval(t, home, tmp, "run", "--fake", "001", "002", "007"); code != 0 {
+		t.Fatalf("%d %s", code, out)
+	}
+	if out, code := runEval(t, home, tmp, "baseline"); code != 0 {
+		t.Fatalf("%d %s", code, out)
+	}
+	// 基线里 backend 两题都没过：这次都过了，平均分从 33 涨到 67；install 那题变差，照样拒。
+	path := filepath.Join(home, ".agentq", "evals", "baseline.json")
+	var base evolve.Baseline
+	if err := json.Unmarshal([]byte(testkit.ReadFile(t, path)), &base); err != nil {
+		t.Fatal(err)
+	}
+	for i, s := range base.Scores {
+		if s.Domain == "backend" {
+			base.Scores[i].Points, base.Scores[i].Correct = 0, false
+			for k := range s.Checks {
+				base.Scores[i].Checks[k].Pass = false
+			}
+		}
+	}
+	raw, _ := json.Marshal(base)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// 坏候选：setup --plan 失败，别的照真的走（程序题 007 判错，模型题的现场照常布置）。
+	bad := filepath.Join(tmp, "bad-agentq")
+	if err := os.WriteFile(bad, []byte("#!/bin/sh\n[ \"$1 $2\" = 'setup --plan' ] && { echo 装不上 >&2; exit 3; }\nexec "+fsx.ShQuote(agentqBin)+" \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	verdictPath := filepath.Join(tmp, "verdict.json")
+	out, code := runEval(t, home, tmp, "judge", "--bin", bad, "--out", verdictPath, "001", "002", "007")
+	if code != 1 || !strings.Contains(out, "题目和判分取自运行中这一代") {
+		t.Fatalf("%d %s", code, out)
+	}
+	var v gate.EvalVerdict
+	if err := json.Unmarshal([]byte(testkit.ReadFile(t, verdictPath)), &v); err != nil {
+		t.Fatal(err)
+	}
+	worse := strings.Join(v.Worse, "\n")
+	if !v.Baseline || v.Compared != 3 || len(v.Better) < 2 || !strings.Contains(worse, "007-install-existing-skill：分数 100 → 0") || !strings.Contains(worse, "领域 install：平均分 100.0 → 0.0") {
+		t.Fatalf("%+v\n%s", v, out)
+	}
+	if strings.Contains(worse, "backend") {
+		t.Errorf("backend 变好了：%s", worse)
+	}
+	if runs, _ := filepath.Glob(filepath.Join(home, ".agentq", "evals", "runs", "*")); len(runs) != 1 {
+		t.Errorf("judge 的结果不进 runs/：%v", runs)
+	}
+
+	// 没有基线：只记录，退出码 0，告诉怎么建。
+	home2, tmp2 := evalHome(t)
+	out, code = runEval(t, home2, tmp2, "judge", "--bin", bad, "--out", verdictPath, "007")
+	if code != 0 || !strings.Contains(out, "没有能比的基线") {
+		t.Fatalf("%d %s", code, out)
+	}
+	v = gate.EvalVerdict{}
+	if err := json.Unmarshal([]byte(testkit.ReadFile(t, verdictPath)), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.Baseline || len(v.Worse) != 0 || !strings.Contains(v.Hint, "agentq eval baseline") || len(v.Failed) != 1 {
+		t.Fatalf("%+v", v)
+	}
+	if out, code := runEval(t, home2, tmp2, "judge", "007"); code == 0 || !strings.Contains(out, "--bin") {
+		t.Errorf("要写 --bin：%d %s", code, out)
 	}
 }
