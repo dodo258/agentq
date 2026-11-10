@@ -223,7 +223,7 @@ type Job struct {
 	StuckBranch   string `json:"stuck_branch,omitempty"`
 	StuckWorktree string `json:"stuck_worktree,omitempty"`
 	// 闲时找活任务（Kind=suggest，见 internal/suggest/suggest.go）：SuggestProjects 是启动时交给模型看的项目（结果里的 project 只能是它们）；
-	// Manual 是 agentq suggest 手动启动的；Suggest 是核对并写进 BACKLOG 之后的结果。
+	// Manual 是用户亲手启动的（agentq suggest；待做条目是 agentq run 或 Telegram「做」，续跑沿用）：暂停时 tick 也接着续跑这一条；Suggest 是核对并写进 BACKLOG 之后的结果。
 	SuggestProjects []string `json:"suggest_projects,omitempty"`
 	Manual          bool     `json:"manual,omitempty"`
 	// SuggestSnaps：启动时各项目的样子；输出合格、处理完之后才存成“上次生成时的样子”（见 applySuggestions）。

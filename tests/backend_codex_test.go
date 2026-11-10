@@ -485,16 +485,14 @@ func TestCodexKilledMidwayResumes(t *testing.T) {
 	waitExit(t, j.PID, 10*time.Second)
 	time.Sleep(200 * time.Millisecond)
 	e.mustRun("tick")
+	// 是你亲手 run 的：暂停时这次 tick 就用同一会话接着做
 	got := e.jobByTitle(title)
-	if got.Status != state.StatusInterrupted || got.SessionID == "" || !got.ResumePending {
-		t.Fatalf("%s session=%q resume=%v：%s", got.Status, got.SessionID, got.ResumePending, got.Summary)
+	if got.Status != state.StatusInterrupted || got.SessionID == "" || got.ResumePending || got.ResumedBy == "" {
+		t.Fatalf("%s session=%q resume=%v by=%q：%s", got.Status, got.SessionID, got.ResumePending, got.ResumedBy, got.Summary)
 	}
 	if !strings.HasPrefix(got.SessionID, "01a1") {
 		t.Errorf("会话 id 从事件流第一行取：%s", got.SessionID)
 	}
-	// 接着跑：同一会话
-	e.mustRun("resume")
-	e.mustRun("tick")
 	stop := func() {
 		e.mustRun("pause")
 		for _, o := range e.state().Running() { // 续跑的这个还是 claimhang：停掉，再跑不出结果

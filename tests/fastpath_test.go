@@ -17,6 +17,7 @@ import (
 	"agentq/internal/notify"
 	"agentq/internal/state"
 	"agentq/internal/testkit"
+	"agentq/internal/textfmt"
 )
 
 // 暂停、恢复：不起模型，回复写明做了什么；只改 paused，别的配置不动（包括长轮询期间用户改的）。
@@ -103,7 +104,7 @@ func TestFastUsage(t *testing.T) {
 	e.tg.msg(1, ownerChat, 11, "额度", "")
 	e.flush()
 	got := e.tg.sentLast().Get("text")
-	if !strings.Contains(got, "额度　会话 12%") || calls != 0 {
+	if p := textfmt.HTMLToPlain(got); !strings.Contains(p, "会话 ▰▱▱▱▱▱▱▱▱▱   12%") || calls != 0 {
 		t.Errorf("缓存新鲜不重读：%d %s", calls, got)
 	}
 	e.now = e.now.Add(backend.UsageCacheFor)
@@ -252,7 +253,7 @@ func TestIntegrationListenFastPath(t *testing.T) {
 				t.Error("应已暂停")
 			}
 			ask(2, "在跑什么", job.ID)
-			ask(3, "额度", "会话 33%")
+			ask(3, "额度", "33%")
 			ask(4, "恢复", "已恢复")
 			if cfg, _ := config.Load(filepath.Join(e.home, ".agentq", "config.json")); cfg.Paused {
 				t.Error("应已恢复")

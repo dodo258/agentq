@@ -210,6 +210,11 @@ func (a *Service) NewJobID(project string) (string, error) {
 
 // Launch 为条目新开一个任务。
 func (a *Service) Launch(st *state.State, p backlog.Project, it backlog.Item) (*state.Job, error) {
+	return a.launch(st, p, it, false)
+}
+
+// launch：manual 是用户亲手启动的（agentq run、Telegram「做」），记在任务上，续跑沿用，暂停时 tick 也接着续跑。
+func (a *Service) launch(st *state.State, p backlog.Project, it backlog.Item, manual bool) (*state.Job, error) {
 	f, handoff := a.handoffFacts(st, p, it)
 	recorded := ""
 	if handoff { // 接着上一个任务的分支做，基点也接着
@@ -224,7 +229,7 @@ func (a *Service) Launch(st *state.State, p backlog.Project, it backlog.Item) (*
 	if title == "" {
 		title = it.Text
 	}
-	j := &state.Job{Project: p.Name, ProjectDir: p.Dir, Item: it.Text, Title: title, Fingerprint: it.Fingerprint, DefaultBranch: def}
+	j := &state.Job{Project: p.Name, ProjectDir: p.Dir, Item: it.Text, Title: title, Fingerprint: it.Fingerprint, DefaultBranch: def, Manual: manual}
 	if handoff {
 		j.Summary = "用户去掉了卡住标记，从分支 " + f.Branch + " 接着做"
 		j.Handoff, j.StuckBranch, j.StuckWorktree = true, f.Branch, f.Worktree
@@ -270,7 +275,7 @@ func (a *Service) ResumeJob(st *state.State, orig *state.Job, id, extra string) 
 		ID:            id,
 		DefaultBranch: def,
 		Project:       orig.Project, ProjectDir: orig.ProjectDir, Item: orig.Item, Title: orig.Title,
-		Fingerprint: orig.Fingerprint, SessionID: orig.SessionID, ResumeOf: orig.ID, Takeover: orig.Takeover, Backend: orig.Backend, NewReport: orig.NewReport.Next(),
+		Fingerprint: orig.Fingerprint, SessionID: orig.SessionID, ResumeOf: orig.ID, Takeover: orig.Takeover, Backend: orig.Backend, NewReport: orig.NewReport.Next(), Manual: orig.Manual,
 		Summary: "上次中断（任务 " + orig.ID + "），已用同一会话 " + orig.SessionID + " 续跑",
 	}
 	carryGate(j, orig)
@@ -454,13 +459,20 @@ func (a *Service) Start(st *state.State, j *state.Job, prompt, resume string) (*
 		}
 	}
 	if err == nil {
+		if why := a.modelWindowStop(st, j, req.Model, bcfg.Model); why != "" {
+			err = fmt.Errorf("%w：%s", ErrModelWindow, why)
+		}
+	}
+	if err == nil {
 		inv, degraded, err = be.Build(req)
 	}
 	if err != nil {
 		if fresh {
 			os.RemoveAll(dir) // 一个进程都没起：每次 tick 都会走到这里，不留空目录
 		}
-		a.Logf("任务没启动（%s「%s」）：%v", j.Project, textfmt.TruncRunes(j.Title, 40), err)
+		if !errors.Is(err, ErrModelWindow) { // 额度挡住的每次 tick 都会走到，原因在 tick 那一行，不再单记
+			a.Logf("任务没启动（%s「%s」）：%v", j.Project, textfmt.TruncRunes(j.Title, 40), err)
+		}
 		return nil, err
 	}
 	for _, d := range degraded {

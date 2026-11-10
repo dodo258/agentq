@@ -80,6 +80,20 @@ func (a *Service) RunProject(st *state.State, project, keyword string) (RunResul
 	if err != nil {
 		return RunResult{}, err
 	}
+	if orig := a.resumableFor(st, items, project, keyword); orig != nil { // 中断了的条目（门退回、暂停时没人续跑、项目被排除）先接着做，和 tick 先续跑一样
+		r, err := a.ManualGateOn(st, name)
+		if err != nil {
+			return r, err
+		}
+		orig.Manual = true
+		r.Job, err = a.LaunchResume(st, orig)
+		if r.Job != nil { // 续跑改了原任务的记录（ResumedBy、ResumePending），启动时只存了一次
+			if err := state.Save(a.StatePath(), st); err != nil {
+				a.Logf("写状态文件失败（任务 %s 已续跑，记录没存下）：%v", orig.ID, err)
+			}
+		}
+		return r, err
+	}
 	it, ok := a.Pick(st, items, keyword, false)
 	if !ok {
 		why := "已标进行中、卡住、正在跑或依赖没做完的不算"
@@ -95,7 +109,7 @@ func (a *Service) RunProject(st *state.State, project, keyword string) (RunResul
 	if err != nil {
 		return r, err
 	}
-	r.Job, err = a.Launch(st, p, it)
+	r.Job, err = a.launch(st, p, it, true)
 	if name := filepath.Base(dir); err == nil && st.HeldProject(name) { // 用户亲手启动了，之后 tick 也照常接着做
 		a.Hooks.ReleaseHeld(st, name)
 		if err := state.Save(a.StatePath(), st); err != nil {
@@ -103,6 +117,34 @@ func (a *Service) RunProject(st *state.State, project, keyword string) (RunResul
 		}
 	}
 	return r, err
+}
+
+// resumableFor：用户点名的项目里能用同一会话接着做的中断任务。是这一条最近的一次任务、中断了、还没人续跑、条目仍标着进行中且包含 keyword、
+// 后端能续跑。门退回的、暂停时等着的、exclude_projects 里不自动续跑的都算。没有就是 nil。
+func (a *Service) resumableFor(st *state.State, items []backlog.Item, project, keyword string) *state.Job {
+	latest := map[string]*state.Job{}
+	for _, j := range st.Jobs {
+		if j.Project == project && j.Kind == "" && j.Fingerprint != "" {
+			if o := latest[j.Fingerprint]; o == nil || !j.StartedAt.Before(o.StartedAt) {
+				latest[j.Fingerprint] = j
+			}
+		}
+	}
+	for _, it := range items {
+		j := latest[it.Fingerprint]
+		switch {
+		case j == nil, j.Status != state.StatusInterrupted, j.ResumedBy != "", j.SessionID == "", j.SessionInRoot(), state.GateActive(j):
+			continue
+		case keyword != "" && !strings.Contains(it.Text, keyword):
+			continue
+		case !a.BackendFor(j.Backend).Caps().Resume || st.RunningFor(project, it.Fingerprint) != nil:
+			continue
+		}
+		if _, ok := InProgressItem(items, it.Fingerprint); ok {
+			return j
+		}
+	}
+	return nil
 }
 
 // ManualGate：用户手动启动前的最后一关：登录检查，额度 ≥usageRefuseAt 时拒绝。通过时返回额度档位，调用方填上 Job。
@@ -503,7 +545,11 @@ func (a *Service) checkAuth(be backend.Backend) (bool, string) {
 // ReportStarted：手动启动后告诉用户启动了什么、当前有什么限制。cmd 是命令名（run、new）。
 func (a *Service) ReportStarted(st *state.State, r RunResult, cmd string) {
 	j, lvl, until, why, u := r.Job, r.Level, r.Until, r.Why, r.Usage
-	fmt.Fprintf(a.Out, "已启动任务 %s：%s「%s」pid %d\n", j.ID, j.Project, j.Title, j.PID)
+	if j.ResumeOf != "" {
+		fmt.Fprintf(a.Out, "已接着做中断的任务 %s（新任务 %s，同一会话）：%s「%s」pid %d\n", j.ResumeOf, j.ID, j.Project, j.Title, j.PID)
+	} else {
+		fmt.Fprintf(a.Out, "已启动任务 %s：%s「%s」pid %d\n", j.ID, j.Project, j.Title, j.PID)
+	}
 	switch lvl {
 	case backend.UsageStop:
 		fmt.Fprintf(a.Out, "（%s）\n", backend.UsageGateNote(lvl, until, why))
@@ -511,7 +557,11 @@ func (a *Service) ReportStarted(st *state.State, r RunResult, cmd string) {
 		fmt.Fprintf(a.Out, "（额度未知，照常启动：%s）\n", textfmt.OneLine(u.Err, 120))
 	}
 	if a.Cfg.Paused {
-		fmt.Fprintf(a.Out, "（当前已暂停自动接活，%s 不受影响；收尾仍由 tick 做）\n", cmd)
+		more := ""
+		if j.Manual {
+			more = "，门退回或中断了 tick 也会接着做这一条"
+		}
+		fmt.Fprintf(a.Out, "（当前已暂停自动接活，%s 不受影响；收尾、过门仍由 tick 做%s）\n", cmd, more)
 	}
 	if now := a.Now(); now.Before(st.BreakerUntil) {
 		fmt.Fprintf(a.Out, "（连环失败熔断中，到 %s 前 tick 不自动接活，%s 不受影响）\n", textfmt.WhenCN(st.BreakerUntil), cmd)

@@ -14,12 +14,14 @@ import (
 	"testing"
 	"time"
 
+	"agentq/internal/backend"
 	"agentq/internal/chat"
 	"agentq/internal/config"
 	"agentq/internal/notify"
 	"agentq/internal/patrol"
 	"agentq/internal/state"
 	"agentq/internal/testkit"
+	"agentq/internal/textfmt"
 )
 
 // 推送和 Telegram 的单元测试：进程内跑，Telegram 换成本地假服务，本机通知换成记录函数，HOME 和 projects_root 是临时目录。
@@ -531,6 +533,9 @@ func TestMorningConditions(t *testing.T) {
 	if err := e.a.Patrol.SavePatrol(ps); err != nil {
 		t.Fatal(err)
 	}
+	reset := e.now.Add(48 * time.Hour)
+	e.st.Usage = &backend.UsageInfo{CheckedAt: e.now.Add(2 * time.Hour), Windows: []backend.UsageWindow{
+		{Label: "session", Used: 44, ResetsAt: &reset}, {Label: "week (Fable)", Scope: "Fable", Used: 100, ResetsAt: &reset}}}
 	e.at(7, 0)
 	e.report(e.now, "早报第一行\n")
 	e.flush()
@@ -545,11 +550,16 @@ func TestMorningConditions(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("复盘跑完应推早报：%q", got)
 	}
-	m := got[0]
+	m := textfmt.HTMLToPlain(got[0])
 	iDecide, iDone := strings.Index(m, "🔴 要你定　1 条"), strings.Index(m, "🟢 昨晚完成　1 条")
 	if iDecide < 0 || iDone < 0 || iDecide > iDone || !strings.Contains(m, "demo　选数据库") ||
 		!strings.Contains(m, "跑完 1，失败 1") || !strings.Contains(m, "demo　加按月对比") {
 		t.Fatalf("早报内容不对（要你定在前、完成、任务成败）：%s", m)
+	}
+	// 早报第一行是标题下的结论；额度进度条放最后；只限 Fable、任务不用的窗口不列
+	iLead, iTasks, iUsage := strings.Index(m, "早报第一行"), strings.Index(m, "跑完 1，失败 1"), strings.Index(m, "📊 额度")
+	if iLead < 0 || iLead > iDecide || iUsage < iTasks || !strings.Contains(m, "会话 ▰▰▰▰▱▱▱▱▱▱   44%") || strings.Contains(m, "Fable") {
+		t.Fatalf("早报顺序或额度不对：%s", m)
 	}
 	if !strings.Contains(m, "出问题　1 个") || !strings.Contains(m, "任务失败：demo「修崩溃」") || strings.Contains(m, "磁盘") || strings.Contains(m, "自动备份推送失败") {
 		t.Fatalf("早报「出问题」只列任务的：%s", m)
@@ -585,7 +595,7 @@ func TestNotifyDailyCap(t *testing.T) {
 	e.flush()
 	got := e.tg.texts()
 	if len(got) != notify.NotifyDailyMax+1 || !strings.HasPrefix(got[len(got)-1], "🔴 <b>要你知道") ||
-		!strings.Contains(got[len(got)-1], "密钥泄露") || !strings.Contains(got[len(got)-1], "🟠 问题10") ||
+		!strings.Contains(got[len(got)-1], "密钥泄露") || !strings.Contains(textfmt.HTMLToPlain(got[len(got)-1]), "🟠 问题10") ||
 		strings.Index(got[len(got)-1], "密钥泄露") > strings.Index(got[len(got)-1], "问题10") {
 		t.Fatalf("安全问题不受上限，攒着的跟在后面一起发：%q", got)
 	}
@@ -603,8 +613,8 @@ func TestNotifyDailyCap(t *testing.T) {
 	e.flush()
 	got = e.tg.texts()
 	last := got[len(got)-1]
-	if len(got) != notify.NotifyDailyMax+2 || !strings.HasPrefix(last, "🔴 <b>要你定") || !strings.Contains(last, "demo　上架定价") ||
-		!strings.Contains(last, "🟠 问题11") || !strings.Contains(last, "📦 新版可装") {
+	if plain := textfmt.HTMLToPlain(last); len(got) != notify.NotifyDailyMax+2 || !strings.HasPrefix(last, "🔴 <b>要你定") ||
+		!strings.Contains(plain, "demo　上架定价") || !strings.Contains(plain, "🟠 问题11") || !strings.Contains(plain, "📦 新版可装") {
 		t.Fatalf("上限后「要你定」照发，并带上攒着的：%q", got)
 	}
 	// 夜里：安全问题照发，但普通消息不搭车（夜里只攒着）
@@ -929,6 +939,31 @@ func TestRenderOverflow(t *testing.T) {
 	b, _ := os.ReadFile(files[0])
 	if !strings.Contains(string(b), "问题 7 <x>") {
 		t.Fatalf("全文不全：%s", b)
+	}
+}
+
+// 版式：标题下一句结论；每段「表情 <b>段名</b>」，内容进带竖条的块，行首项目名加粗；额度进度条进 <pre>，超长截断时也留着。
+func TestRenderLayout(t *testing.T) {
+	t.Parallel()
+	e := newNotifyEnv(t, false)
+	usage := notify.MsgSection{Emoji: "📊", Head: "额度", Pre: true, Lines: []string{"会话 ▰▱▱▱▱▱▱▱▱▱   1%  今天 19:00 重置"}}
+	m := e.a.Notify.RenderMessage("morning", e.now, []notify.MsgSection{
+		{Lead: true, Head: "昨晚做完 2 条 <都过门>"},
+		{Emoji: "🔴", Head: "要你定　1 条", Lines: []string{"demo　选数据库", "3　编号不加粗"}},
+		usage,
+	}, "agentq")
+	want := "☀️ <b>早报 · " + textfmt.DateCN(e.now) + "</b>\n\n昨晚做完 2 条 &lt;都过门&gt;\n\n🔴 <b>要你定　1 条</b>\n" +
+		"<blockquote><b>demo</b>　选数据库\n3　编号不加粗</blockquote>\n\n📊 <b>额度</b>\n<pre>会话 ▰▱▱▱▱▱▱▱▱▱   1%  今天 19:00 重置</pre>\n<i>" + e.now.Format("15:04") + " · agentq</i>"
+	if m != want {
+		t.Fatalf("得到：\n%s\n应为：\n%s", m, want)
+	}
+	var secs []notify.MsgSection
+	for i := 0; i < 8; i++ {
+		secs = append(secs, notify.MsgSection{Emoji: "🟠", Head: fmt.Sprintf("问题 %d", i), Lines: []string{"证据"}})
+	}
+	m = e.a.Notify.RenderMessage("patrol", e.now, append(secs, usage), "agentq")
+	if !strings.Contains(m, "其余 ") || !strings.Contains(m, "<pre>会话 ▰▱▱▱▱▱▱▱▱▱") || strings.Count(m, "<blockquote>") != strings.Count(m, "</blockquote>") {
+		t.Fatalf("超长截断时额度进度条照留、块都闭合：%s", m)
 	}
 }
 

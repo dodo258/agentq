@@ -9,6 +9,7 @@ import (
 
 	"agentq/internal/state"
 	"agentq/internal/testkit"
+	"agentq/internal/textfmt"
 )
 
 // Telegram 的「再审一次」按钮：写决定、下次 tick 重新跑门。卡片有这个按钮。
@@ -111,7 +112,7 @@ func TestMorningGateSection(t *testing.T) {
 	old := noon.Add(-time.Hour)
 	os.Chtimes(report, old, old)
 	e.mustRun("tick")
-	msg := tg.sentLastWith("早报").Get("text")
+	msg := textfmt.HTMLToPlain(tg.sentLastWith("早报").Get("text"))
 	for _, want := range []string{"用户放行 1106-x", "关着的门：demo　ui"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("早报缺 %q：\n%s", want, msg)

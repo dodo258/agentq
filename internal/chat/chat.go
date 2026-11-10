@@ -236,9 +236,10 @@ const ChatPromptHead = "你由 agentq 在无人值守模式下用 claude -p 启�
 	"（图片按图片发，录屏按视频发，太大会先压缩，压不下就改发文件路径）；最终回答里提一句发了什么。\n\n" +
 	"你的最终回答会原样作为一条 Telegram 消息（HTML parse_mode）发给用户，只写消息本身，不要别的话：\n" +
 	"- 第一行 `<表情> <b>类别 · %s</b>`：派活、拍板用「🟢 已派出」，回答问题用「📊 状态」，出了问题或做不了用「🔴 要你知道」；\n" +
-	"- 空一行，每段开头一个表情当标记，段内不再加；项目名后用全角空格「　」再写内容；要用户做的放最前；\n" +
+	"- 空一行，一句话结论；再分段：每段一行 `<表情> <b>段名</b>`（如 🙋 要你做、🛠 正在做、⏳ 在等、✅ 已处理），内容放进下一行的 <blockquote>…</blockquote>，一件事一行，段与段之间空一行，不写成长段落；\n" +
+	"- 块里项目名写成 <b>项目名</b> 再跟全角空格「　」和内容，每行尽量不超过 22 个字；要用户做的放最前；\n" +
 	"- 最后一行 `<i>%s · agentq 对话</i>`；\n" +
-	"- 不用感叹号、不客套，不超过 12 行；只用 <b> <i> <code> 标签，正文里的 < > & 写成 &lt; &gt; &amp;。\n\n" +
+	"- 不用感叹号、不客套，不超过 12 行；只用 <b> <i> <code> <blockquote> 标签，正文里的 < > & 写成 &lt; &gt; &amp;。\n\n" +
 	"用户的消息（按时间先后）：\n"
 
 func chatPrompt(inbox []notify.InMsg, now time.Time) string {
@@ -499,8 +500,7 @@ func (a *Service) StatusDigest(st *state.State) string {
 		secs = append(secs, sec)
 	}
 	ulvl, uuntil, uwhy := backend.UsageLevel(st.Usage, now, a.Cfg.UsagePolicy())
-	secs = append(secs, notify.MsgSection{Emoji: "⚙️", Head: "调度　" + a.Runner.SchedNote(st, nil, now, ulvl, uuntil, uwhy),
-		Lines: append([]string{"额度　" + backend.UsageDescribe(st.Usage, now, a.Cfg.UsagePolicy())}, st.OtherUsageLines(a.Cfg, now)...)})
+	secs = append(secs, notify.MsgSection{Emoji: "⚙️", Head: "调度　" + a.Runner.SchedNote(st, nil, now, ulvl, uuntil, uwhy)})
 	if lines := a.Discuss.StatusLines(); len(lines) > 0 {
 		secs = append(secs, notify.MsgSection{Emoji: "💬", Head: fmt.Sprintf("等商量　%d 条", len(lines)), Lines: lines})
 	}
@@ -551,5 +551,6 @@ func (a *Service) StatusDigest(st *state.State) string {
 		}
 		secs = append(secs, sec)
 	}
+	secs = append(secs, notify.UsageSection(a.Cfg, st, now)) // 额度放最后，进度条一眼看出用了多少
 	return a.Notify.RenderMessage("status", now, secs, "agentq status")
 }

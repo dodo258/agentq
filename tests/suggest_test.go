@@ -16,6 +16,7 @@ import (
 	"agentq/internal/state"
 	"agentq/internal/suggest"
 	"agentq/internal/testkit"
+	"agentq/internal/textfmt"
 )
 
 // ---- 纯函数 ----
@@ -334,7 +335,7 @@ func TestSuggestFlow(t *testing.T) {
 			pushes = append(pushes, s)
 		}
 	}
-	if len(pushes) != 1 || !strings.Contains(pushes[0], "待做」2 条") || !strings.Contains(pushes[0], "建议 1　alpha　改默认排序") || !strings.Contains(pushes[0], "做 1") {
+	if len(pushes) != 1 || !strings.Contains(pushes[0], "待做」2 条") || !strings.Contains(textfmt.HTMLToPlain(pushes[0]), "建议 1　alpha　改默认排序") || !strings.Contains(pushes[0], "做 1") {
 		t.Errorf("应推一条：%q", tg.texts())
 	}
 	runs := e.claudeRuns()

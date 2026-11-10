@@ -318,3 +318,33 @@ func TestIntegrationUsageRoutine(t *testing.T) {
 		t.Errorf("不应有任务：%+v", st.Jobs)
 	}
 }
+
+// 只限某个模型的周窗口按任务实际用的模型算：Sonnet 周窗口到后台上限，用 sonnet 的低风险条目不启动，用 opus 的照常；status 说清挡的是哪类任务。
+func TestIntegrationUsageScopedByTaskModel(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]any{"max_parallel": 3})
+	// 同一项目里低风险条目排在前面：被挡的只是它，后面用 opus 的照常启动
+	testkit.MkProject(t, e.root, "alpha", "- [ ] 补测试（低风险） —— SLEEP=5\n- [ ] 改解析 —— SLEEP=5\n")
+	week := weekReset.UTC().Format("Jan 2 at 3:04pm")
+	e.setUsage("Current session: 10% used · resets 11pm (UTC)\nCurrent week (all models): 10% used · resets " + week + " (UTC)\n" +
+		"Current week (Sonnet): 95% used · resets " + week + " (UTC)\n")
+	out := e.mustRun("tick")
+	testkit.AssertContains(t, out, "启动 1", "alpha「补测试（低风险）」不启动", "本周（Sonnet） 95%", "这条任务用 sonnet")
+	st := e.state()
+	if len(st.Jobs) != 1 || st.Jobs[0].Title != "改解析" {
+		t.Fatalf("只该启动用 opus 的那条：%+v", st.Jobs)
+	}
+	out = e.mustRun("status")
+	testkit.AssertContains(t, out, "调度：正常", "只限 Sonnet：用 sonnet", "的任务后台上限 90%，现在不启动")
+	// 主模型就是 sonnet 时这个窗口照常挡所有任务（tick 前就挡住，不到启动那一步）
+	s := newEnv(t, map[string]any{"model": "sonnet"})
+	testkit.MkProject(t, s.root, "alpha", "- [ ] 改解析 —— SLEEP=5\n")
+	s.setUsage("Current session: 10% used · resets 11pm (UTC)\nCurrent week (Sonnet): 95% used · resets " + week + " (UTC)\n")
+	testkit.AssertContains(t, s.mustRun("tick"), "启动 0", "订阅额度到了后台上限（本周（Sonnet） 95%")
+	// 没到上限时都照常
+	e2 := newEnv(t, map[string]any{"max_parallel": 3})
+	testkit.MkProject(t, e2.root, "alpha", "- [ ] 补测试（低风险） —— SLEEP=5\n")
+	e2.setUsage("Current session: 10% used · resets 11pm (UTC)\nCurrent week (Sonnet): 50% used · resets " + week + " (UTC)\n")
+	testkit.AssertContains(t, e2.mustRun("tick"), "启动 1")
+	testkit.AssertContains(t, e2.mustRun("status"), "只限 Sonnet：用 sonnet")
+}

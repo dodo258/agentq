@@ -621,74 +621,147 @@ func sortNotices(list []Notice) {
 
 type MsgSection struct {
 	Emoji string   // 段首的表情，段内不再加
-	Head  string   // 段的第一行，纯文本
-	Lines []string // 后面几行，纯文本
+	Head  string   // 段名，纯文本，加粗显示
+	Lines []string // 段的内容，纯文本，一件事一行，放进带竖条的块里
+	Pre   bool     // 内容等宽对齐（额度进度条），放进 <pre>
+	Lead  bool     // 标题下面那一句结论：只有 Head，不加粗不进块
 }
 
 // RenderMessage 排版：标题行「<表情> <b>类别 · 日期</b>」，空一行，各段（段间空一行），最后一行「<i>时间 · 来源</i>」。
-// 不算空行超过 notifyMaxLines 或字数超过 notifyMaxChars 时只留前面的，末尾写「其余 N 行见 <全文路径>」，全文存到 ~/.agentq/notify/。
+// 每段「<表情> <b>段名</b>」一行，内容放进 <blockquote>（Telegram 显示成带竖条的块）；行首「名字　」（全角空格前不超过 12 个字）的名字加粗。
+// 不算空行超过 notifyMaxLines（额度进度条不算）或字数超过 notifyMaxChars 时只留前面的（额度进度条照留），写「其余 N 行见 <全文路径>」，全文存到 ~/.agentq/notify/。
 // Telegram 一条最多 4096 字，超了永远发不出去：这条消息一直留在队列里，同类后面的消息也被它拖着发不出去。
 func (a *Service) RenderMessage(cat string, now time.Time, secs []MsgSection, source string) string {
 	ci := NotifyCats[cat]
 	header := ci.emoji + " <b>" + textfmt.Esc(ci.Name) + " · " + textfmt.DateCN(now) + "</b>"
 	footer := "<i>" + now.Format("15:04") + " · " + textfmt.Esc(source) + "</i>"
-	var lines []string // 空串是段间空行
+	type entry struct {
+		sec  int
+		head bool
+		text string
+	}
+	var all []entry
+	chars := 0
 	for i, s := range secs {
-		if i > 0 {
-			lines = append(lines, "")
-		}
 		head := s.Head
-		if s.Emoji != "" {
+		if s.Emoji != "" && !s.Lead {
 			head = s.Emoji + " " + head
 		}
-		lines = append(lines, head)
+		all = append(all, entry{i, true, head})
 		for _, l := range s.Lines {
 			if strings.TrimSpace(l) != "" {
-				lines = append(lines, l)
+				all = append(all, entry{i, false, l})
 			}
+		}
+	}
+	lines := 0 // 额度进度条（Pre 段）放在最后又总要看到：不算行数，只算字数
+	for _, e := range all {
+		chars += utf8.RuneCountInString(e.text) + 1
+		if !secs[e.sec].Pre {
+			lines++
 		}
 	}
 	budget := NotifyMaxLines - 2
-	n, chars := 0, 0
-	for _, l := range lines {
-		if l != "" {
-			n++
-		}
-		chars += utf8.RuneCountInString(l) + 1
-	}
-	var body []string
-	if n <= budget && chars <= notifyMaxChars {
-		for _, l := range lines {
-			body = append(body, textfmt.Esc(l))
-		}
-	} else {
-		full := textfmt.HTMLToPlain(header) + "\n\n" + strings.Join(lines, "\n") + "\n" + textfmt.HTMLToPlain(footer) + "\n"
-		path := a.saveFullText(now, cat, full)
-		kept, left, cut := 0, notifyMaxChars, false
-		for _, l := range lines {
-			if l != "" {
-				if kept == budget-1 {
-					break
-				}
-				kept++
+	kept, tail := all, ""
+	if lines > budget || chars > notifyMaxChars {
+		var plain []string
+		for i, e := range all {
+			if e.head && i > 0 {
+				plain = append(plain, "")
 			}
-			if r := []rune(l); len(r) > left {
-				body, cut = append(body, textfmt.Esc(string(r[:left])+"…")), true
+			plain = append(plain, e.text)
+		}
+		path := a.saveFullText(now, cat, textfmt.HTMLToPlain(header)+"\n\n"+strings.Join(plain, "\n")+"\n"+textfmt.HTMLToPlain(footer)+"\n")
+		kept = nil
+		left, cut, n := notifyMaxChars, false, 0
+		for _, e := range all {
+			pre := secs[e.sec].Pre
+			if !pre && n == budget-1 {
+				continue
+			}
+			if r := []rune(e.text); len(r) > left {
+				e.text, cut = string(r[:left])+"…", true
+				kept = append(kept, e)
 				break
 			}
-			left -= utf8.RuneCountInString(l) + 1
-			body = append(body, textfmt.Esc(l))
+			left -= utf8.RuneCountInString(e.text) + 1
+			kept = append(kept, e)
+			if !pre {
+				n++
+			}
 		}
-		for len(body) > 0 && body[len(body)-1] == "" {
-			body = body[:len(body)-1]
-		}
-		if cut && n == kept {
-			body = append(body, textfmt.Esc("全文见 "+path))
+		if cut && len(kept) == len(all) {
+			tail = "全文见 " + path
 		} else {
-			body = append(body, textfmt.Esc(fmt.Sprintf("其余 %d 行见 %s", n-kept, path)))
+			tail = fmt.Sprintf("其余 %d 行见 %s", len(all)-len(kept), path)
 		}
 	}
-	return header + "\n\n" + strings.Join(body, "\n") + "\n" + footer
+	var out []string
+	for i := 0; i < len(kept); {
+		e, s := kept[i], secs[kept[i].sec]
+		if i > 0 {
+			out = append(out, "")
+		}
+		switch {
+		case s.Lead:
+			out = append(out, textfmt.Esc(e.text))
+		case s.Emoji != "":
+			out = append(out, textfmt.Esc(s.Emoji)+" <b>"+textfmt.Esc(strings.TrimPrefix(e.text, s.Emoji+" "))+"</b>") // e.text 可能按字数截过
+		default:
+			out = append(out, "<b>"+textfmt.Esc(e.text)+"</b>")
+		}
+		i++
+		var body []string
+		for ; i < len(kept) && !kept[i].head; i++ {
+			if s.Pre {
+				body = append(body, textfmt.Esc(kept[i].text))
+			} else {
+				body = append(body, boldName(kept[i].text))
+			}
+		}
+		if len(body) == 0 {
+			continue
+		}
+		open, closing := "<blockquote>", "</blockquote>"
+		if s.Pre {
+			open, closing = "<pre>", "</pre>"
+		}
+		out = append(out, open+strings.Join(body, "\n")+closing)
+	}
+	if tail != "" {
+		out = append(out, textfmt.Esc(tail))
+	}
+	return header + "\n\n" + strings.Join(out, "\n") + "\n" + footer
+}
+
+// boldName：行首「名字　内容」的名字加粗（项目名这类），名字太长、是编号或没有全角空格的整行照常。
+func boldName(l string) string {
+	name, rest, ok := strings.Cut(l, "　")
+	if !ok || name == "" || utf8.RuneCountInString(name) > 12 || strings.Trim(name, "0123456789") == "" { // 编号不加粗
+		return textfmt.Esc(l)
+	}
+	return "<b>" + textfmt.Esc(name) + "</b>　" + textfmt.Esc(rest)
+}
+
+// doneTitles：一个项目昨晚做完的几条，列前两个标题，多的写「等 N 条」。
+func doneTitles(titles []string) string {
+	var short []string
+	for i, t := range titles {
+		if i == 2 {
+			break
+		}
+		short = append(short, textfmt.TruncRunes(t, 12))
+	}
+	s := strings.Join(short, "、")
+	if len(titles) > 2 {
+		s += fmt.Sprintf(" 等 %d 条", len(titles))
+	}
+	return s
+}
+
+// UsageSection：推送和 Telegram「状态」末尾的额度段，进度条等宽对齐；别的后端的额度跟在后面。
+func UsageSection(cfg config.Config, st *state.State, now time.Time) MsgSection {
+	return MsgSection{Emoji: "📊", Head: "额度", Pre: true, Lines: append(backend.UsageBars(st.Usage, now, cfg.UsagePolicy()), st.OtherUsageLines(cfg, now)...)}
 }
 
 // saveFullText 把超长消息的全文存到 ~/.agentq/notify/<时间>-<类别>.txt，返回给人看的路径（~ 开头）；存不了返回说明。
@@ -729,7 +802,7 @@ func (a *Service) morningReady(s *State, st *state.State, now time.Time) (string
 	return path, true
 }
 
-// PushMorning 早报摘要：要你定的、出问题的放最前，再写昨晚完成、任务成败和额度，最后是早报第一行；
+// PushMorning 早报摘要：标题下面是早报第一行（一句话结论），然后要你定的、出问题的、门、昨晚完成（按项目一行）、任务成败，额度进度条放最后；
 // 队列里攒着的消息（夜里攒下的）一起带上。不受每天上限挡（但算一条）。推到 Telegram 成功才写 report-pushed 标记。
 func (a *Service) PushMorning(s *State, st *state.State, c *telegram.TgCreds, credErr error) {
 	now := a.Now()
@@ -739,6 +812,9 @@ func (a *Service) PushMorning(s *State, st *state.State, c *telegram.TgCreds, cr
 	}
 	day := now.Format("2006-01-02")
 	var secs []MsgSection
+	if first := reportFirstLine(path); first != "" { // 早报第一行就是一句话结论，紧跟标题
+		secs = append(secs, MsgSection{Lead: true, Head: first})
+	}
 	held := append([]Notice(nil), s.Pending...)
 	sort.SliceStable(held, func(i, k int) bool { return CatRank(held[i].Cat) < CatRank(held[k].Cat) })
 	for _, n := range held {
@@ -772,7 +848,8 @@ func (a *Service) PushMorning(s *State, st *state.State, c *telegram.TgCreds, cr
 			secs = append(secs, MsgSection{Emoji: "🚪", Head: "门", Lines: lines})
 		}
 	}
-	var done []string
+	var projects []string // 昨晚完成的按项目一行，列两个标题
+	byProject := map[string][]string{}
 	counts := map[string]int{}
 	for _, j := range st.Jobs {
 		if !state.TakesSlot(j.Kind) || j.EndedAt == nil || now.Sub(*j.EndedAt) > 24*time.Hour {
@@ -788,15 +865,21 @@ func (a *Service) PushMorning(s *State, st *state.State, c *telegram.TgCreds, cr
 		}
 		counts[j.Status]++
 		if j.Status == state.StatusDone {
-			done = append(done, j.Project+"　"+textfmt.TruncRunes(j.Title, 30))
+			if _, ok := byProject[j.Project]; !ok {
+				projects = append(projects, j.Project)
+			}
+			byProject[j.Project] = append(byProject[j.Project], j.Title)
 		}
 	}
-	if len(done) > 0 {
-		sec := MsgSection{Emoji: "🟢", Head: fmt.Sprintf("昨晚完成　%d 条", len(done))}
-		if len(done) > 3 {
-			done = append(done[:3], fmt.Sprintf("另有 %d 条", len(done)-3))
+	if n := counts[state.StatusDone]; n > 0 {
+		sec := MsgSection{Emoji: "🟢", Head: fmt.Sprintf("昨晚完成　%d 条", n)}
+		for i, p := range projects {
+			if i == 4 {
+				sec.Lines = append(sec.Lines, fmt.Sprintf("另有 %d 个项目", len(projects)-4))
+				break
+			}
+			sec.Lines = append(sec.Lines, p+"　"+doneTitles(byProject[p]))
 		}
-		sec.Lines = done
 		secs = append(secs, sec)
 	}
 	tasks := fmt.Sprintf("任务　跑完 %d，失败 %d，中断 %d，超时 %d（24 小时内）",
@@ -807,10 +890,8 @@ func (a *Service) PushMorning(s *State, st *state.State, c *telegram.TgCreds, cr
 	if n := counts["gate"]; n > 0 {
 		tasks = strings.Replace(tasks, "（24 小时内）", fmt.Sprintf("，没过门 %d（24 小时内）", n), 1)
 	}
-	secs = append(secs, MsgSection{Emoji: "📊", Head: tasks, Lines: append([]string{"额度　" + backend.UsageDescribe(st.Usage, now, a.Cfg.UsagePolicy())}, st.OtherUsageLines(a.Cfg, now)...)})
-	if first := reportFirstLine(path); first != "" {
-		secs = append(secs, MsgSection{Emoji: "📝", Head: first})
-	}
+	secs = append(secs, MsgSection{Emoji: "📋", Head: tasks}, UsageSection(a.Cfg, st, now)) // 额度放最后
+
 	msg := a.RenderMessage("morning", now, secs, "早报全文 "+a.Tilde(path))
 	via, _, err := a.Deliver(c, credErr, msg)
 	if err != nil {

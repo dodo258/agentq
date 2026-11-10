@@ -115,11 +115,11 @@ func (a *Service) usageDigest() string {
 	if u.Stale(now) {
 		u = a.Runner.ReadUsage(now)
 	}
-	lines := []string{textfmt.WhenCN(u.CheckedAt) + " 读取"}
+	secs := []notify.MsgSection{{Emoji: "📊", Head: "额度　" + textfmt.WhenCN(u.CheckedAt) + " 读取", Pre: true, Lines: backend.UsageBars(u, now, a.Cfg.UsagePolicy())}}
 	if lvl, until, why := backend.UsageLevel(u, now, a.Cfg.UsagePolicy()); lvl >= backend.UsageStop {
-		lines = append(lines, backend.UsageGateNote(lvl, until, why))
+		secs = append(secs, notify.MsgSection{Emoji: "⏸", Head: backend.UsageGateNote(lvl, until, why)})
 	}
-	return a.fastStatus("额度　"+backend.UsageDescribe(u, now, a.Cfg.UsagePolicy()), lines...)
+	return a.Notify.RenderMessage("status", now, secs, "agentq 对话")
 }
 
 // RunningDigest：「在跑什么」的回答，占名额的任务在前，id 写全，用户可以直接复制去停。

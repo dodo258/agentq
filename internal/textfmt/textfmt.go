@@ -109,3 +109,18 @@ func OneLine(s string, n int) string {
 }
 
 func FmtPct(p float64) string { return strconv.FormatFloat(p, 'f', -1, 64) }
+
+// DisplayWidth：等宽字体里占几格，汉字和全角标点算两格。<pre> 里对齐用。
+func DisplayWidth(s string) int {
+	n := 0
+	for _, r := range s {
+		switch {
+		case r >= 0x1100 && r <= 0x115F, r >= 0x2E80 && r <= 0xA4CF, r >= 0xAC00 && r <= 0xD7A3,
+			r >= 0xF900 && r <= 0xFAFF, r >= 0xFE30 && r <= 0xFE4F, r >= 0xFF00 && r <= 0xFF60, r >= 0xFFE0 && r <= 0xFFE6:
+			n += 2
+		default:
+			n++
+		}
+	}
+	return n
+}

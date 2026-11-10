@@ -171,12 +171,27 @@ func (a *Service) Tick(after string) error {
 		note = "状态文件损坏后按 meta.json 重建，本次只收尾不启动"
 	case a.Cfg.Paused:
 		note = pausedNote
+		if !slices.ContainsFunc(st.PendingResumes(), func(j *state.Job) bool { return j.Manual }) {
+			break
+		}
+		// 你亲手启动的条目被门退回、中断了：暂停只管自动接活，这一条照样接着做完
+		var why string
+		started, why = a.schedule(st, nil, true)
+		if started > 0 {
+			note += fmt.Sprintf("；接着做你手动启动的 %d 条", started)
+		}
+		if why != "" {
+			note += "；" + why
+		}
+		if err := state.Save(a.StatePath(), st); err != nil {
+			a.Logf("%s：写状态文件失败：%v", name, err)
+		}
 	case st.AllCooling(a.Cfg, now):
 		note = "用量冷却中，到 " + textfmt.WhenCN(st.CooldownUntil) + " 前不启动"
 	case now.Before(st.BreakerUntil):
 		note = "连环失败熔断中，到 " + textfmt.WhenCN(st.BreakerUntil) + " 前不启动"
 	default:
-		started, note = a.schedule(st, orphans)
+		started, note = a.schedule(st, orphans, false)
 		// 续跑会改被续跑任务的记录（ResumedBy、ResumePending），启动时只存了一次
 		if err := state.Save(a.StatePath(), st); err != nil {
 			a.Logf("%s：写状态文件失败：%v", name, err)
@@ -396,7 +411,8 @@ func (a *Service) clearBranchBlocked(st *state.State, projects []backlog.Project
 }
 
 // schedule 按项目名字母序挑活，每个项目每次最多启动 1 个。返回启动个数和备注。
-func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob) (int, string) {
+// manualOnly：暂停时只续跑用户亲手启动的任务（Job.Manual），不接孤儿、不挑新条目；冷却、登录、额度、名额、熔断照样管。
+func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob, manualOnly bool) (int, string) {
 	if ok, why := state.Capacity(st, a.Cfg, ""); !ok {
 		return 0, why
 	}
@@ -452,7 +468,7 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob) (int, st
 		}
 		// 登录和额度检查可能要一分多钟，前一个任务启动也要时间：每次真要启动前再看一次有没有暂停
 		a.reloadPaused()
-		if a.Cfg.Paused {
+		if a.Cfg.Paused && !manualOnly {
 			notes = append(notes, pausedNote)
 			return false
 		}
@@ -464,7 +480,7 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob) (int, st
 		if name == "" {
 			name = backend.Default
 		}
-		return a.Cfg.Paused || (name == def && !mixed)
+		return (a.Cfg.Paused && !manualOnly) || (name == def && !mixed)
 	}
 	// 先续跑中断的任务（它们占着 BACKLOG 的进行中标记，不续跑就一直没人管），续跑过的项目这次不再挑新条目。
 	resumed := map[string]bool{}
@@ -478,6 +494,9 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob) (int, st
 		return tripped
 	}
 	for _, orig := range st.PendingResumes() {
+		if manualOnly && !orig.Manual {
+			continue
+		}
 		if orig.Kind == state.KindInbox { // 任务箱没有 BACKLOG 条目，排在项目待做之后，在下面接
 			continue
 		}
@@ -547,6 +566,9 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob) (int, st
 		}
 		a.Logf("续跑任务 %s（接 %s，会话 %s）：%s「%s」pid %d", j.ID, orig.ID, orig.SessionID, j.Project, j.Title, j.PID)
 		started++
+	}
+	if manualOnly {
+		return started, strings.Join(notes, "；")
 	}
 	if a.Chat.RepliesWaiting() { // tick 末尾的 notifyTick 会接上它
 		notes = append(notes, "有你的回复在等名额，这次不接新条目")
@@ -657,6 +679,12 @@ projects:
 				break
 			}
 			j, err := a.Runner.Launch(st, p, it)
+			if errors.Is(err, runner.ErrModelWindow) { // 只挡用这个模型的条目：同项目下一条照挑
+				notes = append(notes, p.Name+"「"+textfmt.TruncRunes(it.Title, 20)+"」"+err.Error())
+				skipped := it
+				items = slices.DeleteFunc(slices.Clone(items), func(x backlog.Item) bool { return x.Title == skipped.Title })
+				continue
+			}
 			if err != nil {
 				notes = append(notes, p.Name+" 启动失败："+err.Error())
 				break

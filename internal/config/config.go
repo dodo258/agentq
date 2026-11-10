@@ -307,7 +307,13 @@ func (c Config) PinnedModels() []string {
 // 顶层的这些键是默认后端的（后端名空表示 Claude，老任务记录就是这样），backends.<名字> 里写了的优先。
 // UsagePolicy：判断额度用的模型和后台上限。
 func (c Config) UsagePolicy() backend.UsagePolicy {
-	return backend.UsagePolicy{Model: c.Model, Session: c.UsageStopSessionPct, Week: c.UsageStopWeekPct}
+	var also []string // 经任务启动的那些角色（门里的审查不算，它不受额度门管）
+	for _, m := range []string{c.LowRiskModel, c.ReviewModel, c.PatrolModel, c.FollowupModel, c.DiscussModel, c.RouterModel, c.SuggestModel, c.SenseModel} {
+		if m != "" && m != c.Model && !slices.Contains(also, m) {
+			also = append(also, m)
+		}
+	}
+	return backend.UsagePolicy{Model: c.Model, Also: also, Session: c.UsageStopSessionPct, Week: c.UsageStopWeekPct}
 }
 
 func (c Config) ForBackend(name string) Config {

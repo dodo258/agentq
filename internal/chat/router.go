@@ -117,7 +117,7 @@ const RouterHead = "你是 agentq 的 Router，由 agentq 用 claude -p 启动�
 	"- send_file：把 path（projects_root、任务目录或任务箱产出目录下的绝对路径）发给用户，caption 一句说明。\n" +
 	"只有明显要改代码又说不清是哪个项目时才问一句（任务箱不改项目）。状态摘要写着暂停或熔断时 add、decide、inbox 只是记下、不会开工：add 要马上开工就再加一条 run，否则 reply 要说明是记下了。\n\n" +
 	"reply 原样作为一条 Telegram 消息（HTML）发给用户：第一行 `<表情> <b>类别 · %s</b>`（派活、拍板「🟢 已派出」，回答问题「📊 状态」，做不了「🔴 要你知道」）；" +
-	"空一行，每段开头一个表情；最后一行 `<i>%s · agentq 对话</i>`；不用感叹号、不客套，不超过 12 行；只用 <b> <i> <code>，正文里的 < > & 写成 &lt; &gt; &amp;。派了 quick 要在 reply 里说明派了什么。\n\n"
+	"空一行，一句话结论；再分段，每段一行 `<表情> <b>段名</b>`，内容放进下一行的 <blockquote>…</blockquote>，一件事一行，项目名写成 <b>项目名</b> 再跟全角空格；最后一行 `<i>%s · agentq 对话</i>`；不用感叹号、不客套，不超过 12 行；只用 <b> <i> <code> <blockquote>，正文里的 < > & 写成 &lt; &gt; &amp;。派了 quick 要在 reply 里说明派了什么。\n\n"
 
 func (a *Service) RouterRecentPath() string {
 	return filepath.Join(a.DataDir(), "router", "recent.jsonl")

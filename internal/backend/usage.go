@@ -2,6 +2,8 @@ package backend
 
 import (
 	"fmt"
+	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -149,7 +151,10 @@ const (
 // UsagePolicy：判断额度时要的东西。Model 决定只限某个模型的窗口算不算；Session、Week 是后台在会话窗口、周窗口的上限（百分比），
 // 给用户自己留出额度。0 当 UsageStopAt。
 type UsagePolicy struct {
-	Model   string
+	Model string
+	// Also：按活分配后别的任务用到的模型（低风险条目、复盘、答问……）。只限这些模型的窗口只在 status 里说清挡哪些活，
+	// 不挡用 Model 的任务；真挡在启动那一刻按任务实际的模型查。
+	Also    []string
 	Session float64
 	Week    float64
 }
@@ -230,6 +235,12 @@ func UsageDescribe(u *UsageInfo, now time.Time, pol UsagePolicy) string {
 		s := w.Name() + " " + textfmt.FmtPct(w.Used) + "%（" + note + "）"
 		if w.Counts(model) {
 			s = strings.TrimSuffix(s, "）") + "，后台上限 " + textfmt.FmtPct(pol.StopAt(w)) + "%）"
+		} else if users := slices.DeleteFunc(slices.Clone(pol.Also), func(m string) bool { return !w.Counts(m) }); len(users) > 0 {
+			s = strings.TrimSuffix(s, "）") + "，只限 " + w.Scope + "：用 " + strings.Join(users, "、") + " 的任务后台上限 " + textfmt.FmtPct(pol.StopAt(w)) + "%"
+			if w.UsedAt(now) >= pol.StopAt(w) {
+				s += "，现在不启动"
+			}
+			s += "）"
 		} else {
 			used := "任务用 " + model
 			if model == "" { // 跟随 CLI：不知道实际用哪个模型，撞了由撞限冷却兜住
@@ -252,4 +263,63 @@ func UsageGateNote(lvl int, until time.Time, why string) string {
 		return fmt.Sprintf("订阅额度快用完（%s，≥%d%%）：不启动新任务，agentq run 也拒绝%s", why, usageRefuseAt, at)
 	}
 	return fmt.Sprintf("订阅额度到了后台上限（%s）：不启动新任务（正在跑的不动），agentq run 仍可用%s", why, at)
+}
+
+// UsageBars：推送和 Telegram「状态」里的额度，每个会限制任务的窗口一行，放进 <pre> 等宽对齐：
+// 「会话 ▰▱▱▱▱▱▱▱▱▱  1%  今天 19:00 重置」。哪个任务都不用的只限模型窗口不列（status 里照旧）。到了后台上限行末加 ⚠️。
+// 选文字进度条不选图片：锁屏通知和聊天列表预览里也看得到。
+func UsageBars(u *UsageInfo, now time.Time, pol UsagePolicy) []string {
+	switch {
+	case u == nil:
+		return []string{"还没读过"}
+	case u.Err != "":
+		return []string{"未知（" + textfmt.TruncRunes(u.Err, 60) + "），照常接活"}
+	}
+	var ws []UsageWindow
+	width := 0
+	for _, w := range u.Windows {
+		if w.Counts(pol.Model) || slices.ContainsFunc(pol.Also, w.Counts) {
+			ws = append(ws, w)
+			width = max(width, textfmt.DisplayWidth(w.Name()))
+		}
+	}
+	var out []string
+	for _, w := range ws {
+		p := w.UsedAt(now)
+		line := w.Name() + strings.Repeat(" ", width-textfmt.DisplayWidth(w.Name())) + " " + Bar(p) + fmt.Sprintf(" %4s%%", textfmt.FmtPct(p)) + "  " + resetWhen(w, now)
+		if p >= pol.StopAt(w) {
+			line += " ⚠️"
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// Bar：10 格进度条，▰ 已用、▱ 剩余，按百分比四舍五入；用了一点（不到 5%）也给一格，免得看着像没用。
+func Bar(p float64) string {
+	n := int(math.Round(p / 10))
+	switch {
+	case n < 1 && p > 0:
+		n = 1
+	case n > 10:
+		n = 10
+	case n < 0:
+		n = 0
+	}
+	return strings.Repeat("▰", n) + strings.Repeat("▱", 10-n)
+}
+
+// resetWhen：重置时间，当天写「今天 19:00 重置」，其他写「10-13 周二 21:00 重置」。
+func resetWhen(w UsageWindow, now time.Time) string {
+	switch {
+	case w.ResetsAt == nil:
+		return "重置时间没读出"
+	case !now.Before(w.ResetsAt.Add(UsageResetSlack)):
+		return "已重置"
+	}
+	r := w.ResetsAt.In(now.Location())
+	if y, m, d := r.Date(); y == now.Year() && m == now.Month() && d == now.Day() {
+		return "今天 " + r.Format("15:04") + " 重置"
+	}
+	return textfmt.WhenCN(r) + " 重置"
 }

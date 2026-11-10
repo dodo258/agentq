@@ -128,3 +128,39 @@ func TestUsageLevel(t *testing.T) {
 		t.Errorf("说明：%s", note)
 	}
 }
+
+func TestBar(t *testing.T) {
+	for p, want := range map[float64]string{0: "▱▱▱▱▱▱▱▱▱▱", 1: "▰▱▱▱▱▱▱▱▱▱", 44: "▰▰▰▰▱▱▱▱▱▱", 95: "▰▰▰▰▰▰▰▰▰▰", 100: "▰▰▰▰▰▰▰▰▰▰", 120: "▰▰▰▰▰▰▰▰▰▰"} {
+		if got := Bar(p); got != want {
+			t.Errorf("%v%%：%s，应为 %s", p, got, want)
+		}
+	}
+}
+
+// 推送里的额度：会限制任务的窗口每个一行、名字对齐；当天写「今天」；到后台上限加 ⚠️；没人用的只限模型窗口不列。
+func TestUsageBars(t *testing.T) {
+	loc := time.FixedZone("CST", 8*3600)
+	now := time.Date(2026, 10, 11, 14, 0, 0, 0, loc)
+	today, later := now.Add(5*time.Hour), time.Date(2026, 10, 13, 21, 0, 0, 0, loc)
+	u := &UsageInfo{Windows: []UsageWindow{
+		{Label: "session", Used: 1, ResetsAt: &today},
+		{Label: "week", Used: 95, ResetsAt: &later},
+		{Label: "week (Fable)", Scope: "Fable", Used: 100, ResetsAt: &later},
+		{Label: "week (Sonnet)", Scope: "Sonnet", Used: 44, ResetsAt: &later},
+	}}
+	got := UsageBars(u, now, UsagePolicy{Model: "opus", Also: []string{"sonnet"}})
+	want := []string{
+		"会话           ▰▱▱▱▱▱▱▱▱▱    1%  今天 19:00 重置",
+		"本周           ▰▰▰▰▰▰▰▰▰▰   95%  10-13 周二 21:00 重置 ⚠️",
+		"本周（Sonnet） ▰▰▰▰▱▱▱▱▱▱   44%  10-13 周二 21:00 重置",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("得到：\n%s\n应为：\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if got := UsageBars(u, now, UsagePolicy{Model: "opus", Session: 1}); !strings.HasSuffix(got[0], " ⚠️") || len(got) != 2 {
+		t.Errorf("会话后台上限 1%% 时会话行应加 ⚠️，不用 Sonnet 时不列它：%q", got)
+	}
+	if got := UsageBars(nil, now, UsagePolicy{}); len(got) != 1 || got[0] != "还没读过" {
+		t.Errorf("%q", got)
+	}
+}

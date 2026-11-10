@@ -75,6 +75,9 @@ func TestExcludeExplicitRun(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("中断后 tick 不该自动续跑被排除的项目：%d 个任务", n)
 	}
+	// 摘要里说的「要接着做就 agentq run」要真能接上
+	out = e.mustRun("run", "secret")
+	testkit.AssertContains(t, out, "已接着做中断的任务")
 }
 
 // status 列出被排除的项目，不把它算进待做。

@@ -113,7 +113,7 @@ cd ~/projects/my-app && agentq init
 
 认不出默认分支、主目录不在默认分支时拒绝，说明原因和要执行的命令，见[默认分支](scheduling.md#默认分支)。
 
-立刻为该项目启动一个任务。给了关键字就挑「待做」里第一条包含它的。不看暂停、`retry_after` 和连环失败熔断，仍遵守并发上限、用量冷却和登录检查。订阅额度 ≥98% 时拒绝，≥90% 只提示。标着进行中、卡住或正在跑的条目不算可做。
+立刻为该项目启动一个任务。给了关键字就挑「待做」里第一条包含它的。不看暂停、`retry_after` 和连环失败熔断，仍遵守并发上限、用量冷却和登录检查。订阅额度 ≥98% 时拒绝，≥90% 只提示。标着进行中、卡住或正在跑的条目不算可做；但这个项目里有中断了、还没人续跑的条目（门退回、暂停时没续跑、`exclude_projects` 的项目不自动续跑）且包含关键字时，先用同一会话接着做它。`run` 启动的任务暂停时也会被 tick 续跑。
 
 ### `agentq discuss`、`agentq discuss answer <编号> "<回答>"`
 
@@ -149,7 +149,7 @@ cd ~/projects/my-app && agentq init
 
 ### `agentq pause`、`agentq resume`
 
-暂停或恢复自动接活。暂停时 tick 只收尾不启动，`run` 不受影响。只改 `config.json` 里 `paused` 的值。
+暂停或恢复自动接活。暂停时 tick 只收尾不启动，`run` 不受影响：你用 `run` 或 Telegram「做」启动的条目被门退回、中断了，tick 照样用同一会话接着做完。只改 `config.json` 里 `paused` 的值。
 
 ### `agentq inbox`、`agentq inbox add "<内容>"`
 

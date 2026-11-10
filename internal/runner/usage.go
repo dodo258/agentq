@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -79,4 +80,45 @@ func (a *Service) UsageOn(st *state.State, name string) *backend.UsageInfo {
 		a.Notify.Notify(notify.Notice{Cat: "alert", Key: key, Text: "订阅" + strings.TrimSuffix(head, "：") + "到了后台上限：" + why, Lines: []string{backend.UsageGateNote(lvl, until, why)}})
 	}
 	return u
+}
+
+// modelWindowStop：只限某个模型的周窗口（如「week (Sonnet)」）按这个任务实际用的模型算。tick、run 启动前按主模型 model 查过额度；
+// 按活换了模型的任务（低风险条目、复盘、巡逻、答问……）在这里补查它自己模型的那几个窗口。到了后台上限就不启动，
+// 你亲手发起的（run、Telegram 对话和回复、new）到 98% 才拒绝，和按主模型查时一样。挡住时返回原因；没读过额度就不挡。
+func (a *Service) modelWindowStop(st *state.State, j *state.Job, model, main string) string {
+	if model == "" || model == main {
+		return ""
+	}
+	u := st.UsageOf(j.Backend, a.Cfg.Backend) // 只看缓存：Telegram 路由这类对延迟敏感的不等现读；tick 挑活前刚读过
+	if u == nil || u.Err != "" {
+		return ""
+	}
+	scoped := &backend.UsageInfo{CheckedAt: u.CheckedAt}
+	for _, w := range u.Windows {
+		if w.Scope != "" {
+			scoped.Windows = append(scoped.Windows, w)
+		}
+	}
+	pol := a.Cfg.ForBackend(j.Backend).UsagePolicy()
+	pol.Model = model
+	limit := backend.UsageStop
+	if userStarted(j) {
+		limit = backend.UsageRefuse
+	}
+	if lvl, until, why := backend.UsageLevel(scoped, a.Now(), pol); lvl >= limit {
+		return backend.UsageGateNote(lvl, until, why) + "（这条任务用 " + model + "）"
+	}
+	return ""
+}
+
+// ErrModelWindow：Start 因为只限这个任务模型的周窗口到了上限没启动。不算失败，挑活的跳过这一条接着挑。
+var ErrModelWindow = errors.New("不启动")
+
+// userStarted：你亲手发起的任务。
+func userStarted(j *state.Job) bool {
+	switch j.Kind {
+	case state.KindChat, state.KindRouter, state.KindQuick, state.KindFollowup, state.KindNew:
+		return true
+	}
+	return j.Manual || j.FromThread
 }
