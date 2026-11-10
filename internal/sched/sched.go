@@ -503,7 +503,9 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob, manualOn
 		if scanErr != nil && !slices.ContainsFunc(projects, func(p backlog.Project) bool { return p.Name == orig.Project }) {
 			continue // 它的项目现在看不到：留着等 projects_root 回来，不算中断了结
 		}
-		if a.Backlog.Excluded(orig.Project) { // 不自动续跑，也别一直挂着：放掉后巡逻照常报这个中断
+		// 被排除的项目只续跑用户亲手启动的（agentq run、Telegram「做」）：那是在接着办用户点名的事，同暂停时。
+		// 其余不自动续跑，也别一直挂着：放掉后巡逻照常报这个中断
+		if a.Backlog.Excluded(orig.Project) && !orig.Manual {
 			orig.ResumePending = false
 			orig.Summary += "；项目在 exclude_projects 里，不自动续跑，要接着做就 agentq run " + orig.Project
 			a.Ledger.WriteMeta(orig)

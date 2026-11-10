@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	bl "agentq/internal/backlog"
 	"agentq/internal/chat"
@@ -65,6 +66,34 @@ func TestExcludeExplicitRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.mustRun("tick")
+	var jobs []*state.Job
+	for _, j := range e.state().Jobs {
+		if j.Project == "secret" {
+			jobs = append(jobs, j)
+		}
+	}
+	// 用户亲手启动的：中断了 tick 用同一会话接着做（同暂停时），不当成自动流程
+	if len(jobs) != 2 || jobs[1].ResumeOf != jobs[0].ID || !jobs[1].Manual {
+		t.Fatalf("用户 run 起的任务中断后 tick 应续跑：%+v", jobs)
+	}
+}
+
+// 被排除的项目：tick 自己起的任务（排除前起的）中断了不自动续跑，摘要写清怎么接；agentq run 能接上。
+func TestExcludeAutoJobNotResumed(t *testing.T) {
+	e, secret, _ := excludeEnv(t, map[string]any{"suggest_enabled": false, "paused": true})
+	testkit.WriteInstall(t, secret.BacklogPath(), strings.Replace(excludeBacklog, "碰不得的活 —— 细节", "碰不得的活 INTERRUPT", 1), 0o644)
+	testkit.GitT(t, e.home, secret.Dir, "commit", "-q", "-am", "x")
+	e.mustRun("run", "secret")
+	e.waitShells()
+	e.editState(func(st *State) {
+		for _, j := range st.Jobs {
+			j.Manual = false // 当成排除前 tick 起的
+		}
+	})
+	if err := config.SetPaused(filepath.Join(e.home, ".agentq", "config.json"), false); err != nil {
+		t.Fatal(err)
+	}
+	e.mustRun("tick")
 	e.mustRun("tick")
 	n := 0
 	for _, j := range e.state().Jobs {
@@ -73,10 +102,10 @@ func TestExcludeExplicitRun(t *testing.T) {
 		}
 	}
 	if n != 1 {
-		t.Fatalf("中断后 tick 不该自动续跑被排除的项目：%d 个任务", n)
+		t.Fatalf("中断后 tick 不该自动续跑被排除项目里自动起的任务：%d 个任务", n)
 	}
 	// 摘要里说的「要接着做就 agentq run」要真能接上
-	out = e.mustRun("run", "secret")
+	out := e.mustRun("run", "secret")
 	testkit.AssertContains(t, out, "已接着做中断的任务")
 }
 
@@ -254,6 +283,11 @@ func TestExcludeInterruptedRunEndToEnd(t *testing.T) {
 	testkit.GitT(t, e.home, secret.Dir, "commit", "-q", "-am", "x")
 	e.mustRun("run", "secret")
 	e.waitShells()
+	e.editState(func(st *State) { // 当成排除前 tick 起的：用户亲手启动的会被续跑，见 TestExcludeExplicitRun
+		for _, j := range st.Jobs {
+			j.Manual = false
+		}
+	})
 	if err := config.SetPaused(filepath.Join(e.home, ".agentq", "config.json"), false); err != nil {
 		t.Fatal(err)
 	}
@@ -290,5 +324,35 @@ func TestExcludeProjectsPromptsAndDocs(t *testing.T) {
 		if !strings.Contains(b, "exclude_projects") || !strings.Contains(b, "软约束") {
 			t.Errorf("%s 要写明 exclude_projects 对模型是软约束", f)
 		}
+	}
+}
+
+// 被排除的项目里亲手启动的条目第一轮门没过：和普通项目一样退回，tick 用同一会话接着改（不是直接卡住等人点）。
+func TestExcludeManualGateReturnResumes(t *testing.T) {
+	e := newEnv(t, map[string]any{"notify_enabled": false, "exclude_projects": []string{"demo"}})
+	verifyRepo(t, e, "demo", "#!/bin/sh\necho 就是不过\nexit 1\n", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
+	testkit.AssertContains(t, e.mustRun("run", "demo", "修东西"), "已启动任务", "门退回或中断了 tick 也会接着做")
+	j := e.jobByTitle("修东西 READYMERGE")
+	waitExit(t, j.PID, 20*time.Second)
+	e.mustRun("tick")
+	waitFor(t, 30*time.Second, "门的结果", func() bool {
+		_, err := os.Stat(e.gateResult(e.jobByTitle("修东西 READYMERGE")))
+		return err == nil
+	})
+	e.mustRun("tick")
+	var orig, res *Job
+	for _, x := range e.state().Jobs {
+		switch {
+		case x.ID == j.ID:
+			orig = x
+		case x.ResumeOf == j.ID:
+			res = x
+		}
+	}
+	if orig == nil || orig.Gate == nil || orig.Gate.State != state.GateReturned {
+		t.Fatalf("亲手启动的应退回而不是卡住：%+v", orig)
+	}
+	if res == nil || !res.Manual {
+		t.Fatalf("退回后 tick 应续跑并沿用手动标记：%+v", e.state().Jobs)
 	}
 }

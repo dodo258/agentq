@@ -97,6 +97,9 @@ func (a *Service) CmdRoutine(kind string, scheduled bool) error {
 	}
 	if scheduled && !r.Enabled(a.Cfg) {
 		a.Logf("%s：%s=false，%s 定点叫醒但不执行（切换步骤见 README「夜班和复盘」）", r.Name, r.Key, a.Service.Svc().Words().Name)
+		if err := a.MarkRoutineOff(kind, a.Now()); err != nil {
+			a.Logf("%s：记不下今天到点时开关关着（%v），今天打开开关后巡逻可能报缺报告", r.Name, err)
+		}
 		return nil
 	}
 	fail := func(format string, args ...any) error {
@@ -173,6 +176,9 @@ func (a *Service) RoutineMissed(st *state.State, r config.Routine, now time.Time
 	if now.Before(at.Add(catchUpGrace)) || now.Hour() >= catchUpBefore[r.Kind] {
 		return false, ""
 	}
+	if a.RoutineOffOn(r.Kind, now) { // 到点时开关关着，是后来才打开的：今天不补
+		return false, ""
+	}
 	for _, j := range st.Jobs {
 		if j.Kind == r.Kind && !j.StartedAt.Before(day) {
 			return false, ""
@@ -240,6 +246,9 @@ const (
 	ghCallWait       = 15 * time.Second
 	lessonsFile      = "LESSONS.md"
 	ghNoIssue        = "none"
+	// ghRepoGone：远程指向的 GitHub 仓库已经删了（gh 报 Could not resolve to a Repository）。这是确定的现状，不算查不出；
+	// 不然留着旧远程的本地副本会让夜班、复盘天天照跑。
+	ghRepoGone = "gone"
 	// idleReportMark：占位报告的最后一行。任务写的报告会盖掉它，有它就不是任务写的（见 missingReport）。
 	idleReportMark = "<!-- agentq 占位报告，没起模型 -->"
 )
@@ -270,6 +279,9 @@ func (a *Service) ghLatestIssue(ctx context.Context, repo string) (string, error
 	cmd.Env = append(gitx.GitEnv(a.Home), "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1")
 	proc.BoundCmd(cmd)
 	out, err := cmd.Output()
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok && strings.Contains(string(ee.Stderr), "Could not resolve to a Repository") {
+		return ghRepoGone, nil
+	}
 	if err != nil {
 		return "", fmt.Errorf("gh issue list --repo %s：%w", repo, err)
 	}

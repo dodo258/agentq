@@ -450,8 +450,9 @@ func (a *Service) failed(st *state.State, j *state.Job, res RunResult) {
 	g := j.Gate
 	be := a.BackendFor(j.Backend)
 	first := j.SessionInRoot() // 新项目第一版的会话在 projects_root，换了目录接不回去：和不能续跑的后端一样，由接手任务接着做
-	// 用户放行之后还没过（只会是合并冲突）：条目标着卡住，退回没人接得上，再让用户定。再审没过同理，也不算退回轮数
-	if g.Override != "" || g.Rerun || a.Backlog.Excluded(j.Project) || (be.Caps().Resume && j.SessionID == "" && !first) {
+	// 用户放行之后还没过（只会是合并冲突）：条目标着卡住，退回没人接得上，再让用户定。再审没过同理，也不算退回轮数。
+	// 被排除的项目 tick 只续跑用户亲手启动的，自动起的退回了没人接，直接让用户定
+	if g.Override != "" || g.Rerun || (a.Backlog.Excluded(j.Project) && !j.Manual) || (be.Caps().Resume && j.SessionID == "" && !first) {
 		a.stuck(st, j, res.Reason)
 		return
 	}

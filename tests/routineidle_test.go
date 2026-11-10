@@ -23,6 +23,7 @@ const atSign = string(rune(64))
 const fakeGH = `#!/bin/sh
 echo "$*" >> "$HOME/fake-gh-calls"
 if [ -f "$HOME/fake-gh-fail" ]; then echo boom >&2; exit 1; fi
+if [ -f "$HOME/fake-gh-gone" ]; then echo "GraphQL: Could not resolve to a Repository with the name 'o/demo'. (repository)" >&2; exit 1; fi
 if [ -f "$HOME/fake-gh.json" ]; then cat "$HOME/fake-gh.json"; else echo '[]'; fi
 `
 
@@ -182,6 +183,15 @@ func TestIntegrationNightIdle(t *testing.T) {
 	if _, err := os.Stat(e.reportPath(config.KindNight, day4)); err == nil {
 		t.Error("手动不写占位报告")
 	}
+}
+
+// 远程指向的仓库删了：gh 明确说找不到是确定的现状，记下后照样能判「没事」，不会因为一个旧远程天天照跑。
+func TestIntegrationNightIdleRepoGone(t *testing.T) {
+	t.Parallel()
+	e, _, day1 := idleEnv(t, config.KindNight)
+	os.WriteFile(filepath.Join(e.home, "fake-gh-gone"), nil, 0o644)
+	e.baselineRoutine(config.KindNight, day1)
+	e.assertIdle(config.KindNight, day1.AddDate(0, 0, 1))
 }
 
 // 每一项查出有事、或查不出：都照跑，提示词和原来逐字相同。
@@ -548,6 +558,35 @@ func TestIdleReportSatisfiesPatrolAndMorning(t *testing.T) {
 	e.flush()
 	if got := strings.Join(e.tg.texts(), "\n"); !strings.Contains(got, "今天没有要复盘的") {
 		t.Errorf("早报照常推：%s", got)
+	}
+}
+
+// 到点时开关关着、当天才打开：那天本来就不该有报告，巡逻不报缺、tick 不补跑；第二天照常要求。
+func TestRoutineSwitchedOnLaterSameDay(t *testing.T) {
+	e := newNotifyEnv(t, false)
+	for _, kind := range []string{config.KindNight, config.KindReview} {
+		r := config.Routines[kind]
+		e.at(r.Hour, r.Minute)
+		if err := e.a.Routine.CmdRoutine(kind, true); err != nil { // 开关关着：定点叫醒只记一行
+			t.Fatal(err)
+		}
+	}
+	e.a.Cfg.NightEnabled, e.a.Cfg.ReviewEnabled = true, true
+	e.at(9, 0)
+	if issues := e.a.Patrol.CheckReports(e.st, e.now); len(issues) != 0 {
+		t.Errorf("到点时开关关着，当天不报缺报告：%+v", issues)
+	}
+	for _, kind := range []string{config.KindNight, config.KindReview} {
+		if missed, _ := e.a.Routine.RoutineMissed(e.st, config.Routines[kind], e.now); missed {
+			t.Errorf("%s 到点时开关关着，当天不补跑", kind)
+		}
+	}
+	e.now = e.now.AddDate(0, 0, 1)
+	if issues := e.a.Patrol.CheckReports(e.st, e.now); len(issues) != 2 {
+		t.Errorf("第二天开关一直开着，没报告要报两条：%+v", issues)
+	}
+	if missed, _ := e.a.Routine.RoutineMissed(e.st, config.Routines[config.KindReview], e.now); !missed {
+		t.Error("第二天错过的复盘照常补跑（夜班 08:00 后不补，这里看复盘）")
 	}
 }
 

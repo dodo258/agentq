@@ -22,7 +22,7 @@ func (a *App) CmdRun(project, keyword string) error {
 		fmt.Fprintln(a.Out, setup.PermissionDefaultHint)
 	}
 	if a.Backlog.Excluded(project) {
-		fmt.Fprintf(a.Out, "%s 在 exclude_projects 里，自动流程不碰它；这次是你明确指定的，照跑。中断了不会自动续跑。\n", project)
+		fmt.Fprintf(a.Out, "%s 在 exclude_projects 里，自动流程不碰它；这次是你明确指定的，照跑，门退回或中断了 tick 也会接着做这一条，别的条目照旧不碰。\n", project)
 	}
 	lock, err := a.Runner.LockForCommand()
 	if err != nil {

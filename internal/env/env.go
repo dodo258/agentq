@@ -74,6 +74,26 @@ func (a *Env) ConfigPath() string { return filepath.Join(a.DataDir(), "config.js
 
 func (a *Env) StatePath() string { return filepath.Join(a.DataDir(), "state.json") }
 
+// 夜班、复盘到点时开关关着：记下那天，当天打开开关也不算错过（巡逻不报缺报告，tick 不补跑）。
+func (a *Env) routineOffPath(kind string) string {
+	return filepath.Join(a.DataDir(), "routine-off", kind)
+}
+
+// MarkRoutineOff：定点叫醒时开关关着，记下今天。
+func (a *Env) MarkRoutineOff(kind string, now time.Time) error {
+	path := a.routineOffPath(kind)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return fsx.WriteFileAtomic(path, []byte(now.Format(time.DateOnly)+"\n"))
+}
+
+// RoutineOffOn：这一种今天到点时开关关着。
+func (a *Env) RoutineOffOn(kind string, now time.Time) bool {
+	b, err := os.ReadFile(a.routineOffPath(kind))
+	return err == nil && strings.TrimSpace(string(b)) == now.Format(time.DateOnly)
+}
+
 func (a *Env) LockPath() string { return filepath.Join(a.DataDir(), "tick.lock") }
 
 func (a *Env) JobDir(id string) string { return filepath.Join(a.DataDir(), "jobs", id) }

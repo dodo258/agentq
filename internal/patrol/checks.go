@@ -416,7 +416,7 @@ func (a *Service) checkUsage(st *state.State, now time.Time) []PatrolIssue {
 }
 
 // CheckReports：patrolReportHour 点以后，开关打开的复盘还没写当天早报（<日期>.md）、夜班还没写报告（<日期>-night.md）。
-// 正在跑的不报。
+// 正在跑的不报；今天到点时开关还关着的不报。
 func (a *Service) CheckReports(st *state.State, now time.Time) []PatrolIssue {
 	if now.Hour() < patrolReportHour {
 		return nil
@@ -425,7 +425,7 @@ func (a *Service) CheckReports(st *state.State, now time.Time) []PatrolIssue {
 	var res []PatrolIssue
 	for _, x := range []struct{ kind, what string }{{config.KindReview, "早报"}, {config.KindNight, "夜班报告"}} {
 		r := config.Routines[x.kind]
-		if !r.Enabled(a.Cfg) {
+		if !r.Enabled(a.Cfg) || a.RoutineOffOn(x.kind, now) { // 到点时开关关着、后来才打开的，今天本来就没有
 			continue
 		}
 		path := filepath.Join(a.ReportDir(), day+r.Report+".md")
