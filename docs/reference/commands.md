@@ -145,7 +145,7 @@ cd ~/projects/my-app && agentq init
 
 ### `agentq stop <任务id>`
 
-杀掉该任务的进程组，先 SIGTERM，10 秒后仍在就 SIGKILL，标为已停止。进程已经自己结束的，按它的结果正常收尾。还不知道 pid 时按任务找进程，找到就杀；确认没有进程就直接标已停止；查不了（`ps` 失败）时报错说没停成，任务照旧算在跑、占着名额。下一条待做会立刻接上，想停住先 `agentq pause`。
+杀掉该任务的进程组，先 SIGTERM，10 秒后仍在就 SIGKILL，标为已停止。进程已经自己结束的，按它的结果正常收尾。还不知道 pid 时按任务找进程，找到就杀；确认没有进程就直接标已停止；查不了（`ps` 失败）时报错说没停成，任务照旧算在跑、占着名额。下一条待做会立刻接上，想停住先 `agentq pause`。停掉的这一条要等 `retry_after`（默认 12 小时）才会再自动接：stop 的回复和 `agentq status` 都写明到几点，以及现在就做用的 `agentq run` 命令。
 
 ### `agentq pause`、`agentq resume`
 

@@ -552,13 +552,24 @@ func RetryBlocked(st *State, project, fp string, now time.Time, retryAfter time.
 	if st.itemHeld(project, fp, now) {
 		return true
 	}
-	var last *Job
+	at, _, stuckPending := retryAt(st, project, fp, retryAfter)
+	return stuckPending || now.Before(at)
+}
+
+// RetryAt：同一条目最近一次结束后，tick 要等到什么时候才会再自动接它（规则同 RetryBlocked，不含 ItemHold 和卡住标记没写上的情况），
+// 和那次任务。没有要等的返回零值。status 和 stop 用它告诉用户还要等多久。
+func RetryAt(st *State, project, fp string, retryAfter time.Duration) (time.Time, *Job) {
+	at, last, _ := retryAt(st, project, fp, retryAfter)
+	return at, last
+}
+
+func retryAt(st *State, project, fp string, retryAfter time.Duration) (at time.Time, last *Job, stuckPending bool) {
 	for _, j := range st.Jobs {
 		if !SameItem(j, project, fp) {
 			continue
 		}
 		if j.StuckPending != "" { // 卡住标记还没写上：不能当普通条目再挑
-			return true
+			stuckPending = true
 		}
 		if j.Status == StatusRunning || j.EndedAt == nil || j.LimitHit {
 			continue
@@ -567,10 +578,10 @@ func RetryBlocked(st *State, project, fp string, now time.Time, retryAfter time.
 			last = j
 		}
 	}
-	if last != nil && last.StuckMarked { // 用户去掉了 agentq 写的卡住标记才挑得到这里：他已经表态了
-		return false
+	if last == nil || last.StuckMarked { // 用户去掉了 agentq 写的卡住标记才挑得到这里：他已经表态了
+		return time.Time{}, last, stuckPending
 	}
-	return last != nil && now.Sub(*last.EndedAt) < retryWait(st, last, retryAfter)
+	return last.EndedAt.Add(retryWait(st, last, retryAfter)), last, stuckPending
 }
 
 const KindSuggest = "suggest"

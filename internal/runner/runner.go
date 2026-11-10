@@ -228,6 +228,9 @@ func (a *Service) finishStopped(st *state.State, j *state.Job, how string) (stri
 	if j.Kind == state.KindNew {
 		msg += a.Hooks.NewDirsNote(st, j, state.StatusKilled)
 	}
+	if n := a.stoppedRetryNote(st, j); n != "" {
+		msg += "；" + n
+	}
 	return msg, nil
 }
 
@@ -464,6 +467,40 @@ func (a *Service) Pick(st *state.State, items []backlog.Item, keyword string, ho
 		return it, true
 	}
 	return backlog.Item{}, false
+}
+
+// RetryNote：这个可挑的条目最近一次结束后还在 retry_after 里时，说到几点才会再自动接、现在就做用哪条命令；不用等返回空。
+func (a *Service) RetryNote(st *state.State, it backlog.Item) string {
+	if !it.Eligible() || st.RunningFor(it.Project, it.Fingerprint) != nil {
+		return ""
+	}
+	at, last := state.RetryAt(st, it.Project, it.Fingerprint, a.Cfg.RetryAfter.Duration)
+	if last == nil || !a.Now().Before(at) {
+		return ""
+	}
+	run := "agentq run " + it.Project
+	if kw := it.RunKeyword(); kw != "" {
+		run += ` "` + kw + `"`
+	}
+	return fmt.Sprintf("「%s」上次%s（%s），%s 后才会再自动接；现在就做：%s",
+		textfmt.TruncRunes(it.Title, 30), state.StatusLabel(last.Status), textfmt.WhenCN(*last.EndedAt), textfmt.WhenCN(at), run)
+}
+
+// stoppedRetryNote：刚停掉的待做任务，它的条目还在「待做」里可挑时的 RetryNote。
+func (a *Service) stoppedRetryNote(st *state.State, j *state.Job) string {
+	if j.Kind != "" || j.Fingerprint == "" || j.ProjectDir == "" {
+		return ""
+	}
+	items, err := backlog.Project{Name: j.Project, Dir: j.ProjectDir}.Items()
+	if err != nil {
+		return ""
+	}
+	for _, it := range items {
+		if it.Fingerprint == j.Fingerprint {
+			return a.RetryNote(st, it)
+		}
+	}
+	return ""
 }
 
 // CheckLogin 是启动前的登录检查：默认后端（配置写错了也在这里挡）。

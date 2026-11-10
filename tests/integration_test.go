@@ -712,8 +712,13 @@ func TestIntegrationRunStopPauseLogs(t *testing.T) {
 	if out := e.mustRun("logs", j.ID); !strings.Contains(out, "还在运行") {
 		t.Errorf("logs 运行中：\n%s", out)
 	}
-	if out := e.mustRun("stop", j.ID); !strings.Contains(out, "已停止任务") {
-		t.Errorf("stop：\n%s", out)
+	// 停掉的条目要等 retry_after 才自动再接：stop 和 status 都说到几点、现在就做用哪条命令
+	retryHint := `后才会再自动接；现在就做：agentq run alpha "甲二 关键字"`
+	if out := e.mustRun("stop", j.ID); !strings.Contains(out, "已停止任务") || !strings.Contains(out, retryHint) {
+		t.Errorf("stop 应说停掉的条目几点后再接：\n%s", out)
+	}
+	if out := e.mustRun("status"); !strings.Contains(out, "「甲二 关键字」上次已停止") || !strings.Contains(out, retryHint) {
+		t.Errorf("status 应列出在等 retry_after 的条目：\n%s", out)
 	}
 	if err := syscall.Kill(-j.PID, 0); err == nil {
 		t.Error("stop 后进程组应已不在")

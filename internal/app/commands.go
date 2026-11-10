@@ -213,6 +213,11 @@ func (a *App) CmdStatus() error {
 			if n := it.DepNote(); n != "" {
 				fmt.Fprintf(w, "    %s\n", n)
 			}
+			if st != nil {
+				if n := a.Runner.RetryNote(st, it); n != "" {
+					fmt.Fprintf(w, "    %s\n", n)
+				}
+			}
 		}
 		if err := a.Runner.ProjectBlock(st, p.Name, p.Dir); err != nil {
 			fmt.Fprintf(w, "    %v\n", err)

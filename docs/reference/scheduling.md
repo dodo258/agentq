@@ -109,7 +109,7 @@ HEAD 排在 `origin/HEAD` 前面，是因为 BACKLOG 从工作目录读，认领
 - `state.json` 记的 pid 仍是 claude 本身，claude 仍在自己的进程组里。`ps` 里多出的 `agentq _job …` 是外壳，任务结束后自己退出。
 - 结束后的那次 tick 和定时 tick 共用 `tick.lock`，不会重叠。锁被占着时它最多等 60 秒（定时 tick 直接跳过）。
 - 它同样遵守暂停、冷却、并发上限和 `retry_after`，日志写进 `~/.agentq/launchd.log`，开头是 `tick（任务 <id> 结束后）：`。
-- 被 `agentq stop` 停掉或超时杀掉的任务也一样：下一条待做立刻启动，被停的那条受 `retry_after` 限制。想停住不接新活，先 `agentq pause`。
+- 被 `agentq stop` 停掉或超时杀掉的任务也一样：下一条待做立刻启动，被停的那条受 `retry_after` 限制，stop 的回复和 `agentq status` 写明到几点才再接、现在就做用哪条 `agentq run`。想停住不接新活，先 `agentq pause`。
 - `retry_after` 配得很短、又遇上 claude 一启动就失败时，会以秒级反复拉起。
 - `"tick_after_job": false` 可以关掉，之后结束的任务只靠定时 tick。
 

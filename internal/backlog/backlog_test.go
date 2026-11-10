@@ -368,3 +368,24 @@ func TestDoneMergeCommit(t *testing.T) {
 		}
 	}
 }
+
+// run 按原文找条目：给用户的关键词必须是原文的一段，不含要在双引号里转义的字符，不跨（…）标记。
+func TestRunKeyword(t *testing.T) {
+	for text, want := range map[string]string{
+		"改版：真实开发时间线卡 —— 首页加一张卡":           "改版：真实开发时间线卡",
+		"`agentq health`：发现越改越乱的代码 —— 说明": "agentq healt",
+		"修 A（范围：x/）和 B —— 说明":             "修 A",
+		"（低风险）补测试 —— 给 x 加用例":             "补测试",
+		"（范围：a/）（低风险） —— 只有标记":            "",
+		"把 \"$HOME\" 换成变量 —— 说明":          "HOME",
+		"短": "",
+	} {
+		got := Item{Text: text}.RunKeyword()
+		if got != want {
+			t.Errorf("%q：关键词 %q，想要 %q", text, got, want)
+		}
+		if got != "" && (!strings.Contains(text, got) || strings.ContainsAny(got, "\"$`\\（）")) {
+			t.Errorf("%q：关键词 %q 不是原文里能直接放进双引号的一段", text, got)
+		}
+	}
+}

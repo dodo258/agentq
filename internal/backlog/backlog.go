@@ -171,6 +171,41 @@ type Item struct {
 
 func (it Item) Eligible() bool { return !it.InProgress && !it.Stuck }
 
+// RunKeyword：给用户敲 `agentq run <项目> "<关键词>"` 用的一段字：在「——」前的标题部分里，取第一段不含 shell 双引号里
+// 要转义的字符、也不在（…）标记里面的文字，最多 12 个字。一定是原文的一段，run 按原文找得到这一条；
+// 不取标记里的字（如「低风险」），免得 run 挑到前面另一条同样标了的条目。
+func (it Item) RunKeyword() string {
+	head, _, _ := strings.Cut(it.Text, "——")
+	depth := 0
+	var seg []rune
+	flush := func() string {
+		s := strings.TrimSpace(string(seg))
+		seg = seg[:0]
+		if r := []rune(s); len(r) >= 2 {
+			return strings.TrimSpace(string(r[:min(len(r), 12)]))
+		}
+		return ""
+	}
+	for _, r := range head + "\x00" {
+		switch {
+		case r == '（':
+			depth++
+		case r == '）' && depth > 0:
+			depth--
+			continue
+		case depth == 0 && r != '\x00' && !strings.ContainsRune("\"$`\\）", r):
+			seg = append(seg, r)
+			continue
+		case depth > 0:
+			continue
+		}
+		if s := flush(); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
 // StuckMark 是条目上的（卡住：…）标记，别的写法取不到时返回空。
 func (it Item) StuckMark() string { return stuckMarkRe.FindString(it.Text) }
 
