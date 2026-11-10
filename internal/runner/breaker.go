@@ -12,19 +12,19 @@ import (
 )
 
 // RecordOutcome 按刚结束的任务（运行了 ran）更新连环失败计数，需要熔断时设好 BreakerUntil，返回是否熔断、熔断多久。
-// 秒退 = 没跑完（失败、中断、启动失败）且运行不到 breaker_quick。用户 stop 的、撞用量上限的、撞预算的、自动停的、机器重启中断的、上游瞬时错误的不算，
+// 秒退 = 没跑完（失败、中断、启动失败）且运行不到 Config.BreakerQuick。用户 stop 的、撞用量上限的、撞预算的、自动停的、机器重启中断的、上游瞬时错误的不算，
 // 也不清零（上限有自己的冷却，瞬时错误有自己的退避）。其余结束（跑完、跑了一阵才失败、超时）说明不是系统性故障，计数和翻倍都清零；
 // 跑完的还解除正在生效的熔断（比如用户修好后用 run 试跑成功了）。
 func RecordOutcome(st *state.State, cfg config.Config, j *state.Job, ran time.Duration, now time.Time) (bool, time.Duration) {
 	if j.Status == state.StatusKilled || j.LimitHit || j.Rebooted || j.Transient || j.BudgetHit || j.AutoStop != "" {
 		return false, 0
 	}
-	// 闲时找活是可有可无的后台活：它失败不说明待做任务有问题，更不该因此停掉真正的活
-	if j.Kind == state.KindSuggest || j.Kind == state.KindSense || j.Kind == state.KindDiscuss {
+	// 商量大方向是可有可无的后台活：它失败不说明待做任务有问题，更不该因此停掉真正的活
+	if j.Kind == state.KindDiscuss {
 		return false, 0
 	}
-	// 夜班、复盘、new 只计秒退：它们跑完不说明待做任务的问题好了，不清零、不解除熔断。任务箱和待做一样，是真在干活的 claude
-	if j.Kind != "" && j.Kind != state.KindInbox && (j.Status == state.StatusDone || ran >= cfg.BreakerQuick.Duration) {
+	// 夜班、复盘、new 只计秒退：它们跑完不说明待做任务的问题好了，不清零、不解除熔断
+	if j.Kind != "" && (j.Status == state.StatusDone || ran >= cfg.BreakerQuick.Duration) {
 		return false, 0
 	}
 	if j.Status == state.StatusDone {

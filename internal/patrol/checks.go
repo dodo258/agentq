@@ -277,17 +277,17 @@ func (a *Service) checkBackupReport(now time.Time, fail func(prefix, note string
 }
 
 // CheckJobs：最近 patrolWindow 里失败、超时、中断的任务（撞用量上限的、等着自动续跑或已经续跑的不算，巡逻分析、Telegram 对话和任务箱自己的不算），
-// 和会话记录超过 stall_after 没增长的运行中任务。
+// 和会话记录超过 Config.StallAfter 没增长的运行中任务。
 func (a *Service) CheckJobs(st *state.State, now time.Time) []PatrolIssue {
 	var res []PatrolIssue
 	for _, j := range st.Jobs {
 		if j.Kind == state.KindPatrol || state.IsChatKind(j.Kind) { // 对话任务没做成时已经直接回了用户
 			continue
 		}
-		if (j.Kind == state.KindNew || j.Kind == state.KindRelease) && j.Status != state.StatusRunning { // 结束时已经直接推了（noticeNew、finishReleasePrep），在跑时照样看卡住
+		if j.Kind == state.KindNew && j.Status != state.StatusRunning { // 结束时已经直接推了（noticeNew），在跑时照样看卡住
 			continue
 		}
-		if (j.Kind == state.KindSuggest || j.Kind == state.KindSense || j.Kind == state.KindDiscuss) && j.Status != state.StatusRunning { // 可有可无的后台活，结果已写进当天汇总；在跑时照样看卡住
+		if j.Kind == state.KindDiscuss && j.Status != state.StatusRunning { // 可有可无的后台活，结果已写进当天汇总；在跑时照样看卡住
 			continue
 		}
 		name := j.Project + "「" + textfmt.TruncRunes(j.Title, 40) + "」"
@@ -299,14 +299,11 @@ func (a *Service) CheckJobs(st *state.State, now time.Time) []PatrolIssue {
 			res = append(res, PatrolIssue{
 				Fingerprint: "stall:" + j.ID, Check: "stall", Anomaly: !a.Backlog.Excluded(j.Project), quiet: true,
 				Title: "任务疑似卡住：" + name,
-				Evidence: []string{fmt.Sprintf("任务 %s 已运行 %s，会话记录 %s 没增长（stall_after=%s），pid %d",
+				Evidence: []string{fmt.Sprintf("任务 %s 已运行 %s，会话记录 %s 没增长（超过 %s 算卡住），pid %d",
 					j.ID, now.Sub(j.StartedAt).Round(time.Minute), textfmt.FormatIdle(idle), textfmt.FormatDuration(a.Cfg.StallAfter.Duration), j.PID)},
 				Action: fmt.Sprintf("没自动处理：不会自动杀，运行满 %s 才终止；要停就 agentq stop %s", textfmt.FormatDuration(a.Runner.JobTimeout(j)), j.ID),
 				jobID:  j.ID,
 			})
-			continue
-		}
-		if j.Kind == state.KindInbox { // 没做完时 finishInbox 已经推给用户了，巡逻不再报一次、也不为它起分析
 			continue
 		}
 		if j.EndedAt == nil || now.Sub(*j.EndedAt) > patrolWindow {

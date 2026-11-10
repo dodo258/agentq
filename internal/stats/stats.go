@@ -27,7 +27,7 @@ type Service struct {
 }
 
 // agentq stats [天数]：只读，按任务种类、项目、模型统计最近 N 天的次数、成败、token。
-// 数据来自 jobs/*/meta.json 和 result.json（主动感知的在 sense/runs/，见 jobOutput）。同一会话续跑时 result.json 是累计的，用 readJobUsage 减掉上一次，不重复计。
+// 数据来自 jobs/*/meta.json 和 result.json。同一会话续跑时 result.json 是累计的，用 readJobUsage 减掉上一次，不重复计。
 // 模型取启动参数里的模型（一个任务算一个模型，子代理用的便宜模型也算在它头上）。
 const (
 	statsDefaultDays = 7
@@ -158,13 +158,7 @@ var statsKindNames = map[string]string{
 	state.KindPatrol:   "巡逻分析",
 	state.KindChat:     "对话",
 	state.KindFollowup: "追问",
-	state.KindRouter:   "Router",
-	state.KindQuick:    "小任务",
-	state.KindInbox:    "任务箱",
 	state.KindNew:      "新项目",
-	state.KindSuggest:  "闲时找活",
-	state.KindSense:    "主动感知",
-	state.KindRelease:  "发版准备",
 	state.KindDiscuss:  "商量大方向",
 }
 

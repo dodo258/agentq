@@ -53,27 +53,23 @@ func versionString() string {
 
 const usage = `agentq：后台调度器，把各项目 docs/BACKLOG.md「待做」交给 claude -p 做到合并
 
-上手：
+上手：装好就在运行，在 Claude Code 或 Codex 里直接说需求，下面这些由派活技能替你跑。
   agentq init [目录]              把项目接入：检查目录，生成缺的 docs/BACKLOG.md、AGENTS.md 等并提交（默认当前目录）
-  agentq add "<需求>" [--project 名字]  往当前项目（或 --project）的「待做」末尾加一条并提交
+  agentq add "<需求>" [--project 名字]  往当前项目（或 --project）的「待做」末尾加一条并提交；不是 Git 仓库就先 git init 接入
   agentq start [--accept-bypass]  打开后台：检查、确认权限、装调度服务、取消暂停，立刻接活（可重复运行）
-  agentq start --welcome [--assume-yes]  一键脚本用的第一次启动：讲清楚，按回车同意才启动
+  agentq start --welcome [--paused]  一键脚本装完用：装完即运行（安装就是同意，只告知），--paused 只装不跑
+  agentq start --check            只读：后台能不能接活，第一行是 ready、not-running、paused、off、need-cli 或 skills-only（派活技能用）
   agentq env status|on|off        通用工程规则：看状态、装上、关掉（只删没改过的文件）
   agentq version                  版本号（--version 同义）
 
 其他命令：
   agentq tick                     一次调度：收尾、超时处理、挑活启动（launchd 每 5 分钟调用，每个任务结束时也会调用一次）
   agentq run <项目名> [条目关键字]  立刻为该项目启动一个任务（不看暂停，仍遵守上限；订阅额度 ≥98% 时拒绝）
-  agentq new [--direction "方向"] "<一句话>"  从零做出新项目第一版：按 new-project 建项目，把第一条待做做到合并，结果写当天汇总并推送（配了 Telegram 先问一次大方向，等 discuss_wait 没回按默认，--direction 已经定了就不问；不看暂停，占名额；一句话不超过 500 字；额度 ≥98% 时拒绝）
-  agentq discuss [answer <编号> "<回答>"]  在商量大方向的条目：列出问题和默认答案，或回答（回「随便」就按默认）；标了（大方向）的条目开工前问一次，配 discuss_enabled、discuss_wait
-  agentq status                   订阅额度、运行中的任务、任务箱和各项目待做条数、最近结束的任务
+  agentq new [--direction "方向"] "<一句话>"  从零做出新项目第一版：按 new-project 建项目，把第一条待做做到合并，结果写当天汇总并推送（配了 Telegram 先问一次大方向，等 2 小时没回按默认，--direction 已经定了就不问；不看暂停，占名额；一句话不超过 500 字；额度 ≥98% 时拒绝）
+  agentq discuss [answer <编号> "<回答>"]  在商量大方向的条目：列出问题和默认答案，或回答（回「随便」就按默认）；标了（大方向）的条目开工前问一次，等 2 小时没回按默认，discuss_enabled=false 关掉
+  agentq status                   订阅额度、运行中的任务、各项目待做条数、最近结束的任务
   agentq projects                 列出所有项目（projects_root 下的和 extra_projects 登记的），每行：目录名、路径，被排除的多一列
-  agentq inbox [add "<内容>"]      通用任务箱：列出，或放一条不属于任何项目的活（调研、写东西、查资料、整理文件）；项目待做之后、有名额时接，产出写到 ~/.agentq/outbox/
-  agentq suggest [项目名]          手动跑一次闲时找活：只读地看各项目（或指定的一个）找值得做的活，低风险的写进「待做」、会改产品的写进「## 建议」并推送一条，回「做 1 3」移进「待做」（不看 suggest_enabled、暂停和当天次数，占用当天记录；额度 ≥98% 时拒绝）
-  agentq sense [--dry-run]         手动跑一次主动感知：读 App Store 评价、TestFlight 反馈和 GitHub issue，有新内容才起模型判断，真问题写进「## 建议」，回「做 N」移进「待做」（--dry-run 只读、列读到多少条，不写文件不调模型；不看 sense_enabled；额度 ≥98% 时不判断）
-  agentq release check [项目名]    只读显示发版条件：最新构建已处理且满 3 天、之后没有崩溃反馈、没有未处理的验收意见、距上次提交 ≥14 天、没有进行中的审核提交（提交审核只能回复那条 📦 提示消息说「发」，没有命令能提交）
-  agentq quality                  最近 7 天的一次满意率、返工率和每条的依据（扫各项目 BACKLOG「已完成」和 git 历史）
-  agentq stats [天数]              最近 N 天（默认 7）按任务种类、项目、模型统计次数、成败、token 和折算费用，按门统计通过、失败、判不了、warn 档会挡下多少、退回和放行（只读）
+  agentq stats [天数]              最近 N 天（默认 7）按任务种类、项目、模型统计次数、成败、token 和折算费用，按门统计通过、失败、判不了、warn 档会挡下多少、退回和放行；最后是最近 7 天的一次满意率、返工率和每条的依据（只读）
   agentq backlog archive <项目名|--all> [--dry-run]  把 BACKLOG「已完成」的旧条目移到 docs/BACKLOG-archive.md（前 20 条和 14 天内合并的留下；不自动提交）
   agentq patrol                   立刻巡逻一次：launchd 服务、备份推送、任务失败和卡住、额度、早报和夜班报告、等拍板条目、磁盘（tick 每小时自动巡逻一次）
   agentq gate report|pass|rerun|abandon <任务id> [--reason "原因"]  过门：看报告；放行这一次卡在门上的任务（原因必写）；再审一次（不改代码重新跑门，不算退回轮数，同一提交最多 2 次）；放弃卡住的任务或新项目的第一版，分支留着
@@ -97,7 +93,7 @@ const usage = `agentq：后台调度器，把各项目 docs/BACKLOG.md「待做�
   agentq remove --yes             卸载受管入口和服务，保留数据及恢复材料
   agentq restore --yes            恢复中断事务或最近一次卸载
 
-自然语言需求：在项目目录运行 claude，按 dispatch 派活；agentq 不是自然语言聊天命令。
+自然语言需求：在 Claude Code 或 Codex 里直接说，dispatch 技能判断当场做还是交后台；agentq 不是自然语言聊天命令。
 配置 ~/.agentq/config.json，任务记录 ~/.agentq/jobs/<id>/，每日汇总 ~/.claude/nightly/<日期>-agentq.md
 `
 
@@ -143,9 +139,9 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	want := map[string][2]int{ // 参数个数下限、上限
-		"tick": {0, 0}, "run": {1, 2}, "new": {1, 3}, "discuss": {0, 3}, "suggest": {0, 1}, "sense": {0, 1}, "release": {1, 2}, "status": {0, 0}, "logs": {1, 1},
+		"tick": {0, 0}, "run": {1, 2}, "new": {1, 3}, "discuss": {0, 3}, "status": {0, 0}, "logs": {1, 1},
 		"stop": {1, 1}, "pause": {0, 0}, "resume": {0, 0}, "install": {0, 0}, "uninstall": {0, 0},
-		"night": {0, 0}, "review": {0, 0}, "quality": {0, 0}, "backlog": {2, 3}, "stats": {0, 1}, "patrol": {0, 0}, "notify": {0, 30}, "listen": {0, 0}, "inbox": {0, 30},
+		"night": {0, 0}, "review": {0, 0}, "backlog": {2, 3}, "stats": {0, 1}, "patrol": {0, 0}, "notify": {0, 30}, "listen": {0, 0},
 		"init": {0, 1}, "add": {1, 4}, "start": {0, 2}, "env": {1, 1}, "projects": {0, 0}, "gate": {0, 4}, "health": {0, 1}, "eval": {0, 30}, "evolve": {0, 2}, app.GateProcToken: {0, 1},
 	}
 	n, ok := want[cmd]
@@ -205,7 +201,6 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 		err = a.Onboard.CmdEnv(rest)
 	case "tick":
 		err = a.Sched.Tick(after)
-		a.Sense.AfterTick()
 	case "run":
 		kw := ""
 		if len(rest) == 2 {
@@ -216,32 +211,21 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 		err = a.Newproj.CmdNew(rest)
 	case "discuss":
 		err = a.Discuss.CmdDiscuss(rest)
-	case "suggest":
-		project := ""
-		if len(rest) == 1 {
-			project = rest[0]
-		}
-		err = a.Suggest.CmdSuggest(project)
-	case "sense":
-		err = a.Sense.CmdSense(rest)
-	case "release":
-		err = a.Release.CmdRelease(rest)
 	case "status":
 		err = a.CmdStatus()
 	case "projects":
 		err = a.CmdProjects()
-	case "quality":
-		err = a.Quality.CmdQuality()
 	case "stats":
-		err = a.Stats.CmdStats(rest)
+		if err = a.Stats.CmdStats(rest); err == nil {
+			fmt.Fprintln(a.Out)
+			err = a.Quality.CmdQuality()
+		}
 	case "backlog":
 		err = a.CmdBacklog(context.Background(), rest)
 	case "patrol":
 		err = a.Patrol.CmdPatrol()
 	case "notify":
 		err = a.CmdNotify(rest)
-	case "inbox":
-		err = a.Inbox.CmdInbox(rest)
 	case "listen":
 		err = a.Chat.CmdListen()
 	case "logs":

@@ -56,16 +56,15 @@ REPO_HTML = os.environ.get("AGENTQ_REPO", "<owner>/agentq").replace("<", "&lt;")
 
 DOTS = '<span class="d" style="width:10px;height:10px"></span><span class="d" style="width:8px;height:8px"></span><span class="d" style="width:6px;height:6px"></span>'
 
-# 安装段落是 install.sh 和 agentq start 的真实文字；后面的命令、status 和结果行来自一次试跑（项目 trial-launchd、trial-greeting）。
+# 安装段落是 install.sh 和 agentq start --welcome 的真实文字（装完即运行，节选）；后面的命令、status 和结果行来自一次试跑（项目 trial-launchd、trial-greeting）。
 HERO = f"""<div class="win"><div class="bar">{DOTS}<span class="path">trial-launchd</span></div><pre><i>$</i> <b>curl -fsSL https://github.com/{REPO_HTML}/releases/latest/download/install.sh | sh</b>
 <i>✓</i> 下载 agentq_darwin_arm64.tar.gz
 <i>✓</i> 校验通过
 <i>✓</i> 安装程序和技能
-agentq 装好了。
-· 你交代的任务由官方 CLI 的独立进程完成，它们能读写这个用户的所有文件（包括本地密钥）、运行命令。
-· 任务内容会发给你所用的模型服务，用你自己的账号额度。agentq 本身不收集数据。
+agentq 装好了，后台直接开着：在 Claude Code 或 Codex 里说要做什么，它会写成待做交给后台，做完通知你。
+· 后台任务由官方 CLI 的独立进程完成，能读写这个用户的所有文件（包括本地密钥）、运行命令，用你自己的模型账号额度。
 · 没有待做时什么都不做，不消耗额度。
-<b>按回车同意并启动，输入 n 只安装不启动：⏎</b>
+· 暂停：agentq pause　卸载：agentq remove --yes　下次想先不跑：安装时加 --paused
 <i>✓</i> 后台已启动，每 5 分钟看一次待做。
 <span class="gap"></span><i>$</i> <b>agentq add "做一个单页的产品介绍网页（大方向） —— 给一个叫「加法匠」的小工具做介绍页"</b>
 <span class="gap"></span><i>$</i> <b>agentq status</b>

@@ -19,17 +19,18 @@ curl -fsSL https://github.com/dodo258/agentq/releases/latest/download/install.sh
 
 | 环境变量 | 作用 |
 | --- | --- |
-| `AGENTQ_ASSUME_YES` | `1` 等于 `--yes` |
+| `AGENTQ_PAUSED` | `1` 等于 `--paused` |
 | `AGENTQ_PROXY` | 等于 `--proxy` |
 | `AGENTQ_MIRROR` | 等于 `--mirror` |
-| `CI`、`NONINTERACTIVE` | 设了就只装不启动，有 `--yes` 除外 |
+| `CI`、`NONINTERACTIVE` | 设了就不打开终端：CLI 没装或没登录时只打印命令 |
 | `NO_COLOR` | 不上色 |
 | `AGENTQ_VERSION` | 要装的版本，默认 `latest`，等于 `--version` |
 | `AGENTQ_RELEASE_BASE` | 下载地址，优先于脚本里的仓库名，测试和镜像用。`latest` 取 `<地址>/<文件>`，指定版本取 `<地址>/<版本>/<文件>` |
 
 | 参数 | 作用 |
 | --- | --- |
-| `--yes` | 明确同意启动，不再问 |
+| `--paused` | 只安装，后台先不跑。默认装完即运行（安装本身就是同意） |
+| `--yes` | 旧参数，留着不报错，没有作用 |
 | `--proxy <地址>` | 下载走代理：`http://`、`https://`、`socks5://`、`socks5h://` |
 | `--mirror <前缀>` | GitHub 下载镜像。校验文件和源码仍从原地址取，镜像改过的文件会被拒绝 |
 | `--version <版本>` | 要装的版本；`main` 走源码，要有 Go |
@@ -75,20 +76,31 @@ cd ~/projects/my-app && agentq init
 
 往当前目录所属项目（或 `--project`）的「待做」末尾加一条，只提交 BACKLOG。需求以 `-` 开头时写在 `--` 后面。空的、超过 800 字、带控制字符的拒绝；「待做」里已有同样一条时不重复加。
 
-不用先 `init`：项目没有 `docs/BACKLOG.md` 时先接入（和 `init` 生成同样的文件）。当前目录所在的仓库不在 `projects_root` 下一层时自动登记到 [`extra_projects`](config.md#外面的项目)，打印一行说明，worktree 里运行时认到主目录。不是 Git 仓库的不接管，给 `git init` 命令；家目录这种大仓库、和已有项目重名的拒绝；主目录要在默认分支上。
+不用先 `init`：项目没有 `docs/BACKLOG.md` 时先接入（和 `init` 生成同样的文件）。当前目录所在的仓库不在 `projects_root` 下一层时自动登记到 [`extra_projects`](config.md#外面的项目)，打印一行说明，worktree 里运行时认到主目录。当前目录不在任何 Git 仓库里时就地 `git init -b main`，没有 `.gitignore` 就写一份挡住 `.env`、密钥和依赖目录的，再把现有文件做初始提交（没配 git 身份等失败时撤掉这次建的 `.git` 和 `.gitignore`）；家目录、它的上级、`projects_root` 本身不建，有 `.git` 但 git 认不出的不碰。家目录这种大仓库、和已有项目重名的拒绝；主目录要在默认分支上。
 
-### `agentq start --welcome [--assume-yes]`
+### `agentq start --welcome [--paused]`
 
-一键脚本把终端交过来之后的那一步，也可以手动运行。讲清楚任务能做什么，问一句，只有空行算同意：n、其他输入、EOF、Ctrl-C 都不算，管道里的回车也不算。`--assume-yes` 或 `AGENTQ_ASSUME_YES=1` 是明确同意，不问。没有明确同意时，设了 `CI`、`NONINTERACTIVE` 或标准输入不是终端就只说明，退出 0。
+一键脚本装完之后的那一步，也可以手动运行。装完即运行：安装本身就是同意，不问也不等输入，只把后台任务能做什么（读写本机文件、运行命令、用你自己的模型额度）和暂停、卸载命令说一遍。`--paused` 只说明怎么开，什么都不改。装之前就有的配置写着暂停时保留暂停，不打开。旧的 `--assume-yes` 还认，没有作用。
 
-同意后：
+接着：
 
-1. 没有 CLI 时运行官方命令 `curl -fsSL https://claude.ai/install.sh | bash`，失败就停，贴原文，给 `brew install --cask claude-code` 和 `npm install -g @anthropic-ai/claude-code`，什么都不改。标准输入不是终端时不装，打印命令，退出 1。
-2. 没登录时运行 `claude auth login`（打开浏览器）。没登录上就不开后台，退出 1。标准输入不是终端时不运行，打印命令。
-3. `~/.local/bin` 不在 PATH 时往 shell 配置文件加一行带 `# agentq managed` 标记的 export，改前备份成 `*.pre-agentq`。zsh 写 `~/.zshrc`；bash 在 Linux 上写 `~/.bashrc`，在 macOS 上写 `~/.bash_profile`、`~/.bash_login`、`~/.profile` 里第一个存在的，都没有才新建 `~/.bash_profile`。zsh、bash 之外不改，打印手动的那一行。
-4. 写 `~/.agentq/consent.json`；第一次同意时把通用工程规则装到 `~/.claude/rules/agentq/`（已有用户规则不装，同意文字说明，见 [`agentq env`](#agentq-env-statusonoff)）；把 `permission_mode` 设成 `bypassPermissions`，其余和 `agentq start` 相同。没有待做时只打印一句怎么开始，不调用模型。
+1. 写 `~/.agentq/consent.json`（方式 `install`），把 `permission_mode` 设成 `bypassPermissions`；第一次运行时把通用工程规则装到 `~/.claude/rules/agentq/`（已有用户规则不装，说明一句，见 [`agentq env`](#agentq-env-statusonoff)）；新安装打开推送。
+2. `~/.local/bin` 不在 PATH 时往 shell 配置文件加一行带 `# agentq managed` 标记的 export，改前备份成 `*.pre-agentq`。zsh 写 `~/.zshrc`；bash 在 Linux 上写 `~/.bashrc`，在 macOS 上写 `~/.bash_profile`、`~/.bash_login`、`~/.profile` 里第一个存在的，都没有才新建 `~/.bash_profile`。zsh、bash 之外或不知道 shell 时不改，打印手动的那一行。
+3. 没有 CLI 时运行官方命令 `curl -fsSL https://claude.ai/install.sh | bash`，失败就停，贴原文，给 `brew install --cask claude-code` 和 `npm install -g @anthropic-ai/claude-code`。没登录时运行 `claude auth login`（打开浏览器）。标准输入不是终端时这两步都不做，打印命令，退出 1；第 1 步已经记下，CLI 弄好后派活技能查到 `not-running` 会自己 `agentq start`。
+4. 其余和 `agentq start` 相同。没有待做时只打印一句怎么开始，不调用模型。
 
-没有同意时不做这些，只打印后续命令。
+### `agentq start --check`
+
+只读，派活技能交任务前先跑。第一行是状态，第二行 `projects_root: <路径>`，后面是给人看的说明：
+
+| 状态 | 意思 |
+| --- | --- |
+| `ready` | 后台在跑 |
+| `not-running` | 同意过、不是你暂停的，服务没在跑（被卸、重启后没加载、装的时候 CLI 没弄好）：`agentq start` 直接拉起 |
+| `paused` | 你自己 `agentq pause` 的：不替你打开 |
+| `off` | `--paused` 装的，或装之前就暂停着的老配置：你说开才开 |
+| `need-cli` | 官方 CLI 没装或没登录 |
+| `skills-only` | 只装了技能 |
 
 ### `agentq start [--accept-bypass]`
 
@@ -125,7 +137,7 @@ cd ~/projects/my-app && agentq init
 
 ### `agentq status`
 
-依次显示：调度状态（暂停、用量冷却、额度快用完或连环失败熔断）；订阅额度各窗口的用量和重置时间；定点任务开关；巡逻；任务箱；已打开的闲时找活、主动感知、发版助手；推送；监听；在跑的定点任务和过门；运行中的任务（续跑的标「续跑中」，会话记录久没增长的标「疑似卡死」）；各项目「待做」条数；手动停掉还留着标记的条目；最近 10 个结束的任务（中断的标「中断」和续跑情况）。不拿锁。额度缓存过期时现读一次，只显示不写回。
+依次显示：调度状态（暂停、用量冷却、额度快用完或连环失败熔断）；订阅额度各窗口的用量和重置时间；定点任务开关；巡逻；推送；监听；在跑的定点任务和过门；运行中的任务（续跑的标「续跑中」，会话记录久没增长的标「疑似卡死」）；各项目「待做」条数；手动停掉还留着标记的条目；最近 10 个结束的任务（中断的标「中断」和续跑情况）。不拿锁。额度缓存过期时现读一次，只显示不写回。
 
 ### `agentq projects`
 
@@ -133,7 +145,7 @@ cd ~/projects/my-app && agentq init
 
 ### `agentq gate report <任务id>`、`agentq gate pass <任务id> --reason "原因"`、`agentq gate rerun <任务id>`、`agentq gate abandon <任务id>`
 
-`report` 看过门的状态、分支、轮数、每道门的结论和证据，过了成品门的还有交付单。`pass` 只放行这一次卡在门上的任务：下次 tick 不跑门，只合 `report` 里你看到的那个提交（之后分支又动了不算），写审计行和当天汇总，原因必写。放行后遇到冲突合不了，还是等你定，能再放行。`abandon` 放弃卡在门上的任务，或新项目第一版的任务（接手的、没过门的、new 任务本身都行），下次 tick 生效：分支留着，写审计行；新项目的第一条标卡住，后面的条目开工。和 Telegram 卡片的「放弃」是同一个操作。任务还在跑、在过门时拒绝。见[质量门和引擎合并](features.md#质量门和引擎合并)。
+`report` 看过门的状态、分支、轮数、每道门的结论和证据，过了成品门的还有交付单。`pass` 只放行这一次卡在门上的任务：下次 tick 不跑门，只合 `report` 里你看到的那个提交（之后分支又动了不算），写审计行和当天汇总，原因必写。放行后遇到冲突合不了，还是等你定，能再放行。`rerun` 重新跑一遍门，不沿用旧结论，不算退回轮数：看过结论后在分支上补了提交（带着交付单），再审就看分支最新的提交，放行也只合它；同一提交最多再审 2 次。`abandon` 放弃卡在门上的任务，或新项目第一版的任务（接手的、没过门的、new 任务本身都行），下次 tick 生效：分支留着，写审计行；新项目的第一条标卡住，后面的条目开工。和 Telegram 卡片的「放弃」是同一个操作。任务还在跑、在过门时拒绝。见[质量门和引擎合并](features.md#质量门和引擎合并)。
 
 ### `agentq health [项目名]`
 
@@ -150,10 +162,6 @@ cd ~/projects/my-app && agentq init
 ### `agentq pause`、`agentq resume`
 
 暂停或恢复自动接活。暂停时 tick 只收尾不启动，`run` 不受影响：你用 `run` 或 Telegram「做」启动的条目被门退回、中断了，tick 照样用同一会话接着做完。只改 `config.json` 里 `paused` 的值。
-
-### `agentq inbox`、`agentq inbox add "<内容>"`
-
-通用任务箱：列出待做和各条状态；放一条不属于任何项目的活。内容压成一行、中和标记，超过 4000 字拒绝，一模一样的不重复放。见[任务箱](features.md#任务箱)。
 
 ## 评测
 
@@ -196,7 +204,7 @@ cd ~/projects/my-app && agentq init
 
 ## 自我进化
 
-tick 每小时从本机已经落盘的数据里收一次信号：门的结果（`~/.agentq/gate/<任务>/last.json`）、任务记录（`jobs/<任务>/meta.json`）、巡逻（`patrol.json`），门结果和任务记录按文件记，只读新出现或改过的；巡逻只看上次之后首次发现的问题。不调模型。这些都没有就什么都不写；任务记录在收尾、续跑时常被改写，有任务在动时一般每小时写一次。同一类问题（种类、门名、去掉路径、哈希、数字后的原因前 60 字）归成一条，同一个任务只算一次。存 `~/.agentq/evolve/signals.json`。开关 `evolve_signals_enabled`、`learned_constraints_enabled`，见[配置](config.md)。
+tick 每小时从本机已经落盘的数据里收一次信号：门的结果（`~/.agentq/gate/<任务>/last.json`）、任务记录（`jobs/<任务>/meta.json`）、巡逻（`patrol.json`），门结果和任务记录按文件记，只读新出现或改过的；巡逻只看上次之后首次发现的问题。不调模型。这些都没有就什么都不写；任务记录在收尾、续跑时常被改写，有任务在动时一般每小时写一次。同一类问题（种类、门名、去掉路径、哈希、数字后的原因前 60 字）归成一条，同一个任务只算一次。存 `~/.agentq/evolve/signals.json`。
 
 - **学到的约束：** 门 `error` 档没过、退回了任务，之后这一条合并了或你放弃了，算确认过的拦截，并进项目约束 `~/.agentq/evolve/constraints/<项目>.json`。`agentq gate pass` 放行的、再审过了的不算。每个项目最多 10 条，30 天没再出现的删掉。新任务的合同末尾带上这些（有出处），派活写条目前也看。
 - **自我派活（只提案）：** agentq 自己的问题（门判不了、你放行了门拦下的任务、退回用完还没过、门进程没留下结果、任务超时、巡逻发现）同一类出现 2 次以上，写一条带证据的提案，同一类只提一次。配了 `self_project` 写进那个项目 BACKLOG 的「## 建议」，回「做 N」移进待做、「不做 N」以后不再提；没配就写 `~/.agentq/evolve/proposals.md`，当天汇总记一行。
@@ -213,11 +221,7 @@ tick 每小时从本机已经落盘的数据里收一次信号：门的结果（
 
 ### `agentq stats [天数]`
 
-最近 N 天（默认 7，1 到 3650）按任务种类、项目、模型统计次数、成败和 token。只读。见[每个任务的用量](features.md#每个任务的用量和-agentq-stats)。
-
-### `agentq quality`
-
-最近 7 天的一次满意率、返工率，按项目列出每条合并的条目算成了什么、依据是什么。只读 BACKLOG 和 git。见[一次满意率和返工率](features.md#一次满意率和返工率)。
+最近 N 天（默认 7，1 到 3650）按任务种类、项目、模型统计次数、成败和 token。末尾是最近 7 天的一次满意率、返工率，按项目列出每条合并的条目算成了什么、依据是什么。只读。见[每个任务的用量](features.md#每个任务的用量和-agentq-stats)、[一次满意率和返工率](features.md#一次满意率和返工率)。
 
 ## 维护项目
 
@@ -227,9 +231,9 @@ tick 每小时从本机已经落盘的数据里收一次信号：门的结果（
 agentq backlog archive <项目名|--all> [--dry-run]
 ```
 
-把 `docs/BACKLOG.md`「已完成」的旧条目按原顺序移到 `docs/BACKLOG-archive.md` 顶部。留下：最前面 20 条、合并提交在 14 天内的、查不到合并时间的验收意见（`quality` 的 7 天窗口不受影响）。BACKLOG 或归档文件有未提交改动、项目有任务在跑、条目标着 24 小时内的进行中时拒绝。不自动提交。`--dry-run` 只打印会移多少、瘦到多大。
+把 `docs/BACKLOG.md`「已完成」的旧条目按原顺序移到 `docs/BACKLOG-archive.md` 顶部。留下：最前面 20 条、合并提交在 14 天内的、查不到合并时间的验收意见（满意率的 7 天窗口不受影响）。BACKLOG 或归档文件有未提交改动、项目有任务在跑、条目标着 24 小时内的进行中时拒绝。不自动提交。`--dry-run` 只打印会移多少、瘦到多大。
 
-## 定点和主动功能
+## 定点任务和巡逻
 
 ### `agentq night`、`agentq review`
 
@@ -237,19 +241,7 @@ agentq backlog archive <项目名|--all> [--dry-run]
 
 ### `agentq patrol`
 
-立刻巡逻一次，列出现有的每个问题和证据、处理说明。不看 `patrol_enabled` 和上次巡逻时间。见[巡逻](features.md#巡逻)。
-
-### `agentq suggest [项目名]`
-
-手动跑一次闲时找活，只读地看各项目（给了项目名只看这一个），低风险的写进「待做」，会改产品的写进「## 建议」，推送一条。不看 `suggest_enabled`、暂停、待做是否为空、额度低于 60% 和当天次数，但占用当天的记录。仍遵守用量冷却和登录检查，订阅额度 ≥98% 时拒绝。见[闲时找活](features.md#闲时找活)。
-
-### `agentq sense [--dry-run]`
-
-手动跑一次主动感知：读 App Store 评价、TestFlight 反馈和 GitHub issue，有新内容才起模型判断，真问题写进「## 建议」并推送一条。`--dry-run` 只读，列每个来源读到多少条，不写任何文件，不调模型。不看 `sense_enabled`。额度 ≥98% 时读了但不判断。见[主动感知](features.md#主动感知)。
-
-### `agentq release check [项目名]`
-
-只读显示发版条件。没有能提交审核的命令，提交只能回复那条提示消息说「发」。没配 `~/.appstoreconnect/config.env` 时报错。见[发版助手](features.md#发版助手)。
+立刻巡逻一次，列出现有的每个问题和证据、处理说明。不看 `patrol_enabled` 和上次巡逻时间；有新异常时的只读分析要 `patrol_enabled` 开着。见[巡逻](features.md#巡逻)。
 
 ## 推送
 

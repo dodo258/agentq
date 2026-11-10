@@ -135,7 +135,7 @@ func (s *sysAcc) writeConfig(paused bool, root string) {
 	s.t.Helper()
 	b, _ := json.Marshal(map[string]any{
 		"launchd_label": s.label, "projects_root": root, "claude_path": filepath.Join(s.home, ".local", "bin", "claude"),
-		"paused": paused, "patrol_enabled": false, "patrol_analyze": false, "notify_enabled": false, "night_enabled": false, "review_enabled": false,
+		"paused": paused, "patrol_enabled": false, "notify_enabled": false, "night_enabled": false, "review_enabled": false,
 		"permission_mode": "default",
 	})
 	if err := os.WriteFile(filepath.Join(s.home, ".agentq", "config.json"), append(b, '\n'), 0o600); err != nil {

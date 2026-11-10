@@ -1,7 +1,6 @@
 package tests
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +9,7 @@ import (
 	"agentq/internal/chat"
 	"agentq/internal/notify"
 	"agentq/internal/state"
-	"agentq/internal/testkit"
+	"agentq/internal/telegram"
 )
 
 func replyJob(e *notifyEnv, id string) *Job {
@@ -180,75 +179,13 @@ func TestReplyCapOnlyReplies(t *testing.T) {
 	}
 }
 
-// Router、对话：端到端走真进程。超长的回答落文件并发出去，动作照做，滚动记录和全量记录都在。
-func TestRouterLongReplyAndHistory(t *testing.T) {
-	t.Parallel()
-	e, tg := routerEnv(t, nil)
-	testkit.MkProject(t, e.root, "demo", "")
-	long := "<b>头</b>\n" + strings.Repeat("内容很长&amp;", 200)
-	e.routerResult(routerOK(long))
-	j := e.sendToRouter(tg, 1, 11, "ROUTERFILE 第一问")
-	got := tg.sentLast().Get("text")
-	if !strings.Contains(got, "全文见文件 ~/.agentq/replies/"+j.ID+".md") || chat.HtmlVisible(got) > chat.ReplyMaxRunes {
-		t.Errorf("%d：%s", chat.HtmlVisible(got), got)
+func TestSendReplyKeepsTail(t *testing.T) {
+	e := newNotifyEnv(t, true)
+	j := &Job{ID: "1104-tail", Kind: state.KindChat}
+	os.MkdirAll(e.a.JobDir(j.ID), 0o755)
+	e.a.Chat.SendReply(j, strings.Repeat("长", telegram.TgMaxRunes+100), "没做：add demo", nil)
+	got := e.tg.sentLast().Get("text")
+	if !strings.Contains(got, "全文见文件") || !strings.HasSuffix(got, "没做：add demo") || len([]rune(got)) > chat.ReplyMaxRunes+50 {
+		t.Errorf("%d 字：%s", len([]rune(got)), got[len(got)-80:])
 	}
-	if ups := tg.uploaded(); len(ups) != 1 || ups[0].Name != j.ID+".md" {
-		t.Errorf("%+v", ups)
-	}
-	raw, err := os.ReadFile(filepath.Join(e.home, ".agentq", "router", "history.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var turn chat.RouterTurn
-	if err := json.Unmarshal(raw, &turn); err != nil {
-		t.Fatal(err)
-	}
-	if turn.Job != j.ID || turn.In != "ROUTERFILE 第一问" || strings.Count(turn.Reply, "内容很长&") != 200 {
-		t.Errorf("全量记录不截断：%+v", turn)
-	}
-	recent, _ := os.ReadFile(filepath.Join(e.home, ".agentq", "router", "recent.jsonl"))
-	var short chat.RouterTurn
-	if err := json.Unmarshal(recent, &short); err != nil || len([]rune(short.Reply)) > chat.RouterFieldMax {
-		t.Errorf("滚动记录还是截断的：%v %d", err, len([]rune(short.Reply)))
-	}
-	// 下一轮：提示词告诉它去哪查，--add-dir 放行
-	e.routerResult(routerOK("好"))
-	j2 := e.sendToRouter(tg, 2, 12, "ROUTERFILE 第二问")
-	log := e.fakeLogOf(j2)
-	for _, want := range []string{"Grep 它", filepath.Join(e.home, ".agentq", "router", "history.jsonl"), "meta.json", "ARG[--add-dir]\nARG[" + filepath.Join(e.home, ".agentq", "router") + "]"} {
-		if !strings.Contains(log, want) {
-			t.Errorf("缺 %q：\n%s", want, log)
-		}
-	}
-	raw, _ = os.ReadFile(filepath.Join(e.home, ".agentq", "router", "history.jsonl"))
-	if n := strings.Count(string(raw), "\n"); n != 2 {
-		t.Errorf("只追加：%d 行", n)
-	}
-}
-
-// 全量记录内联 job_ids，下一轮的提示词也带上（跳过的动作不记）；写不了不影响回答。
-func TestRouterHistoryJobIDs(t *testing.T) {
-	t.Parallel()
-	e, tg := routerEnv(t, nil)
-	gitProject(t, e, "demo", "- [ ] 甲 —— SLEEP=30\n")
-	e.routerResult(routerOK("派了", chat.RouterAction{Type: "run", Project: "demo"}))
-	e.sendToRouter(tg, 1, 11, "ROUTERFILE 做一下")
-	raw, err := os.ReadFile(filepath.Join(e.home, ".agentq", "router", "history.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var turn chat.RouterTurn
-	if err := json.Unmarshal(raw, &turn); err != nil {
-		t.Fatal(err)
-	}
-	task := e.jobByTitle("甲")
-	if len(turn.JobIDs) != 1 || turn.JobIDs[0] != task.ID || len(turn.Actions) != 1 {
-		t.Fatalf("%+v", turn)
-	}
-	e.routerResult(routerOK("好"))
-	j2 := e.sendToRouter(tg, 2, 12, "ROUTERFILE 下一问")
-	if log := e.fakeLogOf(j2); !strings.Contains(log, "任务："+task.ID) {
-		t.Errorf("提示词要内联任务 id：\n%s", log)
-	}
-	e.mustRun("stop", task.ID)
 }

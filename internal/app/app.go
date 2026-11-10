@@ -4,7 +4,6 @@ package app
 import (
 	"io"
 
-	"agentq/internal/asc"
 	"agentq/internal/backlog"
 	"agentq/internal/chat"
 	"agentq/internal/discuss"
@@ -12,7 +11,6 @@ import (
 	"agentq/internal/evolve"
 	"agentq/internal/gate"
 	"agentq/internal/gitx"
-	"agentq/internal/inbox"
 	"agentq/internal/ledger"
 	"agentq/internal/newproj"
 	"agentq/internal/notify"
@@ -20,11 +18,9 @@ import (
 	"agentq/internal/orphan"
 	"agentq/internal/patrol"
 	"agentq/internal/quality"
-	"agentq/internal/release"
 	"agentq/internal/routine"
 	"agentq/internal/runner"
 	"agentq/internal/sched"
-	"agentq/internal/sense"
 	"agentq/internal/service"
 	"agentq/internal/stats"
 	"agentq/internal/suggest"
@@ -36,7 +32,6 @@ type App struct {
 	Gitx     *gitx.Service
 	Backlog  *backlog.Service
 	Telegram *telegram.Service
-	ASC      *asc.Service
 	Quality  *quality.Service
 	Ledger   *ledger.Service
 	Service  *service.Service
@@ -46,10 +41,7 @@ type App struct {
 	Orphan   *orphan.Service
 	Discuss  *discuss.Service
 	Newproj  *newproj.Service
-	Inbox    *inbox.Service
 	Suggest  *suggest.Service
-	Release  *release.Service
-	Sense    *sense.Service
 	Routine  *routine.Service
 	Patrol   *patrol.Service
 	Chat     *chat.Service

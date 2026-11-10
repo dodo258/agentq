@@ -22,17 +22,14 @@ import (
 	"agentq/internal/evolve"
 	"agentq/internal/fsx"
 	"agentq/internal/gate"
-	"agentq/internal/inbox"
 	"agentq/internal/ledger"
 	"agentq/internal/newproj"
 	"agentq/internal/notify"
 	"agentq/internal/orphan"
 	"agentq/internal/patrol"
-	"agentq/internal/release"
 	"agentq/internal/routine"
 	"agentq/internal/runner"
 	"agentq/internal/state"
-	"agentq/internal/suggest"
 	"agentq/internal/telegram"
 	"agentq/internal/textfmt"
 )
@@ -45,16 +42,13 @@ type Service struct {
 	Discuss  *discuss.Service
 	Evolve   *evolve.Service
 	Gate     *gate.Service
-	Inbox    *inbox.Service
 	Ledger   *ledger.Service
 	Newproj  *newproj.Service
 	Notify   *notify.Service
 	Orphan   *orphan.Service
 	Patrol   *patrol.Service
-	Release  *release.Service
 	Routine  *routine.Service
 	Runner   *runner.Service
-	Suggest  *suggest.Service
 	Telegram *telegram.Service
 }
 
@@ -73,7 +67,6 @@ func (a *Service) NotifyTick(st *state.State) {
 	if c, _ := a.Telegram.TelegramCreds(); c != nil {
 		a.Chat.PollIfNoListener(c) // 自己拿 notify.lock，附件下载在锁外
 	}
-	a.Release.ReleaseTick() // 关着或没有要处理的什么都不做；联网，放在拿 notify.lock 之前
 	err := a.Notify.WithNotify(func(s *notify.State) error {
 		c, credErr := a.Telegram.TelegramCreds()
 		if credErr != nil {
@@ -139,7 +132,6 @@ func (a *Service) Tick(after string) error {
 	a.Gate.Collect(st)
 	a.Discuss.Collect(st)
 	a.Runner.RetryStuckMarks(st)
-	a.Inbox.ReconcileInbox(st)
 	a.Newproj.DropGoneHeld(st)
 	st.Prune(a.Now())
 	if err := state.Save(a.StatePath(), st); err != nil {
@@ -195,11 +187,6 @@ func (a *Service) Tick(after string) error {
 		// 续跑会改被续跑任务的记录（ResumedBy、ResumePending），启动时只存了一次
 		if err := state.Save(a.StatePath(), st); err != nil {
 			a.Logf("%s：写状态文件失败：%v", name, err)
-		}
-		if started == 0 && a.Cfg.SuggestEnabled && !a.Cfg.Paused { // 关着时这一行什么都不做
-			if n := a.Suggest.MaybeSuggest(st); n != "" {
-				note = strings.TrimPrefix(note+"；"+n, "；")
-			}
 		}
 	}
 	msg := fmt.Sprintf("%s：运行中 %d/%d，本次收尾 %d，启动 %d", name, len(st.Tasks()), a.Cfg.MaxParallel, finished, started)
@@ -421,7 +408,6 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob, manualOn
 		return 0, "扫描项目目录失败：" + scanErr.Error()
 	}
 	started := 0
-	notReady := false
 	var notes []string
 	if scanErr != nil { // projects_root 出了问题，extra_projects 的项目照跑，这句每次都说
 		notes = append(notes, "扫描项目目录失败："+scanErr.Error())
@@ -495,9 +481,6 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob, manualOn
 	}
 	for _, orig := range st.PendingResumes() {
 		if manualOnly && !orig.Manual {
-			continue
-		}
-		if orig.Kind == state.KindInbox { // 任务箱没有 BACKLOG 条目，排在项目待做之后，在下面接
 			continue
 		}
 		if scanErr != nil && !slices.ContainsFunc(projects, func(p backlog.Project) bool { return p.Name == orig.Project }) {
@@ -672,7 +655,6 @@ projects:
 			}
 			if verdict == discuss.NotReady || ok && !ready(name) {
 				if done(name) {
-					notReady = true
 					break projects
 				}
 				break
@@ -693,14 +675,6 @@ projects:
 			}
 			a.Logf("启动任务 %s：%s「%s」pid %d", j.ID, p.Name, j.Title, j.PID)
 			started++
-		}
-	}
-	// 任务箱排在项目待做之后：项目都接完还有名额才接，同一时间最多一个。
-	if ok, _ := state.Capacity(st, a.Cfg, inbox.InboxJobName); ok && !notReady && !breaker() && !state.HasRunning(st, state.KindInbox) && !a.Runner.PermissionBlocked(a.Cfg.ProjectBackend(inbox.InboxJobName)) {
-		n, note := a.Inbox.ScheduleInbox(st, func() bool { return ready(a.Cfg.ProjectBackend(inbox.InboxJobName)) })
-		started += n
-		if note != "" {
-			notes = append(notes, note)
 		}
 	}
 	return started, strings.Join(notes, "；")

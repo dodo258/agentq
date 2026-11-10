@@ -19,12 +19,10 @@ import (
 	"agentq/internal/env"
 	"agentq/internal/fsx"
 	"agentq/internal/gitx"
-	"agentq/internal/inbox"
 	"agentq/internal/ledger"
 	"agentq/internal/notify"
 	"agentq/internal/proc"
 	"agentq/internal/runner"
-	"agentq/internal/sense"
 	"agentq/internal/service"
 	"agentq/internal/state"
 	"agentq/internal/textfmt"
@@ -35,11 +33,9 @@ type Service struct {
 	*env.Env
 	Backlog *backlog.Service
 	Gitx    *gitx.Service
-	Inbox   *inbox.Service
 	Ledger  *ledger.Service
 	Notify  *notify.Service
 	Runner  *runner.Service
-	Sense   *sense.Service
 	Service *service.Service
 	// RoutineText 是夜班、复盘的说明文件全文（kind → 文本）。embed 在根目录，由 app.Wire 注入。
 	RoutineText map[string]string
@@ -92,9 +88,6 @@ func (a *Service) routinePrompt(r config.Routine) string {
 // 同一种已经在跑就不重复启动。定点叫醒没能启动时在当天汇总记一行，早报能看到。
 func (a *Service) CmdRoutine(kind string, scheduled bool) error {
 	r := config.Routines[kind]
-	if scheduled && kind == config.KindReview {
-		a.Sense.BeforeReview() // 主动感知接在复盘前面；关着时什么都不做，出事也不影响复盘
-	}
 	if scheduled && !r.Enabled(a.Cfg) {
 		a.Logf("%s：%s=false，%s 定点叫醒但不执行（切换步骤见 README「夜班和复盘」）", r.Name, r.Key, a.Service.Svc().Words().Name)
 		if err := a.MarkRoutineOff(kind, a.Now()); err != nil {
@@ -205,9 +198,6 @@ func (a *Service) CatchUpRoutines(st *state.State) {
 		}
 		if a.Runner.PermissionBlocked(a.Cfg.Backend) { // 配好了再补，不然每次 tick 都重判一遍闲时、重记一遍原因
 			return
-		}
-		if kind == config.KindReview && a.Cfg.SenseEnabled {
-			a.Sense.SenseCatchUp = true // 定点时刻接在复盘前面的主动感知也错过了
 		}
 		if kind == config.KindReview && state.HasRunning(st, config.KindNight) {
 			a.Logf("%s：今天 %s 那次没跑，夜班还在跑，等它跑完再补", r.Name, r.At())
@@ -437,12 +427,12 @@ func (a *Service) routineBusy(ctx context.Context, st *state.State, r config.Rou
 	return ""
 }
 
-// RoutineKindBusy：不用 git、gh 就能判断的那部分。复盘：上次复盘之后有任务结束。夜班：待做、等用户决定、任务箱有条目，或有任务等着续跑。
+// RoutineKindBusy：不用 git、gh 就能判断的那部分。复盘：上次复盘之后有任务结束。夜班：待做、等用户决定有条目，或有任务等着续跑。
 func (a *Service) RoutineKindBusy(st *state.State, r config.Routine, mark *state.RoutineMark) string {
 	if r.Kind == config.KindReview {
 		for _, j := range st.Jobs {
-			// 闲时找活、主动感知不算：写了东西 HEAD 就变了（复盘照跑），没写就没什么可复盘的；算的话它们每天都跑，复盘就永远跳不过
-			if j.Kind != config.KindReview && j.Kind != state.KindSuggest && j.Kind != state.KindSense && j.Kind != state.KindDiscuss && j.EndedAt != nil && j.EndedAt.After(mark.At) {
+			// 商量大方向不算：它不改代码，算的话复盘就跳不过
+			if j.Kind != config.KindReview && j.Kind != state.KindDiscuss && j.EndedAt != nil && j.EndedAt.After(mark.At) {
 				return "上次复盘之后有任务结束（" + j.ID + "）"
 			}
 		}
@@ -463,13 +453,6 @@ func (a *Service) RoutineKindBusy(st *state.State, r config.Routine, mark *state
 		if len(items) > 0 {
 			return p.Name + " 的「待做」有条目"
 		}
-	}
-	items, err := a.Inbox.ReadInboxItems()
-	if err != nil {
-		return "查不出：任务箱：" + err.Error()
-	}
-	if len(items) > 0 {
-		return "任务箱有条目"
 	}
 	decs, fails := a.Notify.Decisions()
 	if len(fails) > 0 {

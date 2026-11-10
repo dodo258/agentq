@@ -24,7 +24,7 @@ const takeoverPromptTemplate = "你在无人值守模式下工作，用户不在
 	"这一条之前的任务中途没做完、也没人在接着做，现在由你接手：分支 %s，%s。" +
 	"先看 git 状态、worktree 和分支现状，从现状接着做，不重做已有的部分，不丢未提交的改动；条目上的进行中标记就是这次要接手的，不重新认领，也不另开分支。" +
 	"先完整读 ~/.claude/skills/agent-task/SKILL.md，从实际进度接着严格照做，把 %s 的 docs/BACKLOG.md「待做」里的这一条做到分支可合并：%s。不自己合并：写好 ready.json 提交到任务分支就结束，合并由引擎过门后做。" +
-	"做不下去就按 agent-task 把进行中标记换成卡住标记写明原因。结束时最后一段写：分支可以合并了没有、分支名、没好的原因、用户怎么验收。"
+	"做不下去就按 agent-task 把进行中标记换成卡住标记写明原因。结束时最后一段用条目原文的语言写：分支可以合并了没有、分支名、没好的原因、用户怎么验收。"
 
 func BuildTakeoverPrompt(projectDir, item string, f backlog.OrphanFacts) string {
 	wt := "worktree 已不在（分支还在，用 git worktree add 接上）"
@@ -34,7 +34,7 @@ func BuildTakeoverPrompt(projectDir, item string, f backlog.OrphanFacts) string 
 	return fmt.Sprintf(takeoverPromptTemplate, f.Branch, wt, projectDir, item)
 }
 
-const promptTemplate = "你在无人值守模式下工作，用户不在场。你已经是调度器启动的执行者，亲自完成当前待办；不通过 dispatch 或 agentq run 把同一任务派回队列。条目中的入口会话不实现、不等待等描述不改变本进程的执行角色。先完整读 ~/.claude/skills/agent-task/SKILL.md 并严格照做，把 %s 的 docs/BACKLOG.md「待做」里的这一条做到分支可合并：%s。不自己合并：写好 ready.json 提交到任务分支就结束，合并由引擎过门后做。条目写了前置条件且不满足时，不认领，直接结束并说明。结束时最后一段写：分支可以合并了没有、分支名、没好的原因、用户怎么验收。"
+const promptTemplate = "你在无人值守模式下工作，用户不在场。你已经是调度器启动的执行者，亲自完成当前待办；不通过 dispatch 或 agentq run 把同一任务派回队列。条目中的入口会话不实现、不等待等描述不改变本进程的执行角色。先完整读 ~/.claude/skills/agent-task/SKILL.md 并严格照做，把 %s 的 docs/BACKLOG.md「待做」里的这一条做到分支可合并：%s。不自己合并：写好 ready.json 提交到任务分支就结束，合并由引擎过门后做。条目写了前置条件且不满足时，不认领，直接结束并说明。结束时最后一段用条目原文的语言写：分支可以合并了没有、分支名、没好的原因、用户怎么验收。"
 
 func BuildPrompt(projectDir, item string) string {
 	return fmt.Sprintf(promptTemplate, projectDir, item)
@@ -173,7 +173,7 @@ func (a *Service) jobItems(j *state.Job) ([]backlog.Item, error) {
 	return items, nil
 }
 
-const resumePromptTemplate = "你仍是当前待办的执行者，亲自接着完成，不通过 dispatch 或 agentq run 重新派发同一任务。上次的进程在等后台任务或通知时退出了，后台的活（子代理、Monitor、后台命令）已经不在了，不要再等它们。先看 git 状态、worktree 和分支现状、%s 的 docs/BACKLOG.md 里这一条的标记，从实际进度接着按 ~/.claude/skills/agent-task/SKILL.md 把这一条做到分支可合并：%s。不自己合并：写好 ready.json 提交到任务分支就结束，合并由引擎过门后做。一切等待都在前台等完。结束时最后一段写：分支可以合并了没有、分支名、没好的原因、用户怎么验收。"
+const resumePromptTemplate = "你仍是当前待办的执行者，亲自接着完成，不通过 dispatch 或 agentq run 重新派发同一任务。上次的进程在等后台任务或通知时退出了，后台的活（子代理、Monitor、后台命令）已经不在了，不要再等它们。先看 git 状态、worktree 和分支现状、%s 的 docs/BACKLOG.md 里这一条的标记，从实际进度接着按 ~/.claude/skills/agent-task/SKILL.md 把这一条做到分支可合并：%s。不自己合并：写好 ready.json 提交到任务分支就结束，合并由引擎过门后做。一切等待都在前台等完。结束时最后一段用条目原文的语言写：分支可以合并了没有、分支名、没好的原因、用户怎么验收。"
 
 func BuildResumePrompt(projectDir, item string) string {
 	return fmt.Sprintf(resumePromptTemplate, projectDir, item)
@@ -411,11 +411,7 @@ func (a *Service) Start(st *state.State, j *state.Job, prompt, resume string) (*
 	}
 	bcfg := a.Cfg.ForBackend(j.Backend) // 这个后端自己的模型、强度、权限，别家的默认不串
 	cfg := bcfg
-	light := ""
-	if l, ok := be.(backend.LightModeler); ok {
-		light = l.LightModel()
-	}
-	cfg.Model, cfg.Effort = TaskModel(cfg, j.Kind, j.Item, light) // 新开、续跑、接手都走这里，判断一样
+	cfg.Model, cfg.Effort = TaskModel(cfg, j.Kind, j.Item) // 新开、续跑、接手都走这里，判断一样
 	req := TaskRequest(cfg, prompt, j.Project, j.Title, resume, session, a.JobBudget(j.Kind))
 	switch j.Kind {
 	case state.KindFollowup:
@@ -424,18 +420,8 @@ func (a *Service) Start(st *state.State, j *state.Job, prompt, resume string) (*
 			files = ""
 		}
 		req = a.Hooks.FollowupRequest(bcfg, prompt, j.Project, j.Title, resume, files)
-	case state.KindRouter:
-		req = a.Hooks.RouterRequest(bcfg, a.Home, prompt, session)
-	case state.KindInbox:
-		req = a.Hooks.InboxRequest(bcfg, prompt, j.Project, j.Title, resume, session, a.Hooks.OutboxDir())
-	case state.KindSuggest:
-		req = a.Hooks.SuggestRequest(bcfg, prompt, session, j.ProjectDir)
-	case state.KindSense:
-		req = a.Hooks.SenseRequest(bcfg, prompt, session)
 	case state.KindDiscuss:
 		req = a.Hooks.DiscussRequest(bcfg, prompt, j.Project, session)
-	case state.KindRelease:
-		req = a.Hooks.ReleaseRequest(bcfg, req)
 	}
 	req.Dir, req.WorkDir = j.ProjectDir, dir
 	if j.Kind == "" || j.Kind == state.KindNew { // 这两种要合并，合并前的独立审查是硬前提
@@ -488,14 +474,7 @@ func (a *Service) Start(st *state.State, j *state.Job, prompt, resume string) (*
 			list[i] = strings.ToValidUTF8(list[i], string(utf8.RuneError))
 		}
 	}
-	outDir, promptText := dir, req.Prompt
-	if j.Kind == state.KindSense { // 提示词里有外部原文：任务目录 Router 能读，真的放到 ~/.agentq/sense/，输出也写到那边
-		outDir, promptText = a.Ledger.SenseRunDir(id), senseJobPlaceholder
-		if err := a.Hooks.WriteSenseRunFile(id, "prompt.txt", []byte(prompt+"\n")); err != nil {
-			return nil, err
-		}
-	}
-	if err := os.WriteFile(filepath.Join(dir, "prompt.txt"), []byte(promptText+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "prompt.txt"), []byte(req.Prompt+"\n"), 0o644); err != nil {
 		return nil, err
 	}
 	j.ID, j.StartedAt, j.Status, j.BootTime = id, a.Now(), state.StatusRunning, a.CurBoot()
@@ -516,7 +495,7 @@ func (a *Service) Start(st *state.State, j *state.Job, prompt, resume string) (*
 	self, err := JobExecutable()
 	var pid int
 	if err == nil {
-		pid, err = StartJob(self, outDir, inv, a.LaunchdLogPath())
+		pid, err = StartJob(self, dir, inv, a.LaunchdLogPath())
 	}
 	if errors.Is(err, ErrShellLost) {
 		// 外壳没了，claude 可能已经在跑：确认不在了才能算启动失败（见 joblost.go）。查不了就先记运行中、不知道 pid，reap 接着查。
@@ -630,14 +609,12 @@ func (a *Service) startingUp(j *state.Job) bool {
 	return d >= 0 && d < ShellReportWait
 }
 
-// TaskModel 选这个任务的模型和强度（docs/specs 按活分配模型；官方定位：Opus 长任务和大重构，Sonnet 范围清楚的日常活和知识工作）。
-// 复盘用 review_model、review_effort，巡逻分析用 patrol_model、medium；夜班、对话、new 这些用 model、effort。
-// 普通待做任务（kind 为空）：
-// 重写、重构、迁移、审查、审计（backlog.NoDowngradeItem）不降模型，（低风险）标记也压不过；其中重写、重构、迁移和（难撤回）（backlog.HeavyItem）强度用 heavy_effort。
-// fixed：其余带「（低风险）」标记且配了 low_risk_model 的换成它和 low_risk_effort。
-// auto：能用轻模型的活（backlog.LightItem）用 low_risk_model，没配就用后端说的轻模型 light。
-// model 为空（跟随 CLI）时强度也跟随，不单给重活传 heavy_effort。
-func TaskModel(cfg config.Config, kind, item, light string) (model, effort string) {
+// TaskModel 选这个任务的模型和强度（官方定位：Opus 长任务和大重构，Sonnet 范围清楚的日常活和知识工作）。
+// 复盘用 ReviewModel、ReviewEffort，巡逻分析用 PatrolModel、medium；夜班、对话、new 这些用 model、effort。
+// 普通待做任务（kind 为空）：重写、重构、迁移、审查、审计（backlog.NoDowngradeItem）不降模型，（低风险）标记也压不过；
+// 其中重写、重构、迁移和（难撤回）（backlog.HeavyItem）强度用 HeavyEffort；其余带「（低风险）」标记的换成 LowRiskModel、LowRiskEffort。
+// model 为空（跟随 CLI）或别家后端时这些角色都是空的（config.ForBackend、ClearClaudeDefaults），照 model、effort。
+func TaskModel(cfg config.Config, kind, item string) (model, effort string) {
 	switch kind {
 	case config.KindReview:
 		return cfg.Role(cfg.ReviewModel, cfg.ReviewEffort)
@@ -653,31 +630,16 @@ func TaskModel(cfg config.Config, kind, item, light string) (model, effort strin
 		}
 		return cfg.Model, cfg.Effort
 	}
-	low := func(m string) (string, string) {
+	if cfg.LowRiskModel != "" && backlog.LowRiskItem(item) {
 		if cfg.LowRiskEffort != "" {
-			return m, cfg.LowRiskEffort
+			return cfg.LowRiskModel, cfg.LowRiskEffort
 		}
-		return m, cfg.Effort
-	}
-	if cfg.ModelPolicy != config.ModelPolicyAuto {
-		if cfg.LowRiskModel != "" && backlog.LowRiskItem(item) {
-			return low(cfg.LowRiskModel)
-		}
-		return cfg.Model, cfg.Effort
-	}
-	if !backlog.LightItem(item) {
-		return cfg.Model, cfg.Effort
-	}
-	if cfg.LowRiskModel != "" {
-		return low(cfg.LowRiskModel)
-	}
-	if light != "" {
-		return low(light)
+		return cfg.LowRiskModel, cfg.Effort
 	}
 	return cfg.Model, cfg.Effort
 }
 
-// TaskRequest 是能动手的任务（待做、new、夜班、复盘、对话、任务箱）共用的启动意图。resume 非空时接回那个会话，否则 session 是新会话的 id。
+// TaskRequest 是能动手的任务（待做、new、夜班、复盘、对话）共用的启动意图。resume 非空时接回那个会话，否则 session 是新会话的 id。
 func TaskRequest(cfg config.Config, prompt, project, title, resume, session string, budget float64) backend.Request {
 	return backend.Request{
 		Prompt: prompt, Label: proc.NameMarker(project) + textfmt.TruncRunes(title, 20), Resume: resume, Session: session,

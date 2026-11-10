@@ -30,7 +30,6 @@ import (
 	"agentq/internal/fsx"
 	"agentq/internal/gate"
 	"agentq/internal/notify"
-	"agentq/internal/release"
 	"agentq/internal/state"
 	"agentq/internal/textfmt"
 )
@@ -366,10 +365,7 @@ type stressEnv struct {
 	binDir  string
 	path    string
 	tg      *stressTG
-	asc     *httptest.Server
-	ascW    atomic.Int64
-	ascGET  atomic.Int64
-	pem     []byte
+	tuning  string // config.TestTuningEnv 的值，writeConfig 从 cfg 里分出来
 	cfg     map[string]any
 	extra   []string
 	mu      sync.Mutex
@@ -416,19 +412,6 @@ func newStressEnv(t *testing.T, rng *rand.Rand, homeName string) *stressEnv {
 	os.WriteFile(filepath.Join(e.binDir, "gh"), []byte("#!/bin/sh\necho '[]'\n"), 0o755)
 	os.WriteFile(filepath.Join(e.binDir, "launchctl"), []byte("#!/bin/sh\nprintf 'PID\\tStatus\\tLabel\\n'\n"), 0o755)
 	e.tg = newStressTG()
-	_, pemBytes := testASCKey(t)
-	e.pem = pemBytes
-	writeASCConfig(t, e.home, pemBytes)
-	e.asc = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			e.ascW.Add(1)
-			e.violate("提交审核接口被调用：%s %s", r.Method, r.URL.Path)
-		} else {
-			e.ascGET.Add(1)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data":[],"links":{},"meta":{"paging":{"total":0,"limit":200}}}`))
-	}))
 	max, per := 2+rng.Intn(2), 1+rng.Intn(2)
 	e.cfg = map[string]any{
 		"projects_root": e.root, "claude_path": e.fakeBin, "tick_after_job": rng.Intn(3) > 0,
@@ -445,7 +428,9 @@ func (e *stressEnv) limits(max, per int) {
 }
 
 func (e *stressEnv) writeConfig() {
-	b, _ := json.Marshal(e.cfg)
+	cfg, tuning := splitTuning(e.cfg)
+	e.tuning = tuning
+	b, _ := json.Marshal(cfg)
 	if err := os.WriteFile(filepath.Join(e.home, ".agentq", "config.json"), b, 0o600); err != nil {
 		e.t.Fatal(err)
 	}
@@ -477,7 +462,7 @@ func (e *stressEnv) violate(format string, args ...any) {
 
 func (e *stressEnv) environ() []string {
 	mac := filepath.Join(e.home, "fake", "macnotify.log")
-	return append([]string{"HOME=" + e.home, "PATH=" + e.path, "AGENTQ_TELEGRAM_API=" + e.tg.srv.URL, "AGENTQ_ASC_API=" + e.asc.URL,
+	return append([]string{"HOME=" + e.home, "PATH=" + e.path, "AGENTQ_TELEGRAM_API=" + e.tg.srv.URL, config.TestTuningEnv + "=" + e.tuning,
 		"AGENTQ_MACNOTIFY_LOG=" + mac, "AGENTQ_TEST_LAUNCHCTL=" + filepath.Join(e.binDir, "launchctl"), "GORACE=exitcode=66", "LC_ALL=en_US.UTF-8",
 		"TMPDIR=" + os.TempDir()}, e.extra...)
 }
@@ -779,11 +764,7 @@ func gateBusy(st *State) []string {
 
 // walkHome 扫 HOME 下所有文件找不该出现的串（秘密），跳过放秘密本身的地方。
 func (e *stressEnv) secretsScan() {
-	lines := strings.Split(strings.TrimSpace(string(e.pem)), "\n")
 	markers := []string{stressToken, "STRESSTOKENMARKER"}
-	if len(lines) > 2 {
-		markers = append(markers, lines[1], lines[2])
-	}
 	hit := func(where string, b []byte) {
 		for _, m := range markers {
 			if bytes.Contains(b, []byte(m)) {
@@ -952,10 +933,6 @@ func (e *stressEnv) checkInvariants(phase string) {
 	if n := e.tg.tooLong.Load(); n > 0 {
 		e.violate("[%s] 给 Telegram 发过 %d 次超长消息（会一直失败）", phase, n)
 	}
-	// 提交审核
-	if n := e.ascW.Load(); n != 0 {
-		e.violate("[%s] ASC 写接口被调用 %d 次", phase, n)
-	}
 	e.secretsScan()
 }
 
@@ -965,7 +942,6 @@ func (e *stressEnv) finish(name string) {
 	e.checkLeaks(30 * time.Second)
 	e.checkInvariants(name)
 	e.tg.close()
-	e.asc.Close()
 	if len(e.bad) > 0 || os.Getenv("AGENTQ_STRESS_KEEP") != "" {
 		e.t.Logf("现场留在 %s", e.base)
 	} else {
@@ -1037,10 +1013,8 @@ func scenarioKill(t *testing.T, rng *rand.Rand) {
 				}
 			}
 		case 8:
-			switch rng.Intn(4) {
+			switch rng.Intn(3) {
 			case 0:
-				e.agentq(60*time.Second, "inbox", "add", fmt.Sprintf("杀进程时放的活 %d —— 查东西", rng.Int63()))
-			case 1:
 				e.agentq(60*time.Second, "new", fmt.Sprintf("做个工具 %d", rng.Int63()))
 			default:
 				if st, err := e.state(); err == nil && len(st.Running()) > 0 {
@@ -1091,7 +1065,7 @@ func scenarioTimelapse(t *testing.T, rng *rand.Rand) {
 	e := newStressEnv(t, rng, "")
 	defer e.finish("timelapse")
 	e.telegram()
-	e.cfg["patrol_enabled"], e.cfg["patrol_analyze"] = rng.Intn(2) == 0, rng.Intn(2) == 0
+	e.cfg["patrol_enabled"] = rng.Intn(2) == 0
 	e.cfg["timeout"], e.cfg["breaker_cooldown"], e.cfg["breaker_max"], e.cfg["limit_cooldown"] = "4h", "30m", "4h", "1h"
 	e.writeConfig()
 	modes := []string{"quick", "claimdie", "claimwait", "limit", "limitmid", "budget", "e529", "e403", "half", "exit3", "ok", "orphan"}
@@ -1210,7 +1184,6 @@ func scenarioConcurrent(t *testing.T, rng *rand.Rand) {
 	e := newStressEnv(t, rng, "")
 	defer e.finish("concurrent")
 	e.telegram()
-	e.cfg["suggest_enabled"], e.cfg["router_enabled"] = rng.Intn(2) == 0, rng.Intn(2) == 0
 	e.writeConfig()
 	modes := []string{"ok", "ok", "slow", "quick", "claimwait", "orphan"}
 	e.seedProjects(3, modes)
@@ -1238,11 +1211,10 @@ func scenarioConcurrent(t *testing.T, rng *rand.Rand) {
 			time.Sleep(3 * time.Millisecond)
 		}
 	}()
-	cmds := [][]string{{"tick"}, {"tick"}, {"tick"}, {"status"}, {"notify", "send", "done", "并发消息"}, {"notify", "status"}, {"inbox"},
-		{"inbox", "add", "并发任务 —— 查点东西"}, {"pause"}, {"resume"}, {"resume"}, {"quality"}, {"run", "proj0"}, {"run", "proj1"}, {"run", "proj2"},
-		{"new", "做个小工具"}, {"suggest"}, {"logs", "nosuchjob"}, {"stop", "nosuchjob"}, {"backlog", "archive", "proj0", "--dry-run"}}
+	cmds := [][]string{{"tick"}, {"tick"}, {"tick"}, {"status"}, {"notify", "send", "done", "并发消息"}, {"notify", "status"},
+		{"pause"}, {"resume"}, {"resume"}, {"stats"}, {"run", "proj0"}, {"run", "proj1"}, {"run", "proj2"},
+		{"new", "做个小工具"}, {"logs", "nosuchjob"}, {"stop", "nosuchjob"}, {"backlog", "archive", "proj0", "--dry-run"}}
 	e.tokCap = 60 // agentq run 不看 retry_after，这里在猛按它
-	var n atomic.Int64
 	msgRng := rand.New(rand.NewSource(rng.Int63()))
 	for w := 0; w < 12; w++ {
 		wg.Add(1)
@@ -1250,11 +1222,7 @@ func scenarioConcurrent(t *testing.T, rng *rand.Rand) {
 		go func() {
 			defer wg.Done()
 			for !stop.Load() {
-				args := append([]string(nil), pick(sub, cmds)...)
-				if args[0] == "inbox" && len(args) > 1 {
-					args[2] = fmt.Sprintf("并发任务 %d —— 查点东西", n.Add(1))
-				}
-				e.agentq(200*time.Second, args...)
+				e.agentq(200*time.Second, pick(sub, cmds)...)
 			}
 		}()
 	}
@@ -1351,7 +1319,6 @@ func scenarioCorrupt(t *testing.T, rng *rand.Rand) {
 	e := newStressEnv(t, rng, "")
 	defer e.finish("corrupt")
 	e.telegram()
-	e.cfg["suggest_enabled"], e.cfg["router_enabled"], e.cfg["sense_enabled"], e.cfg["release_assist_enabled"] = true, true, true, true
 	e.writeConfig()
 	var lines []string
 	for i := 0; i < 2; i++ {
@@ -1364,15 +1331,11 @@ func scenarioCorrupt(t *testing.T, rng *rand.Rand) {
 	e.agentq(120*time.Second, "tick") // 有运行中任务，也写出 notify.json
 	data := filepath.Join(e.home, ".agentq")
 	st, _ := e.state()
-	targets := []string{"state.json", "notify.json", "config.json", "recent", "history", "suggestions.json", "sense.json", "release.json", "inbox.md", "meta", "jobdir", "tick.lock", "notify.lock", "telegram.env", "patrol.json"}
+	targets := []string{"state.json", "notify.json", "config.json", "suggestions.json", "meta", "jobdir", "tick.lock", "notify.lock", "telegram.env", "patrol.json"}
 	tgt := pick(rng, targets)
 	cor := pick(rng, stressCorruptions())
 	var path string
 	switch tgt {
-	case "recent":
-		path = filepath.Join(data, "router", "recent.jsonl")
-	case "history":
-		path = filepath.Join(data, "router", "history.jsonl")
 	case "telegram.env":
 		path = filepath.Join(data, "secrets", "telegram.env")
 	case "jobdir":
@@ -1409,8 +1372,8 @@ func scenarioCorrupt(t *testing.T, rng *rand.Rand) {
 	e.tg.push(stressOwner, stressOwner, "做 1", 0, time.Now())
 	for i := 0; i < 2; i++ {
 		e.agentq(200*time.Second, "tick")
-		for _, c := range [][]string{{"status"}, {"notify", "status"}, {"notify", "send", "done", "破坏后的消息"}, {"inbox"}, {"inbox", "add", "破坏后 —— 记一条"},
-			{"run", "alpha"}, {"quality"}, {"stats"}, {"stats", "30"}, {"sense", "--dry-run"}, {"release", "check"}, {"suggest", "alpha"}} {
+		for _, c := range [][]string{{"status"}, {"notify", "status"}, {"notify", "send", "done", "破坏后的消息"},
+			{"run", "alpha"}, {"stats"}, {"stats", "30"}} {
 			e.agentq(200*time.Second, c...)
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -1662,22 +1625,14 @@ func scenarioMessages(t *testing.T, rng *rand.Rand) {
 	e := newStressEnv(t, rng, "")
 	defer e.finish("messages")
 	e.telegram()
-	e.cfg["router_enabled"] = rng.Intn(2) == 0
-	e.cfg["release_assist_enabled"] = true
 	e.cfg["max_parallel"] = 3
 	e.writeConfig()
-	os.WriteFile(filepath.Join(e.home, "fake", "defmode"), []byte(pick(rng, []string{"", "", "html", "long", "quick", "half", "exit3", "badstruct", "badstruct2", "nonjson", "routerfuzz"})), 0o644)
+	os.WriteFile(filepath.Join(e.home, "fake", "defmode"), []byte(pick(rng, []string{"", "", "html", "long", "quick", "half", "exit3", "badstruct", "badstruct2", "nonjson"})), 0o644)
 	l, _ := e.item("slow")
 	e.repo("alpha", l)
-	// 一条活的发版提示：回复它的各种说法都不能调写接口（假 ASC 的 GET 都是空的，走到写接口的话这里当场报）
 	data := filepath.Join(e.home, ".agentq")
-	offer := int64(555)
-	ro := map[string]any{"offers": []map[string]any{{"id": "app-build", "project": "alpha", "project_dir": filepath.Join(e.root, "alpha"), "app_id": "app", "build_id": "build",
-		"version": "1.0", "status": release.OfferOffered, "message_id": offer, "offered_at": time.Now().Add(-time.Hour), "updated_at": time.Now()}}}
-	b, _ := json.Marshal(ro)
-	os.WriteFile(filepath.Join(data, "release.json"), b, 0o600)
-	ns := notify.State{UpdateOffset: 1, Threads: map[int64]notify.Thread{offer: {Kind: notify.ThreadRelease, Project: "alpha", Fingerprint: "app-build", At: time.Now()}}}
-	b, _ = json.Marshal(ns)
+	offer := int64(555) // 回复一条没登记的消息
+	b, _ := json.Marshal(notify.State{UpdateOffset: 1})
 	os.WriteFile(filepath.Join(data, "notify.json"), b, 0o600)
 	// 长消息走推送队列：一条发不出去的不能堵死同类的后面所有消息
 	e.agentq(60*time.Second, "notify", "send", "done", strings.Repeat("很长的一句话", 1500))
@@ -1713,9 +1668,6 @@ func scenarioMessages(t *testing.T, rng *rand.Rand) {
 	sub := rand.New(rand.NewSource(rng.Int63()))
 	for i := 0; i < flood; i++ {
 		text, to := pick(sub, texts), pick(sub, replyTos)
-		if text == "发" && to == offer { // 正确路径在 release 场景单独测
-			to = 0
-		}
 		chat, from := stressOwner, stressOwner
 		switch sub.Intn(12) {
 		case 0:
@@ -1859,14 +1811,13 @@ func scenarioEnv(t *testing.T, rng *rand.Rand) {
 	case "gh-hang":
 		e := newStressEnv(t, rng, "")
 		defer e.finish("gh-hang")
-		e.cfg["sense_enabled"], e.cfg["night_enabled"], e.cfg["review_enabled"] = true, true, true
+		e.cfg["night_enabled"], e.cfg["review_enabled"] = true, true
 		e.writeConfig()
 		l, _ := e.item("ok")
 		dir := e.repo("alpha", l)
 		e.git(dir, "remote", "add", "origin", "https://github.com/x/alpha.git")
 		os.WriteFile(filepath.Join(e.binDir, "gh"), []byte("#!/bin/sh\nsleep 1000 &\nwait\n"), 0o755)
 		start := time.Now()
-		e.agentq(280*time.Second, "sense", "--dry-run")
 		e.agentq(280*time.Second, "night", "--scheduled")
 		if d := time.Since(start); d > 200*time.Second {
 			e.violate("gh 挂住时用了 %s", d)
@@ -1983,7 +1934,7 @@ func scenarioEnv(t *testing.T, rng *rand.Rand) {
 		l, _ := e.item("ok")
 		o, _ := e.item("ok")
 		e.repo("alpha", l, o+"（进行中：agent/gone 2020-01-01 10:00）")
-		e.cfg["night_enabled"], e.cfg["review_enabled"], e.cfg["sense_enabled"] = true, true, true
+		e.cfg["night_enabled"], e.cfg["review_enabled"] = true, true
 		e.writeConfig()
 		emptyBin := filepath.Join(e.base, "emptybin")
 		os.MkdirAll(emptyBin, 0o755)
@@ -1996,7 +1947,6 @@ func scenarioEnv(t *testing.T, rng *rand.Rand) {
 			e.agentq(60*time.Second, "status")
 			e.agentq(60*time.Second, "review", "--scheduled")
 			e.agentq(60*time.Second, "night", "--scheduled")
-			e.agentq(60*time.Second, "sense", "--dry-run")
 			time.Sleep(200 * time.Millisecond)
 		}
 		e.path = e.binDir + ":/usr/bin:/bin:/usr/sbin:/sbin"
@@ -2200,7 +2150,6 @@ func scenarioDiskFull(t *testing.T, rng *rand.Rand) {
 		e.agentq(120*time.Second, "tick")
 		e.agentq(60*time.Second, "status")
 		e.agentq(60*time.Second, "notify", "send", "done", "磁盘满时的消息")
-		e.agentq(60*time.Second, "inbox", "add", "磁盘满时 —— 记一条")
 		if i == 0 {
 			sentBefore = len(e.tg.sentCopy())
 		}
@@ -2230,119 +2179,17 @@ func scenarioDiskFull(t *testing.T, rng *rand.Rand) {
 	}
 }
 
-// 发版：错的说法零次写接口；对的说法在并发、重复、中途被杀下最多走一次三步。
-func scenarioRelease(t *testing.T, rng *rand.Rand) {
-	r := newRelEnv(t, nil)
-	bad := []string{"发吧", "发。", " 发", "发 ", "发\n", "现在发", "请发", "发布", "发发", "yes", "好", "同意", "/发", "「发」", "发！", "ok发"}
-	const msg = int64(4242)
-	r.seedOffered(msg, nil)
-	update := 100
-	nextUpdate := func() int { update++; return update }
-	// 错的说法
-	for _, text := range bad {
-		r.tg.push(nextUpdate(), update+1000, text, msg, ownerChat, r.noon)
-	}
-	r.tg.push(nextUpdate(), update+1000, "发", 0, ownerChat, r.noon)     // 不是回复
-	r.tg.push(nextUpdate(), update+1000, "发", 77777, ownerChat, r.noon) // 回复别的
-	r.tg.push(nextUpdate(), update+1000, "发", msg, 424242, r.noon)      // 别人回复
-	r.tg.mu.Lock()                                                      // 别的 chat 发的
-	r.tg.updates = append(r.tg.updates, map[string]any{"update_id": nextUpdate(), "message": map[string]any{"message_id": update + 1000, "date": r.noon.Unix(), "text": "发",
-		"chat": map[string]any{"id": ownerChat + 1, "type": "private"}, "from": map[string]any{"id": ownerChat + 1}, "reply_to_message": map[string]any{"message_id": msg, "chat": map[string]any{"id": ownerChat + 1}}}})
-	r.tg.mu.Unlock()
-	r.mustRun("tick")
-	r.noWrites()
-	// 对的说法：并发重复 + 中途被杀
-	mode := rng.Intn(3)
-	var slow atomic.Bool
-	slow.Store(mode == 1)
-	r.asc.setHandle(func(w http.ResponseWriter, req *http.Request, body []byte) bool {
-		if req.Method != http.MethodGet && slow.Load() {
-			time.Sleep(300 * time.Millisecond)
-		}
-		return r.handleWrites(w, req, body)
-	})
-	for i := 0; i < 6; i++ {
-		r.tg.push(nextUpdate(), update+1000, "发", msg, ownerChat, r.noon)
-	}
-	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		killIt, wait := rng.Intn(2) == 0, time.Duration(rng.Intn(700))*time.Millisecond
-		go func() {
-			defer wg.Done()
-			cmd := exec.Command(agentqBin, "tick")
-			cmd.Env = r.relEnviron()
-			if mode == 1 && killIt {
-				_ = cmd.Start()
-				time.Sleep(wait)
-				_ = cmd.Process.Kill()
-				_ = cmd.Wait()
-				return
-			}
-			_, _ = cmd.CombinedOutput()
-		}()
-	}
-	wg.Wait()
-	r.mustRun("tick")
-	w := r.asc.writesList()
-	counts := map[string]int{}
-	for _, x := range w {
-		counts[x]++
-	}
-	for x, n := range counts {
-		if n > 1 {
-			t.Errorf("同一个写接口调了 %d 次：%s（%v）", n, x, w)
-		}
-	}
-	if len(w) > 3 {
-		t.Errorf("写接口太多：%v", w)
-	}
-	if mode != 1 && len(w) != 3 {
-		t.Errorf("回复「发」应走完三步：%v；最后一条消息：%s", w, r.lastText())
-	}
-	o := r.offer()
-	if len(w) == 0 && o.Status == release.OfferSubmitted {
-		t.Errorf("没调接口却记成已提交：%+v", o)
-	}
-	// 记录损坏后再回复：不能重新提交
-	before := len(r.asc.writesList())
-	os.WriteFile(filepath.Join(r.home, ".agentq", "release.json"), []byte("{bad"), 0o600)
-	r.tg.push(nextUpdate(), update+1000, "发", msg, ownerChat, r.noon)
-	r.mustRun("tick")
-	if after := len(r.asc.writesList()); after != before {
-		t.Errorf("发版记录坏了之后回「发」又调了写接口：%v", r.asc.writesList())
-	}
-	// 私钥不进日志
-	lines := strings.Split(strings.TrimSpace(string(r.pem)), "\n")
-	if b, err := os.ReadFile(filepath.Join(r.home, ".agentq", "launchd.log")); err == nil && len(lines) > 2 && bytes.Contains(b, []byte(lines[1])) {
-		t.Error("私钥进了日志")
-	}
-}
-
-func (r *relEnv) relEnviron() []string {
-	var envs []string
-	for _, kv := range os.Environ() {
-		name, _, _ := strings.Cut(kv, "=")
-		if name == "HOME" || name == "LANG" || strings.HasPrefix(name, "LC_") {
-			continue
-		}
-		envs = append(envs, kv)
-	}
-	envs = append(envs, "HOME="+r.home, "AGENTQ_FAKE_LOG="+r.fakeLg)
-	return append(envs, r.extra...)
-}
-
-// 后台能力：夜班、复盘、闲时找活、感知、new、任务箱、巡逻，模型回各种烂东西。
+// 后台能力：夜班、复盘、new、巡逻，模型回各种烂东西。
 func scenarioFeatures(t *testing.T, rng *rand.Rand) {
 	e := newStressEnv(t, rng, "")
 	defer e.finish("features")
 	e.telegram()
-	for _, k := range []string{"night_enabled", "review_enabled", "suggest_enabled", "sense_enabled", "release_assist_enabled", "patrol_enabled", "patrol_analyze", "router_enabled"} {
+	for _, k := range []string{"night_enabled", "review_enabled"} {
 		e.cfg[k] = rng.Intn(2) == 0
 	}
 	e.cfg["patrol_enabled"] = true
 	e.writeConfig()
-	os.WriteFile(filepath.Join(e.home, "fake", "defmode"), []byte(pick(rng, []string{"", "", "quick", "half", "exit3", "badstruct", "badstruct2", "nonjson", "limit", "long", "html", "hang", "suggestfuzz", "suggestfuzz", "routerfuzz"})), 0o644)
+	os.WriteFile(filepath.Join(e.home, "fake", "defmode"), []byte(pick(rng, []string{"", "", "quick", "half", "exit3", "badstruct", "badstruct2", "nonjson", "limit", "long", "html", "hang"})), 0o644)
 	day := time.Now().Format("2006-01-02")
 	e.extra = append(e.extra, "AGENTQ_STRESS_REPORTS="+filepath.Join(e.home, ".claude", "nightly", day+".md")+" "+filepath.Join(e.home, ".claude", "nightly", day+"-night.md"))
 	e.modelCap = 60
@@ -2350,11 +2197,11 @@ func scenarioFeatures(t *testing.T, rng *rand.Rand) {
 	e.repo("alpha", l)
 	e.repo("beta")
 	for i := 0; i < 3; i++ {
-		for _, c := range [][]string{{"tick"}, {"night", "--scheduled"}, {"review", "--scheduled"}, {"night"}, {"review"}, {"suggest"}, {"sense"}, {"sense", "--dry-run"}, {"release", "check"},
-			{"new", "做个 <b>工具</b>"}, {"inbox", "add", fmt.Sprintf("活 %d —— 查东西", i)}, {"patrol"}, {"quality"}, {"status"}} {
+		for _, c := range [][]string{{"tick"}, {"night", "--scheduled"}, {"review", "--scheduled"}, {"night"}, {"review"},
+			{"new", "做个 <b>工具</b>"}, {"patrol"}, {"stats"}, {"status"}} {
 			e.agentq(120*time.Second, c...)
 		}
-		// 回「做 N」：有建议就移进待做，没有就交给模型，都不能丢东西
+		// 回「做 N」：没有建议就交给模型，不能丢东西
 		e.tg.push(stressOwner, stressOwner, "做 1 2", 0, time.Now())
 		e.agentq(120*time.Second, "tick")
 		time.Sleep(500 * time.Millisecond)
@@ -2375,7 +2222,6 @@ func scenarioCards(t *testing.T, rng *rand.Rand) {
 	e := newStressEnv(t, rng, "")
 	defer e.finish("cards")
 	e.telegram()
-	e.cfg["release_assist_enabled"] = true
 	e.cfg["paused"] = true // 这里只看决定，定完的条目不接着做
 	e.writeConfig()
 	noon, _ := time.ParseInLocation("2006-01-02 15:04", time.Now().Format("2006-01-02")+" 12:00", time.Local)
@@ -3458,14 +3304,12 @@ func scenarioDiscuss(t *testing.T, rng *rand.Rand) {
 	e.checkInvariants("discuss")
 }
 
-// docs/NOT-DOING.md 坏掉、超长、二进制、是目录、是软链接：闲时找活、感知、不做 N、Router 的 reject 都不能崩，文件不能被写丢。
+// docs/NOT-DOING.md 坏掉、超长、二进制、是目录、是软链接：tick、不做 N 都不能崩，文件不能被写丢。
 func scenarioNotDoing(t *testing.T, rng *rand.Rand) {
 	e := newStressEnv(t, rng, "")
 	defer e.finish("notdoing")
 	e.telegram()
-	e.cfg["suggest_enabled"], e.cfg["sense_enabled"], e.cfg["router_enabled"] = true, true, rng.Intn(2) == 0
 	e.writeConfig()
-	os.WriteFile(filepath.Join(e.home, "fake", "defmode"), []byte(pick(rng, []string{"suggestfuzz", "routerfuzz", ""})), 0o644)
 	garbage := make([]byte, 1<<16)
 	rng.Read(garbage)
 	kinds := map[string]func(p string){
@@ -3492,7 +3336,7 @@ func scenarioNotDoing(t *testing.T, rng *rand.Rand) {
 	}
 	before, _ := os.Lstat(p)
 	for i := 0; i < 3; i++ {
-		for _, c := range [][]string{{"tick"}, {"suggest"}, {"suggest", "alpha"}, {"sense", "--dry-run"}, {"status"}, {"stats"}} {
+		for _, c := range [][]string{{"tick"}, {"status"}, {"stats"}} {
 			e.agentq(120*time.Second, c...)
 		}
 		e.tg.push(stressOwner, stressOwner, "不做 1", 0, time.Now())
@@ -3539,7 +3383,7 @@ func scenarioStats(t *testing.T, rng *rand.Rand) {
 		f, _ := os.OpenFile(filepath.Join(dir, "docs", "BACKLOG.md"), os.O_APPEND|os.O_WRONLY, 0)
 		f.WriteString(bad)
 		f.Close()
-		for _, c := range [][]string{{"stats"}, {"stats", "1"}, {"stats", "3650"}, {"stats", "0"}, {"stats", "-1"}, {"stats", "x"}, {"stats", "99999999999999999999"}, {"quality"}, {"status"}} {
+		for _, c := range [][]string{{"stats"}, {"stats", "1"}, {"stats", "3650"}, {"stats", "0"}, {"stats", "-1"}, {"stats", "x"}, {"stats", "99999999999999999999"}, {"status"}} {
 			e.agentq(60*time.Second, c...)
 		}
 	}
@@ -4215,7 +4059,7 @@ func scenarioCorruptBoth(t *testing.T, rng *rand.Rand) {
 	e.noState = true
 	t.Logf("破坏 state.json：%s；%d/%d 个 meta.json：%v", stateKind.name, len(badMeta), len(st.Jobs), badMeta)
 	// 还没 tick 时看状态的命令不崩（任务结束后的 tick 可能抢先修好，这里不查说了什么）
-	for _, c := range [][]string{{"status"}, {"stats"}, {"quality"}} {
+	for _, c := range [][]string{{"status"}, {"stats"}} {
 		e.agentq(120*time.Second, c...)
 	}
 	out, code := e.agentq(200*time.Second, "tick")
@@ -4269,7 +4113,7 @@ func scenarioCorruptBoth(t *testing.T, rng *rand.Rand) {
 	// 接着干
 	e.settleItems(want, 200*time.Second)
 	e.finishRepos(dirs)
-	for _, c := range [][]string{{"status"}, {"stats"}, {"stats", "30"}, {"quality"}} {
+	for _, c := range [][]string{{"status"}, {"stats"}, {"stats", "30"}} {
 		if out, code := e.agentq(120*time.Second, c...); code != 0 {
 			e.violate("恢复后 agentq %v 退出码 %d：\n%s", c, code, tailOf(out, 800))
 		}
@@ -4381,7 +4225,6 @@ func stressScenarios() []stressScenario {
 		{"backlog", 4, scenarioBacklog},
 		{"messages", 3, scenarioMessages},
 		{"env", 5, scenarioEnv},
-		{"release", 2, scenarioRelease},
 		{"features", 2, scenarioFeatures},
 		{"diskfull", 1, scenarioDiskFull},
 		{"cards", 4, scenarioCards},

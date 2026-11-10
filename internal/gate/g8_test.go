@@ -255,18 +255,38 @@ func TestRerunLimit(t *testing.T) {
 	}
 }
 
-// 新提交重新算次数。
+// 用户看过后在分支上补了提交再要再审：改看分支现在的最新提交（放行也只合它），次数重新算。
+// 分支上读不出合格交付单的（比如补提交删了 ready.json）：还看原来的提交。
 func TestRerunNewHead(t *testing.T) {
 	f := newFix(t, fixBacklog)
 	j := f.claim("做事", "agent/x", map[string]string{"a.txt": "a"}, ready("agent/x"))
-	j.Gate.State, j.Gate.Head, j.Gate.RerunHead, j.Gate.Reruns = state.GateStuck, "新提交", "旧提交", gate.MaxReruns
+	old := j.Gate.Head
+	j.Gate.State, j.Gate.RerunHead, j.Gate.Reruns = state.GateStuck, old, gate.MaxReruns
+	wt := filepath.Join(f.dir, ".claude", "worktrees", "x")
+	f.commit(wt, map[string]string{"a.txt": "改对了"}, gate.Ready{})
+	tip := testkit.GitT(t, f.home, wt, "rev-parse", "HEAD")
 	f.saveState()
 	if err := f.a.CmdGate([]string{"rerun", j.ID}); err != nil {
 		t.Fatal(err)
 	}
 	f.a.Collect(f.st)
-	if j.Gate.RerunHead != "新提交" || j.Gate.Reruns != 1 {
-		t.Errorf("%+v", j.Gate)
+	if j.Gate.Head != tip || j.Gate.RerunHead != tip || j.Gate.Reruns != 1 || j.Gate.State != state.GateQueued {
+		t.Fatalf("要看补的提交 %s：%+v", tip, j.Gate)
+	}
+	if p := gate.PlanOf(f.a, j); p.Head != tip {
+		t.Errorf("门进程要合补的提交：%s", p.Head)
+	}
+
+	j.Gate.State = state.GateStuck
+	testkit.GitT(t, f.home, wt, "rm", "-q", gate.ReadyFile)
+	testkit.GitT(t, f.home, wt, "commit", "-q", "-m", "删交付单")
+	f.saveState()
+	if err := f.a.CmdGate([]string{"rerun", j.ID}); err != nil {
+		t.Fatal(err)
+	}
+	f.a.Collect(f.st)
+	if j.Gate.Head != tip || j.Gate.Reruns != 2 {
+		t.Errorf("交付单没了还看原来的提交：%+v", j.Gate)
 	}
 }
 

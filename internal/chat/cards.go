@@ -11,7 +11,7 @@ import (
 	"agentq/internal/textfmt"
 )
 
-// handleCallback 处理按钮回调：核对用户身份、按钮没过期、条目没变，然后走和 Router 的 decide 同一条路（routerDecide），不起模型。
+// handleCallback 处理按钮回调：核对用户身份、按钮没过期、条目没变，然后用 decide 写进 BACKLOG，不起模型。
 // 重复点只生效一次。接口失败不回滚已生效的决定，消息没改成只记日志。
 func (a *Service) handleCallback(c *telegram.TgCreds, q *telegram.TgCallback) {
 	answer := func(text string) {
@@ -73,7 +73,7 @@ func (a *Service) handleCallback(c *telegram.TgCreds, q *telegram.TgCallback) {
 		answer(notify.CardChanged)
 		return
 	}
-	if err := a.routerDecide(RouterAction{Type: "decide", Project: card.Project, Fingerprint: card.Fingerprint, Decision: choice}); err != nil {
+	if err := a.decide(card.Project, card.Fingerprint, choice); err != nil {
 		a.Logf("Telegram：按钮没定成（%s「%s」）：%v", card.Project, textfmt.TruncRunes(card.Title, 30), err)
 		answer(textfmt.TruncRunes("没定成："+textfmt.OneLine(err.Error(), 100)+"。过一会儿再点，或回文字", 190))
 		return

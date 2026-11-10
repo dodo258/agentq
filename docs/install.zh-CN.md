@@ -10,20 +10,20 @@
 curl -fsSL https://github.com/dodo258/agentq/releases/latest/download/install.sh | sh
 ```
 
-新安装的最后一步讲清楚任务能做什么，问一句：按回车同意并启动，输入 n 只安装不启动。之后在项目目录打开 Claude Code，说一句要做什么就行。
+装好，开口说：新安装装完直接是运行状态（服务加载、不暂停），不问也不等输入，安装本身就是同意；结束时如实说一句后台任务能读写本机文件、运行命令、用你自己的模型额度，并给出暂停、卸载命令。之后打开 Claude Code 或 Codex，在项目里直接说要做什么。想先不跑：加 `--paused`。
 
 
-`install.sh` 检查平台和 Git，取到程序后调用同一个 `agentq setup` 安装引擎，安装程序、完整技能目录、支持脚本、五模板及固定第三方依赖；不要求复制作者的 `.claude`，不需要 Node、sudo，以 root 运行时在写任何文件之前拒绝。官方 CLI 没装或没登录不挡安装，交给下面的同意这一步。升级重跑同一条或运行 `agentq update`，不问，配置、任务数据、已选服务和暂停状态都不变。
+`install.sh` 检查平台和 Git，取到程序后调用同一个 `agentq setup` 安装引擎，安装程序、完整技能目录、支持脚本、五模板及固定第三方依赖；不要求复制作者的 `.claude`，不需要 Node、sudo，以 root 运行时在写任何文件之前拒绝。官方 CLI 没装或没登录不挡安装，交给 `agentq start --welcome`。升级重跑同一条或运行 `agentq update`，不问，配置、任务数据、已选服务和暂停状态都不变：暂停着的不会被打开。
 
-启动只认明确同意：终端里的空行、`--yes`、`AGENTQ_ASSUME_YES=1`。n、其他输入、EOF、Ctrl-C 都不算，没有终端或设了 `CI`、`NONINTERACTIVE` 时只装不启动，退出码 0，打印要运行的命令。同意后：没有 CLI 就运行官方命令 `curl -fsSL https://claude.ai/install.sh | bash`，失败就停，贴原文，给 `brew install --cask claude-code` 和 `npm install -g @anthropic-ai/claude-code`；没登录就运行 `claude auth login`，没登录不开后台；`~/.local/bin` 不在 PATH 时往 shell 配置文件加一行带 `# agentq managed` 标记的 export，改前备份成 `*.pre-agentq`（已有备份就加时间戳），`agentq remove --yes` 只删这一行，没别的改动时逐字节恢复，恢复卸载不把这一行加回来。fish 等别的 shell 不改，打印手动的那一行。同意记在 `~/.agentq/consent.json`（文案版本、时间、方式），文案改版不重问，只在 `agentq doctor` 里说明。第一次同意时把通用工程规则放到 `~/.claude/rules/agentq/`，`~/.claude/CLAUDE.md` 或 `~/.claude/rules/` 里已有你自己的内容就不放，同意文字多一行说明；升级不自动加，见 `agentq env`。
+装完即运行，有没有终端、在不在 CI 里都一样；只有 `--paused`（`AGENTQ_PAUSED=1`）只装不跑，不记同意。旧的 `--yes` 还认，不再有作用。装之前就有的配置写着暂停（老版本只装二进制的用户）时保留暂停，不替你打开。有终端时：没有 CLI 就运行官方命令 `curl -fsSL https://claude.ai/install.sh | bash`，失败就停，贴原文，给 `brew install --cask claude-code` 和 `npm install -g @anthropic-ai/claude-code`；没登录就运行 `claude auth login`，没登录不开后台。没有终端（CI、由 agent 代装）时不装 CLI、不登录，只打印命令，退出非 0；同意和权限已经记下，CLI 弄好后在聊天里说需求，派活技能查到后台没开会自己 `agentq start`。`~/.local/bin` 不在 PATH 时往 shell 配置文件加一行带 `# agentq managed` 标记的 export，改前备份成 `*.pre-agentq`（已有备份就加时间戳），`agentq remove --yes` 只删这一行，没别的改动时逐字节恢复，恢复卸载不把这一行加回来。fish 等别的 shell 不改，打印手动的那一行。同意记在 `~/.agentq/consent.json`（文案版本、时间、方式；装完即运行的方式是 `install`），文案改版不重问，只在 `agentq doctor` 里说明。第一次运行时把通用工程规则放到 `~/.claude/rules/agentq/`，`~/.claude/CLAUDE.md` 或 `~/.claude/rules/` 里已有你自己的内容就不放，装完的说明里多一行；升级不自动加，见 `agentq env`。派活技能装到 Claude Code 的 `~/.claude/skills`，本机用着 Codex（有 `~/.codex` 或 `$CODEX_HOME`）时也装到 `~/.agents/skills`；后来才装 Codex 的，`agentq update` 补上，`agentq doctor` 会提醒。
 
 取程序的顺序：本仓 checkout 里本地构建；下载 Release 并校验 SHA256（校验不过直接退出）；下载不到且有 Go 时拉源码构建。`--version` 或 `AGENTQ_VERSION` 选版本，`main` 直接走源码；`AGENTQ_RELEASE_BASE` 换下载地址，它优先于脚本里的仓库名。`--proxy <地址>`（`AGENTQ_PROXY`）让下载走代理。`--mirror <前缀>`（`AGENTQ_MIRROR`）让 GitHub 上的程序包从镜像取，校验文件和源码仍从原地址取，镜像改过的文件会被拒绝；镜像回 404 时退到源码构建也是克隆原地址；锁定的第三方依赖也走镜像，同样按锁定哈希核对。`--uninstall` 转给 `agentq remove --yes`，数据保留；程序已被手动删掉时如实说明还留着什么，不假装卸干净。
 
-维护者从源码安装也可以用 `sh scripts/bootstrap.sh --yes`，下文的 `--plan`、`--extras` 等参数两个入口通用（如 `sh install.sh --extras`）。
+维护者从源码安装也可以用 `sh scripts/bootstrap.sh --yes`，新安装同样装完即运行（`--paused` 只装），下文的 `--plan`、`--extras` 等参数两个入口通用（如 `sh install.sh --extras`）。
 
-只装不启动时之后运行 `agentq start`，它会讲清完全权限的风险并由你确认：任务无人值守要改文件、跑命令，新装默认的 `permission_mode=default` 写不了文件。
+用 `--paused` 装的，之后运行 `agentq start`，它会讲清完全权限的风险并由你确认；或者在 Claude Code、Codex 里说「开后台」。
 
-给 Agent 的一句话：**请阅读本仓 `llms.txt`，一条命令装好 agentq，只装不启动，把 `agentq start` 交给我确认。** Agent 没有终端，脚本自动只装不启动。
+给 Agent 的一句话：**请阅读本仓 `llms.txt`，一条命令装好 agentq。** 装完就在运行；不想马上跑就让它加 `--paused`。
 
 ## 安装前检测
 
@@ -31,7 +31,7 @@ curl -fsSL https://github.com/dodo258/agentq/releases/latest/download/install.sh
 - Linux amd64 或 arm64，后台服务需要 `systemd --user`（见下文「Linux 与 WSL」）。验证范围是 GitHub Actions 的 ubuntu-latest。
 - Git。Go（版本要求见 `go.mod`）仅用于源码构建，运行调度器不需要。Python 3 可选：调度器和必需技能不用它，只有可选 Waza 的辅助脚本要用，缺了只给一行警告。安装器检测缺项后给出处，不静默安装系统软件。
 - 可独立调用的 Claude Code CLI（启动时要有，安装不要求）：检测真实路径、`--version`、print/JSON/session/effort 能力和 CLI 任务环境中的 `auth status`。可用 `--claude /absolute/path/to/claude` 明确选择，路径可含空格。CLI-only 可用，不需要 Desktop。已有配置中的命令名（如 `claude`）按 PATH 解析；已有 `claude_path` 与 `--claude` 不同时拒绝安装，先由安装者明确修改自己的配置，不会只探测新引擎却继续运行旧引擎。
-- 未找到 CLI 时，同意后运行官方安装命令；没有终端时只打印 `curl -fsSL https://claude.ai/install.sh | bash` 与 `claude auth login`，由安装者执行。安装器不索要 token，不读取 Desktop 私有 bundle 路径。检测到 Desktop、上传技能 ZIP 或打开桌面会话均不算后台引擎可用。
+- 未找到 CLI 时，有终端就运行官方安装命令；没有终端时只打印 `curl -fsSL https://claude.ai/install.sh | bash` 与 `claude auth login`，由安装者执行。安装器不索要 token，不读取 Desktop 私有 bundle 路径。检测到 Desktop、上传技能 ZIP 或打开桌面会话均不算后台引擎可用。
 - 选择 `--services` 时，再按服务文件（macOS 的 plist、Linux 的 unit）声明的 HOME/PATH 做服务环境探测，不继承安装 shell 的 token 或代理变量。只依赖临时 shell 身份时拒绝服务安装；安装者需明确配置持久的 CLI 认证/网络设置。安装器不把秘密写进服务文件、不代登录。
 - 认证检测只证明 CLI 在该环境识别身份，不证明远端模型请求必然成功；真实模型验收单独执行。用户自己的受支持网关/模型映射属于本机配置，安装器不迁移或切换收费入口。父进程 API 环境变量不自动传入任务，详见 [环境变量白名单](reference/scheduling.md#环境变量白名单)。
 - `settings.json`/全局 local 设置只校验 JSON 和常用结构，绝不重写；更全面的宿主诊断可用官方 `claude doctor`。当前安装投影使用默认 `$HOME/.claude`；自定义 `CLAUDE_CONFIG_DIR` 不会被自动迁移。
@@ -68,7 +68,7 @@ sh scripts/bootstrap.sh --plan
 - 用户定制保留在项目规则、用户规则、独立技能/Hook/状态栏和本机配置，不直接编辑厂商 generation。它们不随代码回滚。
 - 已有同名技能：完整内容及权限位相同则保留为外部所有，卸载不删除。内容不同时，`check` 这类技能用你自己的版本，不替换、不接管，安装时说一声；任务合同靠的 `agent-task`、`dispatch`、`new-project`、`nightly-review` 顶替不了，报告冲突、停止激活，原件不变，改个名再装。相同的外部技能在回执中记录依赖摘要，doctor 会报告随后丢失或修改，但不会因此接管或删除它们。不替用户删重、选旧版或覆盖手改内容。
 - 已受管技能链接或 generation 有本地修改、未知文件/服务同名、非法 JSON/常用配置结构错误时停止，保留冲突证据。不把原子替换说成“自动保留定制”。
-- 既有配置逐字节保留，包括未知字段、第三方 Hook/状态栏和开关。新配置显式 `paused=true`，night/review/patrol/notify 全关、`permission_mode=default`（`start --welcome` 第一次同意时打开 notify，只改这一个键）；不继承作者 bypass 权限。旧版缺省 bypass 的配置兼容语义保留，不静默改现有策略。
+- 既有配置逐字节保留，包括未知字段、第三方 Hook/状态栏和开关。新配置先写 `paused=true`，night/review/patrol/notify 全关、`permission_mode=default`，`start --welcome` 接着把它改成运行状态：取消暂停、权限放开、打开 notify（`--paused` 时都不改）；不继承作者 bypass 权限。旧版缺省 bypass 的配置兼容语义保留，不静默改现有策略。
 - 安装/更新与 tick 共用锁；有运行任务或未知状态时拒绝替换。启动前做临时 HOME status/tick 自检。正在执行的文件不被就地覆盖或删掉。
 - 激活前保存受限权限事务备份，逐路径写入；失败恢复旧文件/服务，崩溃则保留 pending 并拒绝继续，使用 restore 恢复。活动、上一代和卸载恢复回执共用完整校验；不完整回执拒绝恢复，不能把缺失字段当成删除指令。没有受管回执时 doctor 明确报未安装。数据、身份、秘密不进入安装事务备份。
 
@@ -76,11 +76,11 @@ sh scripts/bootstrap.sh --plan
 
 ## 使用：不配置 Telegram
 
-安装后运行 `~/.local/bin/agentq status` 查看暂停状态。在项目目录运行 **`claude`**，用自然语言说“派活：……”；宿主根据标准 skill description 发现 dispatch，写入 BACKLOG 并调用 agentq。`agentq run/status/logs` 是管理命令，不是聊天窗口。
+在任何目录打开 Claude Code 或 Codex，直接说开发需求，不用说「派活」；宿主根据标准 skill description 发现 dispatch，由它判断当场做（只是问问、改错字改文案这类零碎改动、你说「直接改/我看着」）还是写进 BACKLOG 交后台（加功能、修 bug、改界面，哪怕很小）。没接入的目录它自己接入（不是 Git 仓库就 `git init` 并做初始提交，`.gitignore` 挡住密钥和依赖；不在 projects_root 下就登记 `extra_projects`）；家目录、桌面这类不像项目的地方先问一句项目名和位置。它先跑只读的 `agentq start --check`：服务没在跑就 `agentq start` 拉起，你自己暂停的不打开。`agentq run/status/logs` 是它替你跑的管理命令，不是聊天窗口。
 
 `agentq run <项目名> <关键词>` 是明确启动，即使自动调度暂停也会尝试运行，仍遵守认证/额度/并发限制。未授权无人值守工具时，默认权限可能拒绝写入；安装不会替用户改权限，用户应按自己的项目授权选择允许的权限策略。
 
-本地结果：`~/.agentq/jobs/<ID>/`、`agentq logs <ID>`、`~/.claude/nightly/<日期>-agentq.md`（默认后端不是 Claude 时在 `~/.agentq/nightly/`）。不用 Telegram 也完整生成。Telegram 配置和 `listen` 是用户之后主动启用的通道；安装入口不索要机器人 token、不自动装监听、不发送外部消息。配好凭据并把 `notify_enabled` 改成 `true` 后运行 `agentq start`，会一起装上监听。完整系统退出桌面/终端窗口后仍可由已选择安装的 launchd 服务运行，但新安装保持暂停，须用户明确启用调度。
+本地结果：`~/.agentq/jobs/<ID>/`、`agentq logs <ID>`、`~/.claude/nightly/<日期>-agentq.md`（默认后端不是 Claude 时在 `~/.agentq/nightly/`）。不用 Telegram 也完整生成。Telegram 配置和 `listen` 是用户之后主动启用的通道；安装入口不索要机器人 token、不自动装监听、不发送外部消息。配好凭据并把 `notify_enabled` 改成 `true` 后运行 `agentq start`，会一起装上监听。完整系统退出桌面/终端窗口后仍由已安装的 launchd 服务运行。
 
 ## 升级、回滚、卸载与恢复
 

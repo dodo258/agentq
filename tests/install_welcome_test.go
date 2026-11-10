@@ -24,12 +24,11 @@ import (
 	"agentq/internal/testkit"
 )
 
-const welcomePrompt = "输入 n 只安装不启动"
+// oldPrompt 是以前问同意的那句。装完即运行之后任何安装路径都不该再出现。
+const oldPrompt = "按回车同意"
 
 // ttyStep：输出里出现 wait 后输入 send；wait 为空就马上输入。
 type ttyStep struct{ wait, send string }
-
-func enterAt(answer string) []ttyStep { return []ttyStep{{welcomePrompt, answer}} }
 
 // runTTY 用 script 造一个伪终端跑 sh install.sh：它是控制终端，脚本能打开 /dev/tty。不依赖跑测试的那个终端。
 func (k *installKit) runTTY(steps []ttyStep, args ...string) (string, int) {
@@ -141,7 +140,6 @@ func (k *installKit) ttyCommand(steps []ttyStep, name string, args ...string) (s
 func newWelcomeKit(t *testing.T) *installKit {
 	t.Helper()
 	k := newInstallKit(t)
-	k.useFakeLaunchctl()
 	k.serveRelease("v1.0.0")
 	return k
 }
@@ -174,6 +172,25 @@ func (k *installKit) assertStarted(method string) {
 	}
 	if len(k.receipt().Services) != 3 {
 		k.t.Fatalf("服务不对：%v", k.receipt().Services)
+	}
+}
+
+// assertConsentedNotStarted：安装就是同意，同意（方式 install）和权限已经记下；CLI 没弄好，暂停着，没装服务。
+func (k *installKit) assertConsentedNotStarted() {
+	k.t.Helper()
+	var c setup.Consent
+	if err := json.Unmarshal(testkit.ReadBytes(k.t, setup.ConsentPath(k.home)), &c); err != nil {
+		k.t.Fatal(err)
+	}
+	if c.Method != "install" {
+		k.t.Fatalf("同意记录不对：%+v", c)
+	}
+	cfg := k.installedConfig()
+	if !cfg.Paused || cfg.PermissionMode != "bypassPermissions" {
+		k.t.Fatalf("配置不对：%+v", cfg)
+	}
+	if strings.Contains(k.launchctlCalls(), "bootstrap") || len(k.receipt().Services) != 0 {
+		k.t.Fatalf("不该装服务：%s %v", k.launchctlCalls(), k.receipt().Services)
 	}
 }
 
@@ -214,18 +231,15 @@ func (k *installKit) assertNoClaudeWork() {
 	}
 }
 
-// 终端里按回车：讲清楚再启动；没有待做就只说那句话，不调用模型。
-func TestWelcomeEnterStarts(t *testing.T) {
+// 装完即运行：没有终端（就像 curl | sh 被别的程序跑）也直接开后台。讲清楚能做什么、怎么暂停和卸载，不问；没有待做就只说那句话，不调用模型。
+func TestWelcomeInstallStarts(t *testing.T) {
 	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
 	k := newWelcomeKit(t)
-	out, code := k.runTTY(enterAt("\n"))
-	if code != 0 {
-		t.Fatalf("%d\n%s", code, out)
-	}
-	testkit.AssertContains(t, out, "能读写这个用户的所有文件（包括本地密钥）", "任务内容会发给你所用的模型服务", "没有待做时什么都不做", "agentq pause", "agentq remove --yes", onboard.IdleHint)
-	for _, old := range []string{"agentq init", `agentq add "`, "接下来三步"} {
+	out := k.mustInstall()
+	testkit.AssertContains(t, out, "能读写这个用户的所有文件（包括本地密钥）", "用你自己的模型账号额度", "没有待做时什么都不做", "agentq pause", "agentq remove --yes", "--paused", onboard.IdleHint)
+	for _, old := range []string{oldPrompt, "agentq init", `agentq add "`, "只安装，没有启动"} {
 		if strings.Contains(out, old) {
-			t.Fatalf("不该再讲 %s：\n%s", old, out)
+			t.Fatalf("不该再有 %s：\n%s", old, out)
 		}
 	}
 	for _, noise := range []string{"已恢复", "tick：", "扫描项目目录"} {
@@ -233,142 +247,60 @@ func TestWelcomeEnterStarts(t *testing.T) {
 			t.Fatalf("第一屏不该有调度日志 %q：\n%s", noise, out)
 		}
 	}
-	k.assertStarted("enter")
+	k.assertStarted("install")
 	k.assertNoClaudeWork()
-}
-
-// n、其他输入、只有空格、EOF：都不算同意，只装不启动，退出 0。
-func TestWelcomeOnlyEmptyLineConsents(t *testing.T) {
-	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
-	// 经过脚本的一次：真的从 install.sh 走到回答。
-	k := newWelcomeKit(t)
-	out, code := k.runTTY(enterAt("n\n"))
-	if code != 0 {
+	if out, code := k.agentq(k.home, "start", "--check"); code != 0 || !strings.HasPrefix(out, "ready\nprojects_root: ") {
 		t.Fatalf("%d\n%s", code, out)
 	}
-	testkit.AssertContains(t, out, "只安装，没有启动", "agentq start")
-	k.assertInstalledNotStarted()
-	k.assertNoClaudeWork()
-	// 其余回答在同一个 HOME 上直接问 start --welcome：不同意什么都不变，用不着重装。
-	for name, answer := range map[string]string{"n": "n\n", "y": "y\n", "空格": " \n", "EOF": "\x04"} {
+}
+
+// 有终端、curl | sh、CI、NONINTERACTIVE、旧的 --yes：都是装完即运行，一个字都不用输入。
+func TestWelcomeEveryWayStarts(t *testing.T) {
+	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
+	for name, run := range map[string]func(k *installKit) (string, int){
+		"终端":             func(k *installKit) (string, int) { return k.runTTY(nil) },
+		"curl | sh":      func(k *installKit) (string, int) { return k.piped() },
+		"CI":             func(k *installKit) (string, int) { k.env = append(k.env, "CI=1"); return k.runTTY(nil) },
+		"NONINTERACTIVE": func(k *installKit) (string, int) { k.env = append(k.env, "NONINTERACTIVE=1"); return k.run() },
+		"--yes":          func(k *installKit) (string, int) { return k.run("--yes") },
+	} {
 		t.Run(name, func(t *testing.T) {
-			out, code := k.ttyCommand(enterAt(answer), k.binPath(), "start", "--welcome")
-			if code != 0 {
+			k := newWelcomeKit(t)
+			out, code := run(k)
+			if code != 0 || strings.Contains(out, oldPrompt) {
 				t.Fatalf("%d\n%s", code, out)
 			}
-			testkit.AssertContains(t, out, "只安装，没有启动", "agentq start")
-			k.assertInstalledNotStarted()
+			k.assertStarted("install")
 			k.assertNoClaudeWork()
 		})
 	}
 }
 
-// Ctrl-C：不算同意。程序已经装好，退出非 0。
-func TestWelcomeCtrlC(t *testing.T) {
-	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
-	k := newWelcomeKit(t)
-	out, code := k.runTTY(enterAt("\x03"))
-	if code == 0 {
-		t.Fatalf("应退出非 0：\n%s", out)
-	}
-	k.assertInstalledNotStarted()
-}
-
-// 下载时多按的回车不算回答：问之前攒在终端里的输入要清掉。
-func TestWelcomeTypeAheadIsNotConsent(t *testing.T) {
-	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
-	k := newWelcomeKit(t)
-	out, code := k.runTTY([]ttyStep{{"", "\n\n\n"}, {welcomePrompt, "n\n"}})
-	if code != 0 {
-		t.Fatalf("%d\n%s", code, out)
-	}
-	k.assertInstalledNotStarted()
-}
-
-// 打不开 /dev/tty：只装不启动，退出 0，打印后续命令。
-func TestWelcomeNoTerminal(t *testing.T) {
-	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
-	k := newWelcomeKit(t)
-	out := k.mustInstall()
-	testkit.AssertContains(t, out, "这里没有终端", "agentq start")
-	if strings.Contains(out, welcomePrompt) {
-		t.Fatalf("没有终端不该问：\n%s", out)
-	}
-	k.assertInstalledNotStarted()
-	k.assertNoClaudeWork()
-}
-
-// curl | sh：标准输入是脚本，也不能被当成回答。
-func TestWelcomePipedScriptIsNotConsent(t *testing.T) {
-	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
-	k := newWelcomeKit(t)
-	out, code := k.piped()
-	if code != 0 {
-		t.Fatalf("%d\n%s", code, out)
-	}
-	k.assertInstalledNotStarted()
-}
-
-// CI、NONINTERACTIVE：有终端也不问、不启动，退出 0。
-func TestWelcomeAutomation(t *testing.T) {
-	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
-	for _, name := range []string{"CI", "NONINTERACTIVE"} {
-		t.Run(name, func(t *testing.T) {
-			k := newWelcomeKit(t)
-			k.env = append(k.env, name+"=1")
-			out, code := k.runTTY(nil)
-			if code != 0 {
-				t.Fatalf("%d\n%s", code, out)
-			}
-			testkit.AssertContains(t, out, "自动化环境", "agentq start")
-			if strings.Contains(out, welcomePrompt) {
-				t.Fatalf("不该问：\n%s", out)
-			}
-			k.assertInstalledNotStarted()
-		})
-	}
-}
-
-// --yes、AGENTQ_ASSUME_YES=1 是明确同意：没有终端、在 CI 里都启动。
-func TestWelcomeAssumeYes(t *testing.T) {
+// --paused、AGENTQ_PAUSED=1：只装，不记同意、不开服务，退出 0，说怎么开。
+func TestWelcomePaused(t *testing.T) {
 	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
 	for name, c := range map[string]struct {
 		args []string
 		env  []string
 	}{
-		"--yes":             {args: []string{"--yes"}},
-		"AGENTQ_ASSUME_YES": {env: []string{"AGENTQ_ASSUME_YES=1"}},
-		"CI 加 --yes":        {args: []string{"--yes"}, env: []string{"CI=1"}},
+		"--paused":        {args: []string{"--paused"}},
+		"AGENTQ_PAUSED=1": {env: []string{"AGENTQ_PAUSED=1"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			k := newWelcomeKit(t)
 			k.env = append(k.env, c.env...)
 			out := k.mustInstall(c.args...)
-			if strings.Contains(out, welcomePrompt) {
-				t.Fatalf("不该问：\n%s", out)
-			}
-			testkit.AssertContains(t, out, onboard.IdleHint)
-			k.assertStarted("assume-yes")
+			testkit.AssertContains(t, out, "--paused 只安装", "agentq start", "开后台")
+			k.assertInstalledNotStarted()
 			k.assertNoClaudeWork()
+			if out, code := k.agentq(k.home, "start", "--check"); code != 0 || !strings.HasPrefix(out, "off\n") {
+				t.Fatalf("%d\n%s", code, out)
+			}
 		})
 	}
-	t.Run("AGENTQ_ASSUME_YES 别的值不算", func(t *testing.T) {
-		k := newWelcomeKit(t)
-		k.env = append(k.env, "AGENTQ_ASSUME_YES=true")
-		k.mustInstall()
-		k.assertInstalledNotStarted()
-	})
-	t.Run("有终端也不问", func(t *testing.T) {
-		k := newWelcomeKit(t)
-		out, code := k.runTTY(nil, "--yes")
-		if code != 0 || strings.Contains(out, welcomePrompt) {
-			t.Fatalf("%d\n%s", code, out)
-		}
-		k.assertStarted("assume-yes")
-	})
 }
 
-// 新安装同意后打开推送，只改 notify_enabled 这一个键；不同意不开。没配 Telegram 也收得到，走本机通知。
+// 新安装打开推送，只改 notify_enabled 这一个键；--paused 不开。没配 Telegram 也收得到，走本机通知。
 func TestWelcomeOpensNotify(t *testing.T) {
 	t.Parallel()
 	notifyOn := func(t *testing.T, k *installKit) bool {
@@ -381,11 +313,11 @@ func TestWelcomeOpensNotify(t *testing.T) {
 		}
 		return c.Notify
 	}
-	t.Run("回车", func(t *testing.T) {
+	t.Run("装完", func(t *testing.T) {
 		k := newWelcomeKit(t)
-		out, code := k.runTTY(enterAt("\n"))
-		if code != 0 || !notifyOn(t, k) {
-			t.Fatalf("%d\n%s", code, out)
+		out := k.mustInstall()
+		if !notifyOn(t, k) {
+			t.Fatalf("应打开：\n%s", out)
 		}
 		testkit.AssertContains(t, out, "任务做完会通知你", "notify_enabled")
 		st, code := k.agentq(k.home, "status")
@@ -394,77 +326,89 @@ func TestWelcomeOpensNotify(t *testing.T) {
 		}
 		testkit.AssertContains(t, st, "推送：本机通知")
 	})
-	t.Run("--yes", func(t *testing.T) {
+	t.Run("--paused 不开", func(t *testing.T) {
 		k := newWelcomeKit(t)
-		k.mustInstall("--yes")
-		if !notifyOn(t, k) {
-			t.Fatal("同意了要打开")
-		}
-	})
-	t.Run("只安装不开", func(t *testing.T) {
-		k := newWelcomeKit(t)
-		k.runTTY(enterAt("n\n"))
+		k.mustInstall("--paused")
 		if notifyOn(t, k) {
-			t.Fatal("没同意不开")
+			t.Fatal("没开后台不开推送")
 		}
 	})
-	t.Run("先不同意，后来 start --welcome 同意", func(t *testing.T) {
+	t.Run("先 --paused，后来 start --welcome", func(t *testing.T) {
 		k := newWelcomeKit(t)
-		k.runTTY(enterAt("n\n"))
-		if out, code := k.agentq(k.home, "start", "--welcome", "--assume-yes"); code != 0 || !notifyOn(t, k) {
+		k.mustInstall("--paused")
+		if out, code := k.agentq(k.home, "start", "--welcome"); code != 0 || !notifyOn(t, k) {
 			t.Fatalf("%d\n%s", code, out)
 		}
 	})
 	t.Run("安装前就有配置写着 false：是用户的选择", func(t *testing.T) {
 		k := newWelcomeKit(t)
 		testkit.WriteInstall(t, k.configPath(), `{"notify_enabled": false, "paused": true, "permission_mode": "default"}`+"\n", 0o600)
-		out, code := k.runTTY(enterAt("\n"))
-		if code != 0 || notifyOn(t, k) {
-			t.Fatalf("%d\n%s", code, out)
+		out := k.mustInstall()
+		if notifyOn(t, k) {
+			t.Fatalf("不该打开：\n%s", out)
 		}
 		if strings.Contains(out, "任务做完会通知你") {
 			t.Fatalf("没打开就不说：\n%s", out)
 		}
 	})
-	t.Run("同意之后用户改回 false：升级和再次启动不动", func(t *testing.T) {
+	t.Run("之后用户改回 false：升级和再次启动不动", func(t *testing.T) {
 		k := newWelcomeKit(t)
-		k.mustInstall("--yes")
+		k.mustInstall()
 		cfg := strings.Replace(string(testkit.ReadBytes(t, k.configPath())), `"notify_enabled": true`, `"notify_enabled": false`, 1)
 		testkit.WriteInstall(t, k.configPath(), cfg, 0o600)
 		k.serveRelease("v2.0.0")
 		if out, code := k.runTTY(nil); code != 0 || notifyOn(t, k) {
 			t.Fatalf("%d\n%s", code, out)
 		}
-		if out, code := k.agentq(k.home, "start", "--welcome", "--assume-yes"); code != 0 || notifyOn(t, k) {
+		if out, code := k.agentq(k.home, "start", "--welcome"); code != 0 || notifyOn(t, k) {
 			t.Fatalf("%d\n%s", code, out)
 		}
 	})
 }
 
-// 升级不问：已启动的还开着；当初没同意的还是没启动，提醒一句。
-func TestWelcomeUpgradeDoesNotAsk(t *testing.T) {
+// 升级保留用户现有开关：在跑的还在跑；用户自己暂停的、--paused 装的都不擅自打开。
+func TestWelcomeUpgradeKeepsSwitches(t *testing.T) {
 	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
-	t.Run("已启动", func(t *testing.T) {
+	t.Run("在跑", func(t *testing.T) {
 		k := newWelcomeKit(t)
-		k.mustInstall("--yes")
+		k.mustInstall()
 		consent := string(testkit.ReadBytes(t, setup.ConsentPath(k.home)))
 		cfg := string(testkit.ReadBytes(t, k.configPath()))
 		k.serveRelease("v2.0.0")
 		out, code := k.runTTY(nil)
-		if code != 0 || strings.Contains(out, welcomePrompt) {
+		if code != 0 {
 			t.Fatalf("%d\n%s", code, out)
 		}
 		testkit.AssertContains(t, out, "已升级", "v2.0.0")
 		testkit.AssertBytes(t, setup.ConsentPath(k.home), consent)
 		testkit.AssertBytes(t, k.configPath(), cfg)
-		k.assertStarted("assume-yes")
+		k.assertStarted("install")
 	})
-	t.Run("没启动的保持没启动", func(t *testing.T) {
+	t.Run("用户暂停了", func(t *testing.T) {
 		k := newWelcomeKit(t)
-		k.runTTY(enterAt("n\n"))
+		k.mustInstall()
+		if out, code := k.agentq(k.home, "pause"); code != 0 {
+			t.Fatalf("%d\n%s", code, out)
+		}
+		cfg := string(testkit.ReadBytes(t, k.configPath()))
+		k.serveRelease("v2.0.0")
+		if out, code := k.runTTY(nil); code != 0 {
+			t.Fatalf("%d\n%s", code, out)
+		}
+		testkit.AssertBytes(t, k.configPath(), cfg)
+		if !k.installedConfig().Paused {
+			t.Fatal("暂停的不该被打开")
+		}
+		if out, code := k.agentq(k.home, "start", "--check"); code != 0 || !strings.HasPrefix(out, "paused\n") {
+			t.Fatalf("%d\n%s", code, out)
+		}
+	})
+	t.Run("--paused 装的", func(t *testing.T) {
+		k := newWelcomeKit(t)
+		k.mustInstall("--paused")
 		k.serveRelease("v2.0.0")
 		out, code := k.runTTY(nil)
-		if code != 0 || strings.Contains(out, welcomePrompt) {
+		if code != 0 {
 			t.Fatalf("%d\n%s", code, out)
 		}
 		testkit.AssertContains(t, out, "已升级", "agentq start")
@@ -472,7 +416,7 @@ func TestWelcomeUpgradeDoesNotAsk(t *testing.T) {
 	})
 }
 
-// 有待做：回车后列出接了什么，不说「说一句话」那句。
+// 有待做：装完列出接了什么，不说「说一句话」那句。
 func TestWelcomeWithPendingWork(t *testing.T) {
 	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
 	k := newWelcomeKit(t)
@@ -485,7 +429,7 @@ func TestWelcomeWithPendingWork(t *testing.T) {
 			t.Fatalf("git %v：%s", args, out)
 		}
 	}
-	out, code := k.runTTY(enterAt("\n"))
+	out, code := k.runTTY(nil)
 	if code != 0 {
 		t.Fatalf("%d\n%s", code, out)
 	}
@@ -497,23 +441,17 @@ func TestWelcomeWithPendingWork(t *testing.T) {
 	waitNoRunningJobs(t, k)
 }
 
-// 直接运行 start --welcome：管道里的回车不算同意；参数组合不对就拒绝。
+// 参数组合不对就拒绝，什么都不改；老入口 start --accept-bypass 的同意也记下来。
 func TestWelcomeCommandEdges(t *testing.T) {
 	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
 	k := newWelcomeKit(t)
-	k.mustInstall()
-	out, code := k.exec(strings.NewReader("\n"), k.home, k.binPath(), "start", "--welcome")
-	if code != 0 {
-		t.Fatalf("%d\n%s", code, out)
-	}
-	k.assertInstalledNotStarted()
-	for _, args := range [][]string{{"start", "--assume-yes"}, {"start", "--welcome", "--accept-bypass"}} {
+	k.mustInstall("--paused")
+	for _, args := range [][]string{{"start", "--assume-yes"}, {"start", "--paused"}, {"start", "--welcome", "--accept-bypass"}, {"start", "--check", "--welcome"}, {"start", "--check", "--accept-bypass"}, {"start", "--nope"}} {
 		if out, code := k.agentq(k.home, args...); code == 0 {
 			t.Fatalf("%v 应拒绝：\n%s", args, out)
 		}
 	}
 	k.assertInstalledNotStarted()
-	// 老入口的同意也记下来：之后 doctor、升级提示都靠它。
 	if out, code := k.agentq(k.home, "start", "--accept-bypass"); code != 0 {
 		t.Fatalf("%d\n%s", code, out)
 	}
@@ -570,12 +508,12 @@ func TestInstallShProgress(t *testing.T) {
 		}
 	}
 	k = newWelcomeKit(t)
-	out, _ = k.runTTY(enterAt("n\n"))
+	out, _ = k.runTTY(nil, "--paused")
 	testkit.AssertContains(t, out, "\033[32m✓\033[0m 校验通过", "安装程序和技能")
 
 	k = newWelcomeKit(t)
 	k.env = append(k.env, "NO_COLOR=1")
-	out, _ = k.runTTY(enterAt("\n"))
+	out, _ = k.runTTY(nil)
 	testkit.AssertContains(t, out, "✓ 校验通过", "✓ 后台已启动")
 	if strings.Contains(out, "\033[32m") {
 		t.Fatalf("NO_COLOR 不该上色：\n%q", out)

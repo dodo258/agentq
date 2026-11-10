@@ -48,17 +48,6 @@ agentq health 项目名
 
 显示最近 30 天每个模块的改动和修复次数，标出再修一次就要重写的模块，还有两周返工率。
 
-## 任务箱
-
-不属于任何项目的任务放进任务箱：
-
-```sh
-agentq inbox add "调研三款日程应用的同步方式 —— 写一份对比"
-agentq inbox
-```
-
-项目待做之后、有名额时启动，产出写到 `~/.agentq/outbox/`。
-
 ## 查看状态
 
 ```sh
@@ -93,7 +82,6 @@ cat ~/.claude/nightly/$(date +%F)-agentq.md
 
 ```sh
 agentq stats 30
-agentq quality
 ```
 
 ## 停止和暂停

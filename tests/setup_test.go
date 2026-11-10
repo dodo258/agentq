@@ -449,3 +449,48 @@ func TestGenericBacklogDecisionSection(t *testing.T) {
 		t.Fatalf("%v %v", ds, errs)
 	}
 }
+
+// 前台工具也装上技能：用着 Codex（有 ~/.codex）就装到 ~/.agents/skills，用户在 Codex 里说需求派活技能才在；没用就不建目录。
+// 只给前台用的目录里用户自己有同名技能：留着，不挡安装（任务不读它）。
+func TestSetupFrontToolSkillDirs(t *testing.T) {
+	t.Run("没用 Codex", func(t *testing.T) {
+		i, o := installFixture(t)
+		t.Setenv("CODEX_HOME", "")
+		mustInstall(t, i, o)
+		if exists(filepath.Join(i.Home, ".agents")) {
+			t.Fatal("没用 Codex 不该建 ~/.agents")
+		}
+	})
+	t.Run("用着 Codex", func(t *testing.T) {
+		i, o := installFixture(t)
+		t.Setenv("CODEX_HOME", "")
+		if err := os.MkdirAll(filepath.Join(i.Home, ".codex"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustInstall(t, i, o)
+		agents := filepath.Join(i.Home, ".agents", "skills")
+		if !exists(filepath.Join(agents, "dispatch", "SKILL.md")) {
+			t.Fatal("派活技能没装到 ~/.agents/skills")
+		}
+		if dirs := mustReceipt(t, i).SkillDirs; !slices.Contains(dirs, agents) || !slices.Contains(dirs, filepath.Join(i.Home, ".claude", "skills")) {
+			t.Fatalf("回执：%v", dirs)
+		}
+		if err := i.Remove(true); err != nil {
+			t.Fatal(err)
+		}
+		if exists(filepath.Join(agents, "dispatch")) {
+			t.Fatal("卸载要删掉")
+		}
+	})
+	t.Run("用户自己的 dispatch", func(t *testing.T) {
+		i, o := installFixture(t)
+		t.Setenv("CODEX_HOME", "")
+		mine := filepath.Join(i.Home, ".agents", "skills", "dispatch", "SKILL.md")
+		testkit.WriteInstall(t, mine, "我的\n", 0o644)
+		if err := os.MkdirAll(filepath.Join(i.Home, ".codex"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustInstall(t, i, o)
+		testkit.AssertBytes(t, mine, "我的\n")
+	})
+}

@@ -1,0 +1,3 @@
+#!/bin/sh
+for t in 今日待办 买菜 跑步 读书; do grep -q "$t" index.html || { echo "index.html 少了 $t"; exit 1; }; done
+[ "$(grep -c 'type="checkbox"' index.html)" -eq 3 ] || { echo "勾选框不是 3 个"; exit 1; }

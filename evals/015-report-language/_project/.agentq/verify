@@ -1,0 +1,2 @@
+#!/bin/sh
+[ "$(cat hello.txt 2>/dev/null)" = "Hello, agentq." ] || { echo "hello.txt 不对"; exit 1; }

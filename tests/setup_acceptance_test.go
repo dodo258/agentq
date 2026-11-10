@@ -40,7 +40,7 @@ func TestBootstrapAcceptance(t *testing.T) {
 		return b
 	}
 	// 对正式入口本身验收，而非仅测安装引擎。
-	run("--yes", "--claude", o.Claude, "--extras")
+	run("--paused", "--yes", "--claude", o.Claude, "--extras") // 新安装默认装完即运行；这里不碰真实服务
 	r := mustReceipt(t, i)
 	if !r.Extras {
 		t.Fatal("extras not selected")

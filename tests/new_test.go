@@ -1,7 +1,6 @@
 package tests
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,7 +45,7 @@ func TestNewOccupiesCapacity(t *testing.T) {
 	if ok, _ := state.Capacity(st, cfg, "alpha"); ok {
 		t.Errorf("两个 new 占满 max_parallel=2")
 	}
-	for _, k := range []string{config.KindNight, config.KindReview, state.KindPatrol, state.KindChat, state.KindFollowup, state.KindRouter, state.KindQuick} {
+	for _, k := range []string{config.KindNight, config.KindReview, state.KindPatrol, state.KindChat, state.KindFollowup, state.KindDiscuss} {
 		if state.TakesSlot(k) {
 			t.Errorf("%s 不占名额", k)
 		}
@@ -530,47 +529,6 @@ func TestIntegrationNewNotify(t *testing.T) {
 	}
 }
 
-// Router 的 new 动作：校验通过才启动；没通过不启动、写进「没做」；进当天汇总和滚动记录。
-func TestRouterNewAction(t *testing.T) {
-	t.Parallel()
-	e, tg := routerEnv(t, map[string]any{"max_parallel": 2, "discuss_enabled": false})
-	if !strings.Contains(chat.RouterSchema, `"new"`) || !strings.Contains(fmt.Sprintf(chat.RouterHead, "a", "b", "c"), "- new：") {
-		t.Fatalf("schema 和提示词要写 new")
-	}
-	e.routerResult(routerOK("🟢 回答",
-		chat.RouterAction{Type: "new", Text: "SLEEP=20 做个工具"},
-		chat.RouterAction{Type: "new", Text: "SLEEP=20 做个工具"}, // 同一句话不重复
-		chat.RouterAction{Type: "new", Text: "   "},
-		chat.RouterAction{Type: "new"},
-		chat.RouterAction{Type: "new", Text: strings.Repeat("字", newproj.NewIdeaMax+1)},
-	))
-	e.sendToRouter(tg, 1, 11, "ROUTERFILE 做个工具")
-	var news []*Job
-	for _, j := range e.state().Jobs {
-		if j.Kind == state.KindNew {
-			news = append(news, j)
-		}
-	}
-	if len(news) != 1 || news[0].Status != state.StatusRunning || news[0].ProjectDir != e.root {
-		t.Fatalf("应启动一个：%+v", news)
-	}
-	var reply string
-	for _, x := range tg.texts() {
-		if strings.HasPrefix(x, "🟢 回答") {
-			reply = x
-		}
-	}
-	for _, want := range []string{"已启动新项目任务 " + news[0].ID, "已经在跑", "是空的", "超过"} {
-		if !strings.Contains(reply, want) {
-			t.Errorf("回复缺 %q：\n%s", want, reply)
-		}
-	}
-	if n := strings.Count(e.nightly(), "Router 动作"); n != 5 {
-		t.Errorf("每条动作都进汇总：%d\n%s", n, e.nightly())
-	}
-	e.mustRun("stop", news[0].ID)
-}
-
 func heldNames(e *testEnv, id string) []string {
 	e.t.Helper()
 	st := e.state()
@@ -639,53 +597,6 @@ func TestIntegrationNewStopHold(t *testing.T) {
 		t.Errorf("解除后 tick 接着做：%+v", e.state().Jobs)
 	} else {
 		waitExit(t, two.PID, 10*time.Second)
-	}
-}
-
-// Router 停：回复里写目录和恢复办法，不另外推「没做完」，tick 不挑；Router 的 run 也算用户亲手，解除。
-func TestRouterStopNewHold(t *testing.T) {
-	t.Parallel()
-	e, tg := routerEnv(t, map[string]any{"max_parallel": 3, "paused": false, "discuss_enabled": false})
-	// 状态摘要会把标题注入 Router 的 prompt，SLEEP 放在截断之后，别让假 claude 把 Router 也睡上
-	idea := strings.Repeat("字", 45) + " SLEEP=60"
-	e.mustRun("new", idea)
-	var j *Job
-	for _, x := range e.state().Jobs {
-		if x.Kind == state.KindNew {
-			j = x
-		}
-	}
-	testkit.MkProject(t, e.root, "half", "- [ ] 第一条\n")
-	e.routerResult(routerOK("回答：停了", chat.RouterAction{Type: "stop", Job: j.ID}))
-	e.sendToRouter(tg, 1, 11, "ROUTERFILE 停掉")
-	var reply string
-	for _, x := range tg.texts() {
-		if strings.HasPrefix(x, "回答：停了") {
-			reply = x
-		}
-		if strings.Contains(x, "没做完") {
-			t.Errorf("用户停的不推：%s", x)
-		}
-	}
-	for _, want := range []string{"已停止任务 " + j.ID, "half", "agentq run", "挪走"} {
-		if !strings.Contains(reply, want) {
-			t.Errorf("回复缺 %q：\n%s", want, reply)
-		}
-	}
-	if got := heldNames(e, j.ID); len(got) != 1 || got[0] != "half" {
-		t.Fatalf("保留：%v", got)
-	}
-	e.mustRun("tick")
-	if e.findJob("第一条") != nil {
-		t.Fatalf("停掉的项目不该被挑：%+v", e.state().Jobs)
-	}
-	e.routerResult(routerOK("回答：接着做", chat.RouterAction{Type: "run", Project: "half", Keyword: "第一条"}))
-	e.sendToRouter(tg, 2, 12, "ROUTERFILE 接着做")
-	if e.findJob("第一条") == nil {
-		t.Fatalf("Router 的 run 要能启动：%+v", e.state().Jobs)
-	}
-	if got := heldNames(e, j.ID); len(got) != 0 {
-		t.Errorf("Router 的 run 启动后解除：%v", got)
 	}
 }
 

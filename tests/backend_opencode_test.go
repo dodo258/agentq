@@ -165,5 +165,5 @@ esac
 	if code != 0 {
 		t.Fatalf("doctor 不该报错：%d\n%s", code, out)
 	}
-	testkit.AssertContains(t, out, "后端：opencode 1.19.5", "认证：查不了", "只读和无工具：无", "拒绝规则：无", "审查结论的格式：无", "引擎审查：有", "Router（")
+	testkit.AssertContains(t, out, "后端：opencode 1.19.5", "认证：查不了", "只读和无工具：无", "审查结论的格式：无", "引擎审查：有", "大方向商量（")
 }

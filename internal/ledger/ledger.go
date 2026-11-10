@@ -189,19 +189,8 @@ func (a *Service) UpdateCostFooter(st *state.State, t time.Time) {
 	}
 }
 
-func (a *Service) SenseDir() string { return filepath.Join(a.DataDir(), "sense") }
-
-// 判断任务的提示词、批次和输出都带外部文字，放 ~/.agentq/sense/runs/<任务id>/（目录 700、文件 600）。
-// jobs/<id>/ 是 Router 能读、send_file 能发的地方，那边只留占位和 meta（摘要里没有原文）。
-func (a *Service) SenseRunDir(id string) string { return filepath.Join(a.SenseDir(), "runs", id) }
-
-// JobOutput：任务输出文件的路径。判断任务在 sense/runs/ 下，其余在任务目录。
-func (a *Service) JobOutput(id, name string) string {
-	if fi, err := os.Stat(a.SenseRunDir(id)); err == nil && fi.IsDir() {
-		return filepath.Join(a.SenseRunDir(id), name)
-	}
-	return filepath.Join(a.JobDir(id), name)
-}
+// JobOutput：任务输出文件的路径。
+func (a *Service) JobOutput(id, name string) string { return filepath.Join(a.JobDir(id), name) }
 
 // LoadJobMetas 读所有 meta.json，坏的跳过并计数。
 func (a *Service) LoadJobMetas() ([]*state.Job, int, error) {

@@ -257,7 +257,7 @@ func TestStatsEmptyAndArgs(t *testing.T) {
 }
 
 func TestStatsKindNamesComplete(t *testing.T) {
-	for _, k := range []string{config.KindNight, config.KindReview, state.KindPatrol, state.KindChat, state.KindFollowup, state.KindRouter, state.KindQuick, state.KindInbox, state.KindNew, state.KindSuggest, state.KindSense, state.KindRelease} {
+	for _, k := range []string{config.KindNight, config.KindReview, state.KindPatrol, state.KindChat, state.KindFollowup, state.KindNew, state.KindDiscuss} {
 		if statsKindNames[k] == "" {
 			t.Errorf("%s 没有名字", k)
 		}

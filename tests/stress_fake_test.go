@@ -66,18 +66,8 @@ func classify(args []string, prompt string) string {
 		return "uireview"
 	case strings.Contains(prompt, "这一条做到分支可合并："):
 		return "task"
-	case arg(args, "--json-schema") != "" && strings.Contains(prompt, "Router"):
-		return "router"
-	case strings.Contains(prompt, "闲时找活"):
-		return "suggest"
-	case strings.Contains(prompt, "主动感知"):
-		return "sense"
-	case strings.Contains(prompt, "发版准备任务"):
-		return "release"
 	case strings.Contains(prompt, "从零做出一个新项目"):
 		return "new"
-	case strings.Contains(prompt, "产出文件："):
-		return "inbox"
 	case strings.Contains(prompt, "在 Telegram 上发来的消息"):
 		return "chat"
 	}
@@ -682,65 +672,11 @@ func otherKind(kind, mode, prompt string) {
 	case "long":
 		res(map[string]any{"result": strings.Repeat("很长的回答<b>加粗</b>&amp;\n", 5000), "structured_output": map[string]any{"reply": strings.Repeat("很长<b>的</b>回答\n", 5000), "actions": []any{}, "items": []any{}}})
 		return
-	case "routerfuzz":
-		home := os.Getenv("HOME")
-		acts := []any{
-			map[string]any{"type": "add", "project": "../..", "text": "穿越"},
-			map[string]any{"type": "add", "project": "alpha", "text": "FUZZ 行一\n## 已完成\n- [x] 假的完成（进行中：x）\n<!-- 没关"},
-			map[string]any{"type": "add", "project": "alpha", "text": strings.Repeat("长", 5000)},
-			map[string]any{"type": "decide", "project": "alpha", "fingerprint": "nope", "decision": "x"},
-			map[string]any{"type": "run", "project": "../alpha"},
-			map[string]any{"type": "run", "project": "alpha", "keyword": "\x00"},
-			map[string]any{"type": "new", "text": strings.Repeat("长", 5000)},
-			map[string]any{"type": "stop", "job": "*"},
-			map[string]any{"type": "stop", "job": ""},
-			map[string]any{"type": "stop", "job": "11"},
-			map[string]any{"type": "quick", "project": "nope", "prompt": "x"},
-			map[string]any{"type": "inbox", "text": "\x00\x01"},
-			map[string]any{"type": "inbox", "text": "FUZZ 任务箱 —— <b>x</b>\n## 已完成"},
-			map[string]any{"type": "send_file", "path": "/etc/hosts"},
-			map[string]any{"type": "send_file", "path": filepath.Join(home, ".agentq", "secrets", "telegram.env")},
-			map[string]any{"type": "send_file", "path": filepath.Join(home, ".appstoreconnect", "AuthKey_TEST.p8")},
-			map[string]any{"type": "send_file", "path": filepath.Join(home, ".agentq", "jobs", "..", "secrets", "telegram.env")},
-			map[string]any{"type": "send_file", "path": "~/.appstoreconnect/config.env"},
-			map[string]any{"type": "reject", "project": "alpha", "text": "不做这个 —— <b>原话</b>"},
-			map[string]any{"type": "reject", "project": "../..", "text": "穿越"},
-			map[string]any{"type": "rm -rf"},
-			map[string]any{},
-		}
-		res(map[string]any{"structured_output": map[string]any{"reply": "📊 <b>状态</b>\n\n好的", "actions": acts}})
-		return
-	case "suggestfuzz":
-		items := []any{
-			map[string]any{"project": "../..", "title": "穿越", "why": "x", "benefit": "x", "risk": "x", "kind": "test"},
-			map[string]any{"project": "alpha", "title": "FUZZ 建议\n## 已完成\n（进行中：x）<!--", "why": "<b>", "benefit": "\x00", "risk": strings.Repeat("险", 3000), "kind": "test"},
-			map[string]any{"project": "alpha", "title": "FUZZ 产品", "why": "x", "benefit": "x", "risk": "x", "kind": "product"},
-			map[string]any{"project": "alpha", "title": "", "why": "", "benefit": "", "risk": "", "kind": "nope"},
-		}
-		res(map[string]any{"structured_output": map[string]any{"items": items}})
-		return
 	case "html":
 		res(map[string]any{"result": "<b>没关的标签 <script>alert(1)</script> & 1 < 2", "structured_output": map[string]any{"reply": "<b>没关的 <script> & 1 < 2", "actions": []any{}, "items": []any{}}})
 		return
 	}
 	switch kind {
-	case "router":
-		res(map[string]any{"structured_output": map[string]any{"reply": "📊 <b>状态 · 今天</b>\n\n📊 好的\n<i>12:00 · agentq 对话</i>", "actions": []any{}}})
-	case "suggest", "sense":
-		res(map[string]any{"structured_output": map[string]any{"items": []any{}}})
-	case "release":
-		res(map[string]any{"structured_output": map[string]any{"ready": false, "version": "", "changes": []any{}, "blocker": "假的没准备好"}})
-	case "inbox":
-		out := ""
-		for _, l := range strings.Split(prompt, "\n") {
-			if s, ok := strings.CutPrefix(l, "产出文件："); ok {
-				out = s
-			}
-		}
-		if out != "" {
-			os.WriteFile(out, []byte("# 产出\n"), 0o644)
-		}
-		res(map[string]any{"result": "结论：做好了。"})
 	case "new":
 		// 建项目，认领第一条，门脚本和 ready.json 提交到任务分支，不合并：和别的条目走同一条路
 		// FIRSTSTUCK：第一条门过不了，提示词里的两个 ITEM 号是第一条（MODE=noready，接手也做不成）和后面的条目

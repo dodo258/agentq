@@ -16,7 +16,6 @@ type Caps struct {
 	// 格式靠不住只会多判几次不了，放不过东西。别的要 MustSchema 的任务不算，它们靠强制的结构化输出防注入。
 	SchemaByPrompt bool
 	ToolProfiles   bool // CLI 强制只读、无工具
-	DenyRules      bool // CLI 强制拒绝规则
 	NoExternalMCP  bool // 能隔离用户配的 MCP
 	Usage          bool // 结束时给 token 用量
 	Cost           bool // 结束时给费用
@@ -32,11 +31,7 @@ type Caps struct {
 // 各功能的硬要求。写在这里而不是各功能里：doctor 要列出这个后端关掉了哪些任务，setup 在功能模块下层。
 const (
 	MustMerge    = MustReview
-	MustRouter   = MustProfile | MustDeny | MustSchema | MustNoExternalMCP // 输入里有项目内容，可能被注入后读密钥
-	MustSuggest  = MustRouter                                              // 同上
-	MustSense    = MustProfile | MustSchema | MustNoExternalMCP            // 输入是外部评价和 issue 原文，靠提示词约束不安全
-	MustRelease  = MustDeny | MustSchema                                   // 拒绝规则是发版的安全边界
-	MustFollowup = MustProfile | MustNoExternalMCP                         // 结构化输出能靠提示词补，见 ExtractJSON
+	MustFollowup = MustProfile | MustNoExternalMCP // 结构化输出能靠提示词补，见 ExtractJSON
 	MustPatrol   = MustProfile
 	MustDiscuss  = MustProfile | MustNoExternalMCP // 输入里有条目原文，生成问题不用任何工具；结构化输出能靠提示词补
 )
@@ -49,9 +44,6 @@ func (c Caps) Lacks(m Must) []string {
 	var why []string
 	if m&MustProfile != 0 && !c.ToolProfiles {
 		why = append(why, "不能强制只读或无工具")
-	}
-	if m&MustDeny != 0 && !c.DenyRules {
-		why = append(why, "不能强制拒绝规则")
 	}
 	if m&MustSchema != 0 && !c.Schema {
 		why = append(why, "不能强制结构化输出")
@@ -97,9 +89,6 @@ func Degrade(b Backend, req Request) []Degradation {
 	if (req.Profile == ProfileReadOnly || req.Profile == ProfileNoTools) && !c.ToolProfiles {
 		out = append(out, Degradation{"tool_profiles", "只读和无工具只靠提示词约束"})
 	}
-	if req.Deny != DenyNone && !c.DenyRules {
-		out = append(out, Degradation{"deny_rules", "拒绝规则不生效"})
-	}
 	if req.NoExternalMCP && !c.NoExternalMCP {
 		out = append(out, Degradation{"no_external_mcp", "用户配的 MCP 没隔离"})
 	}
@@ -108,7 +97,7 @@ func Degrade(b Backend, req Request) []Degradation {
 
 func budgetNote(b Backend) string {
 	if _, ok := b.(UsageStream); ok {
-		return "job_budget_usd 不是硬上限：tick 读运行中的用量，超了才停，最多滞后一个 tick（5 分钟）"
+		return "任务预算不是硬上限：tick 读运行中的用量，超了才停，最多滞后一个 tick（5 分钟）"
 	}
-	return "job_budget_usd 不生效，只有超时兜底"
+	return "任务预算不生效，只有超时兜底"
 }

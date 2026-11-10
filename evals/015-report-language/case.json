@@ -1,0 +1,17 @@
+{
+  "domain": "product",
+  "kind": "task",
+  "request": "Create hello.txt with exactly one line: Hello, agentq.",
+  "expect": {
+    "merged": true,
+    "item": [
+      "done"
+    ],
+    "main_has": [
+      "hello.txt"
+    ],
+    "verify_exit": 0,
+    "max_rounds": 2,
+    "human": false
+  }
+}

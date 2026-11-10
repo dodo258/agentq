@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"agentq/internal/backend"
+	"agentq/internal/config"
 	"agentq/internal/fsx"
 	"agentq/internal/ledger"
 	"agentq/internal/proc"
@@ -304,6 +305,7 @@ type testEnv struct {
 	fake   string
 	fakeLg string
 	extra  []string
+	tuning string // config.TestTuningEnv 的值：newEnv 从配置里分出来的写死项
 	dir    string // 工作目录，空就是测试进程的
 }
 
@@ -322,6 +324,7 @@ func newEnv(t *testing.T, cfg map[string]any) *testEnv {
 	// 每个 claude 的父进程是任务外壳，claude 结束后它还要执行一次 tick；等它们都退出再删临时目录，
 	// 否则那次 tick 会在已删掉的临时 HOME 下重新建 .agentq。（这个 Cleanup 比 TempDir 的晚注册，先执行。）
 	t.Cleanup(e.waitShells)
+	full, e.tuning = splitTuning(full)
 	b, _ := json.Marshal(full)
 	os.MkdirAll(filepath.Join(e.home, ".agentq"), 0o755)
 	if err := os.WriteFile(filepath.Join(e.home, ".agentq", "config.json"), b, 0o644); err != nil {
@@ -344,7 +347,7 @@ func (e *testEnv) run(args ...string) (string, int) {
 		envs = append(envs, kv)
 	}
 	envs = append(envs, "HOME="+e.home, "AGENTQ_FAKE_LOG="+e.fakeLg, "CLAUDECODE=1", "CLAUDE_CODE_SESSION_ID=parent")
-	cmd.Env = append(envs, e.extra...)
+	cmd.Env = append(append(envs, config.TestTuningEnv+"="+e.tuning), e.extra...)
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if ee, ok := err.(*exec.ExitError); ok {
@@ -920,23 +923,6 @@ func TestIntegrationTickAfterJobWaitsForLock(t *testing.T) {
 	waitFor(t, 5*time.Second, "放锁后启动甲二", func() bool { return e.findJob("甲二") != nil })
 	if strings.Contains(e.launchdLog(), "本次跳过") {
 		t.Errorf("任务结束后的 tick 应等锁而不是跳过：\n%s", e.launchdLog())
-	}
-	waitExit(t, e.jobByTitle("甲二").PID, 10*time.Second)
-}
-
-// tick_after_job=false：任务结束后不自动 tick，只靠定时 tick。
-func TestIntegrationTickAfterJobOff(t *testing.T) {
-	t.Parallel()
-	e := newEnv(t, nil)
-	testkit.MkProject(t, e.root, "alpha", "- [ ] 甲一 —— x\n- [ ] 甲二 —— x\n")
-	e.mustRun("tick")
-	waitExit(t, e.jobByTitle("甲一").PID, 10*time.Second)
-	time.Sleep(time.Second)
-	if st := e.state(); len(st.Jobs) != 1 || st.Jobs[0].Status != state.StatusRunning {
-		t.Errorf("关掉后不应自动收尾或启动：%+v", st.Jobs)
-	}
-	if out := e.mustRun("tick"); !strings.Contains(out, "本次收尾 1，启动 1") {
-		t.Errorf("定时 tick 照常收尾并启动：\n%s", out)
 	}
 	waitExit(t, e.jobByTitle("甲二").PID, 10*time.Second)
 }

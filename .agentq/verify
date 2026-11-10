@@ -3,7 +3,9 @@
 set -eu
 cd "$(dirname "$0")/.."
 unset GOROOT
-test -z "$(gofmt -l .)" || { gofmt -l .; echo "gofmt 没过"; exit 1; }
+# 只查仓库跟踪的文件：主检出下 .claude/worktrees/ 里的旧 worktree 不算
+bad=$(git ls-files '*.go' | xargs gofmt -l)
+test -z "$bad" || { echo "$bad"; echo "gofmt 没过"; exit 1; }
 go vet ./...
 GOOS=linux go vet ./...
 go build ./...

@@ -295,6 +295,49 @@ func (i *Installer) skillDirs(cfg config.Config) []string {
 	return dirs
 }
 
+// installSkillDirs 是这次要装技能的全部目录：配置用到的后端要的（任务靠它们），加上本机用着的前台工具的（用户在 Claude Code、Codex 里说需求，派活技能才在）。
+func (i *Installer) installSkillDirs(cfg config.Config) []string {
+	dirs := i.skillDirs(cfg)
+	for _, d := range i.frontSkillDirs() {
+		if !slices.Contains(dirs, d) {
+			dirs = append(dirs, d)
+		}
+	}
+	slices.Sort(dirs)
+	return dirs
+}
+
+// frontSkillDirs 是本机用着的前台工具读用户级技能的目录。用着 = 它的用户级配置目录在（~/.claude、$CODEX_HOME 这类），
+// 从后端声明的规则位置推出来；没声明规则位置的后端不算。没用过的工具不给它建目录。
+func (i *Installer) frontSkillDirs() []string {
+	var dirs []string
+	for _, name := range backend.Names() {
+		b := backend.Get(name, backend.Options{Home: i.Home})
+		h, ok := b.(backend.SkillHome)
+		if !ok {
+			continue
+		}
+		var toolHome string
+		switch r := b.(type) {
+		case backend.GlobalRules:
+			dir, _ := r.RulesPaths(i.Home)
+			toolHome = filepath.Dir(dir)
+		case backend.RulesBlock:
+			file, _ := r.RulesFile(i.Home)
+			toolHome = filepath.Dir(file)
+		default:
+			continue
+		}
+		if st, e := os.Stat(toolHome); e != nil || !st.IsDir() {
+			continue
+		}
+		if d := h.SkillsDir(i.Home); !slices.Contains(dirs, d) {
+			dirs = append(dirs, d)
+		}
+	}
+	return dirs
+}
+
 // usesClaude：配置用到了 Claude 后端。~/.claude 下的检查只对它有意义。
 func usesClaude(cfg config.Config) bool {
 	return slices.Contains(cfg.BackendsInUse(), backend.Default)
@@ -972,7 +1015,8 @@ func (i *Installer) Setup(o SetupOptions) error {
 			link(filepath.Join(i.Share(), p), filepath.Join(gen, p))
 		}
 	}
-	skillDirs := i.skillDirs(cfg)
+	required := i.skillDirs(cfg)
+	skillDirs := i.installSkillDirs(cfg)
 	for _, dir := range skillDirs {
 		for _, n := range names {
 			link(filepath.Join(dir, n), filepath.Join(gen, "skills", n))
@@ -1051,7 +1095,7 @@ func (i *Installer) Setup(o SetupOptions) error {
 				continue
 			}
 			name := filepath.Base(p)
-			if slices.Contains(contractSkills, name) {
+			if slices.Contains(contractSkills, name) && slices.Contains(required, filepath.Dir(p)) { // 只给前台用的目录里，用户自己的版本留着，任务不读它
 				return fmt.Errorf("conflict: your skill %s differs from the one agentq needs to run tasks; preserved. Rename it, then retry", p)
 			}
 			fmt.Fprintf(i.Out, "Keep your own skill (not replaced): %s\n", p)
@@ -1116,7 +1160,7 @@ func (i *Installer) Setup(o SetupOptions) error {
 	if e = i.transaction(changes, old.Services, labels); e != nil {
 		return e
 	}
-	fmt.Fprintf(i.Out, "Installed %s. New installs remain paused; existing switches preserved. Start a natural-language session with %s; agentq status/run/logs are management commands.\n", o.Scope, cliName(cfg))
+	fmt.Fprintf(i.Out, "Installed %s. Existing scheduler switches preserved. Tell %s what to build in any project folder; agentq status/run/logs are management commands.\n", o.Scope, cliName(cfg))
 	i.refreshEnvLayer()
 	if notes, e := i.Svc(cfg).Svc().Doctor(labels); e == nil {
 		for _, n := range notes {

@@ -24,9 +24,9 @@ if ! (cd "$src" && go build -o "$tmp/agentq" .); then
 fi
 
 # 自检用临时 HOME：不读写真实的 ~/.agentq、~/projects、~/.claude。tick 里照常巡逻（读真实的 launchctl list，只读），
-# 但不启动 claude -p 分析
+# 暂停着：不接活，也不启动巡逻分析
 mkdir -p "$tmp/home/.agentq"
-echo '{"patrol_analyze": false}' >"$tmp/home/.agentq/config.json"
+echo '{"paused": true}' >"$tmp/home/.agentq/config.json"
 for cmd in status tick; do
 	if ! HOME=$tmp/home "$tmp/agentq" $cmd >"$tmp/check.log" 2>&1; then
 		echo "自检失败：agentq $cmd 非 0 退出，没有替换 ${bin}。输出："

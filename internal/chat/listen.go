@@ -102,7 +102,7 @@ func (a *Service) CmdListen() error {
 // listenStep 收一轮：每轮重读配置（改了 notify_enabled、换了凭据不用重启），长轮询一次，处理收到的，
 // 再看收件箱里有没有等着交给 claude 的。返回下一轮前要歇多久。
 func (a *Service) listenStep(l *listener) time.Duration {
-	cfg, err := config.Load(a.ConfigPath())
+	cfg, err := a.LoadConfig()
 	if err != nil {
 		l.say(a, "配置读不出，先不收消息："+err.Error())
 		return ListenIdleWait
@@ -324,11 +324,11 @@ func (a *Service) TakeUpdates(c *telegram.TgCreds, first bool, ups []telegram.Tg
 			}
 		}
 		if nums, ok := suggest.ParseDoSuggest(text); ok && !telegram.HasAttachment(m) && a.Suggest.DoSuggestApplies(m, nums) {
-			// 「做 1 3」：把闲时找活留在「建议」里的条目移进「待做」。代码就能答，不起模型
+			// 「做 1 3」：把「建议」里的条目移进「待做」。代码就能答，不起模型
 			if _, err := a.Telegram.TgSend(c, a.Suggest.DoSuggestions(nums), m.MessageID); err != nil {
 				a.Logf("Telegram：回复「%s」失败：%v", textfmt.OneLine(text, 20), err)
 			} else {
-				a.Logf("Telegram：回了用户的「%s」（闲时建议）", textfmt.OneLine(text, 20))
+				a.Logf("Telegram：回了用户的「%s」（建议）", textfmt.OneLine(text, 20))
 			}
 			continue
 		}
@@ -339,9 +339,6 @@ func (a *Service) TakeUpdates(c *telegram.TgCreds, first bool, ups []telegram.Tg
 			} else {
 				a.Logf("Telegram：回了用户的「%s」（不做清单）", textfmt.OneLine(text, 20))
 			}
-			continue
-		}
-		if a.Release.ReleaseIntercept(c, m) { // 发版提示的回复和「发」：代码处理，不交给模型
 			continue
 		}
 		files, notes := a.fetchAttachments(c, m)
@@ -478,7 +475,7 @@ func (a *Service) answeringCount() int {
 		return 0
 	}
 	for _, j := range st.Running() {
-		if j.Kind != state.KindChat && j.Kind != state.KindRouter {
+		if j.Kind != state.KindChat {
 			continue
 		}
 		var msgs []notify.InMsg

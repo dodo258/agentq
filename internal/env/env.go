@@ -49,12 +49,22 @@ func New(home string, out io.Writer) (*Env, error) {
 	if err := os.Chmod(a.DataDir(), 0o700); err != nil {
 		return nil, err
 	}
-	cfg, err := config.Load(a.ConfigPath())
+	cfg, err := a.LoadConfig()
 	if err != nil {
 		return nil, err
 	}
 	a.Cfg = cfg
 	return a, nil
+}
+
+// LoadConfig 读 config.json（文件不存在时写一份），再盖上集成测试给的 config.TestTuningEnv。
+func (a *Env) LoadConfig() (config.Config, error) {
+	cfg, err := config.Load(a.ConfigPath())
+	if err != nil {
+		return cfg, err
+	}
+	err = cfg.ApplyTestTuning(os.Getenv(config.TestTuningEnv))
+	return cfg, err
 }
 
 func (a *Env) BinPath() string { return filepath.Join(a.Home, ".local", "bin", "agentq") }

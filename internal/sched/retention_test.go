@@ -77,7 +77,7 @@ func wantKept(t *testing.T, paths ...string) {
 	}
 }
 
-// 超过天数的都删；没超过的、不是 agentq 自己命名的、outbox 和别的文件都留着。
+// 超过天数的都删；没超过的、不是 agentq 自己命名的和别的文件都留着。
 func TestRetentionDeletesOldKeepsTheRest(t *testing.T) {
 	a, out, now := retentionApp(t)
 	d := a.DataDir()
@@ -86,25 +86,16 @@ func TestRetentionDeletesOldKeepsTheRest(t *testing.T) {
 	gone := []string{
 		ageDir(t, filepath.Join(d, "jobs", oldID), old),
 		ageDir(t, filepath.Join(d, "verify", oldID), old),
-		ageDir(t, filepath.Join(d, "inbox-work", oldID), old),
-		ageDir(t, filepath.Join(d, "sense", "runs", oldID), old),
 		ageFile(t, filepath.Join(d, "replies", oldID+".md"), old),
-		ageFile(t, filepath.Join(d, "sense", "2026-07-01.md"), old),
 	}
 	kept := []string{
 		ageDir(t, filepath.Join(d, "jobs", newID), fresh),
 		ageDir(t, filepath.Join(d, "verify", newID), fresh),
-		ageDir(t, filepath.Join(d, "inbox-work", newID), fresh),
-		ageDir(t, filepath.Join(d, "sense", "runs", newID), fresh),
 		ageFile(t, filepath.Join(d, "replies", newID+".md"), fresh),
-		ageFile(t, filepath.Join(d, "sense", "2026-11-03.md"), fresh),
 		// 不是 agentq 命名的：不认识的东西不动
 		ageDir(t, filepath.Join(d, "jobs", "my-notes"), old),
 		ageFile(t, filepath.Join(d, "replies", "keep.txt"), old),
-		ageFile(t, filepath.Join(d, "sense", "notes.md"), old),
 		// 不在清理范围：用户的成果、状态
-		ageFile(t, filepath.Join(d, "outbox", "2026-07-01-调研.md"), old),
-		ageDir(t, filepath.Join(d, "router"), old),
 		ageFile(t, filepath.Join(d, "patrol.json"), old),
 	}
 	a.retention(&state.State{})
@@ -171,8 +162,6 @@ func TestRetentionKeepsWhatStateReferences(t *testing.T) {
 	for _, id := range ids {
 		kept = append(kept, ageDir(t, filepath.Join(d, "jobs", id), old))
 		kept = append(kept, ageDir(t, filepath.Join(d, "verify", id), old))
-		kept = append(kept, ageDir(t, filepath.Join(d, "inbox-work", id), old))
-		kept = append(kept, ageDir(t, filepath.Join(d, "sense", "runs", id), old))
 		kept = append(kept, ageFile(t, filepath.Join(d, "replies", id+".md"), old))
 	}
 	ageDir(t, filepath.Join(d, "jobs", retentionTestID), now)
@@ -254,7 +243,7 @@ func TestRetentionDoesNotFollowSymlinks(t *testing.T) {
 	}
 	// 普通条目里有指向外面的软链接：删条目，不碰外面
 	outsideFile := ageFile(t, filepath.Join(outside, "secret.txt"), old)
-	entry := ageDir(t, filepath.Join(d, "inbox-work", "0701-120000-in"), old)
+	entry := ageDir(t, filepath.Join(d, "gate", "0701-120000-in"), old)
 	sub := filepath.Join(entry, "sub")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
@@ -264,12 +253,6 @@ func TestRetentionDoesNotFollowSymlinks(t *testing.T) {
 	}
 	setTimes(t, sub, old)
 	setTimes(t, entry, old)
-	// sense 是软链接：sense/runs 也不进
-	senseTarget := t.TempDir()
-	senseRun := ageDir(t, filepath.Join(senseTarget, "runs", "0701-120000-s"), old)
-	if err := os.Symlink(senseTarget, filepath.Join(d, "sense")); err != nil {
-		t.Fatal(err)
-	}
 	// replies 里的软链接
 	if err := os.MkdirAll(filepath.Join(d, "replies"), 0o755); err != nil {
 		t.Fatal(err)
@@ -281,7 +264,7 @@ func TestRetentionDoesNotFollowSymlinks(t *testing.T) {
 	ageFile(t, filepath.Join(d, "replies", retentionTestID+".md"), now)
 
 	a.retention(&state.State{})
-	wantKept(t, victim, filepath.Join(victim, "meta.json"), link, outsideFile, senseRun, replyLink)
+	wantKept(t, victim, filepath.Join(victim, "meta.json"), link, outsideFile, replyLink)
 	wantGone(t, entry)
 }
 

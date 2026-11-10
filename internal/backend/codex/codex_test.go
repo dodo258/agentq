@@ -108,7 +108,7 @@ func TestBuildSchemaIsStrict(t *testing.T) {
 
 func TestBuildRefusesMustItCannotDo(t *testing.T) {
 	b := New(backend.Options{})
-	for _, m := range []backend.Must{backend.MustRouter, backend.MustSuggest, backend.MustSense, backend.MustRelease, backend.MustFollowup, backend.MustPatrol} {
+	for _, m := range []backend.Must{backend.MustFollowup, backend.MustPatrol} {
 		if _, _, err := b.Build(backend.Request{Prompt: "x", Must: m}); !errors.Is(err, backend.ErrUnsupported) {
 			t.Errorf("Must %b 应该拒绝：%v", m, err)
 		}

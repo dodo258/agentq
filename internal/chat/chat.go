@@ -1,4 +1,4 @@
-// Package chat 接用户发来的消息后决定怎么回：长轮询、Fast Path、Router、回复链、对话任务和决策卡片的回调。
+// Package chat 接用户发来的消息后决定怎么回：长轮询、Fast Path、回复链、对话任务和决策卡片的回调。
 package chat
 
 import (
@@ -20,12 +20,9 @@ import (
 	"agentq/internal/env"
 	"agentq/internal/fsx"
 	"agentq/internal/gate"
-	"agentq/internal/inbox"
 	"agentq/internal/ledger"
-	"agentq/internal/newproj"
 	"agentq/internal/notify"
 	"agentq/internal/orphan"
-	"agentq/internal/release"
 	"agentq/internal/runner"
 	"agentq/internal/service"
 	"agentq/internal/state"
@@ -40,12 +37,9 @@ type Service struct {
 	Backlog  *backlog.Service
 	Discuss  *discuss.Service
 	Gate     *gate.Service
-	Inbox    *inbox.Service
 	Ledger   *ledger.Service
-	Newproj  *newproj.Service
 	Notify   *notify.Service
 	Orphan   *orphan.Service
-	Release  *release.Service
 	Runner   *runner.Service
 	Service  *service.Service
 	Suggest  *suggest.Service
@@ -88,7 +82,7 @@ func (a *Service) ServeInbox(s *notify.State, st *state.State, c *telegram.TgCre
 		return
 	}
 	for _, j := range st.Running() {
-		if j.Kind == state.KindChat || j.Kind == state.KindRouter {
+		if j.Kind == state.KindChat {
 			s.Inbox = append(rest, held...)
 			return // 上一个还在跑，结束后的那次 tick 接着处理
 		}
@@ -116,9 +110,6 @@ func (a *Service) ServeInbox(s *notify.State, st *state.State, c *telegram.TgCre
 		start = func(st *state.State, id, prompt string) (*state.Job, error) {
 			return a.startChatJob(st, id, prompt, session)
 		}
-	}
-	if a.Cfg.RouterEnabled && session == "" && a.Runner.Lacks(backend.MustRouter) == "" { // 后端做不到 Router 的硬要求时走对话任务
-		start, prompt = a.startRouterJob, a.RouterPrompt(st, inbox, now)
 	}
 	j, err := start(st, id, prompt)
 	if err != nil {
@@ -338,8 +329,8 @@ func replyThread(j *state.Job) notify.Thread {
 // replyTailMax：sendReply 的 tail 最多多少字，转义后也不会超过 Telegram 的单条上限。
 const replyTailMax = 1000
 
-// replyMaxRunes：对话、Router、追问的回答的硬上限（按用户看到的字数算，标签不算、实体算一个字）。提示词的版式要求只是软约束。
-// 只管 sendReply：早报、推送、任务箱结论有各自的版式，不受它影响。
+// replyMaxRunes：对话、追问的回答的硬上限（按用户看到的字数算，标签不算、实体算一个字）。提示词的版式要求只是软约束。
+// 只管 sendReply：早报、推送有各自的版式，不受它影响。
 const (
 	ReplyMaxRunes    = 600
 	replyFileCaption = "全文"
@@ -519,9 +510,6 @@ func (a *Service) StatusDigest(st *state.State) string {
 			if items, err := p.Items(); err == nil && len(items) > 0 {
 				todo = append(todo, fmt.Sprintf("%s %d", p.Name, len(items)))
 			}
-		}
-		if items, err := a.Inbox.ReadInboxItems(); err == nil && len(items) > 0 {
-			todo = append(todo, fmt.Sprintf("%s %d", inbox.InboxJobName, len(items)))
 		}
 		if len(todo) > 0 {
 			secs = append(secs, notify.MsgSection{Emoji: "📋", Head: "待做　" + strings.Join(todo, "，")})

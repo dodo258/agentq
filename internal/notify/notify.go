@@ -143,12 +143,11 @@ var NotifyCats = map[string]notifyCat{
 	"done":    {"🟢", "完成"},
 	"release": {"📦", "新版可装"},
 	"status":  {"📊", "状态"},
-	"suggest": {"💡", "闲时建议"},
-	"sense":   {"🔎", "主动感知"},
+	"suggest": {"💡", "建议"},
 }
 
 // NotifyOrder：队列里能用的类别，也是发送顺序（要用户做的、出问题的在前）。
-var NotifyOrder = []string{"alert", "decide", "patrol", "release", "done", "suggest", "sense"}
+var NotifyOrder = []string{"alert", "decide", "patrol", "release", "done", "suggest"}
 
 type Notice struct {
 	Cat string `json:"cat"`

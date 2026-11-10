@@ -18,7 +18,7 @@ agentq 是 Claude Code 的后台任务调度器：它把各项目 `docs/BACKLOG.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/hero-dark.png">
-  <img src="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/hero-light.png" width="900" alt="一键安装，按回车启动；agentq add 添加一条任务；agentq status 显示调度、额度和运行中的任务；通过质量门后合并">
+  <img src="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/hero-light.png" width="900" alt="一键安装，装完就在运行；agentq add 添加一条任务；agentq status 显示调度、额度和运行中的任务；通过质量门后合并">
 </picture>
 
 </div>
@@ -34,15 +34,15 @@ curl -fsSL https://github.com/dodo258/agentq/releases/latest/download/install.sh
 脚本下载预编译程序并校验 SHA256，不需要 sudo 和 Go，只依赖 Git。已安装时重跑同一条命令就是升级，配置和任务数据保留。
 
 
-安装结束时，程序说明以下三点，然后询问是否启动：
+装好就在运行，不再问你：安装本身就是同意。安装结束时程序如实告诉你三件事和暂停、卸载命令：
 
-- 任务能读写当前系统用户的所有文件。
+- 后台任务能读写当前系统用户的所有文件、运行命令。
 - 任务内容发给你使用的模型服务，消耗你自己的额度。
 - 没有待做时不消耗额度。
 
-按回车同意并启动，输入 `n` 只安装。没有终端时（CI、由 agent 代装）只安装，不替你同意，之后运行 `agentq start` 启动。
+想先不跑，安装时加 `--paused`（`curl ... | sh -s -- --paused`）。已有安装重跑这条命令是升级，保留你原来的开关，暂停着的不会被打开。
 
-同意后，如果没有 Claude Code CLI 或没有登录，脚本运行官方安装命令和 `claude auth login`。桌面端不能跑后台任务，只装了桌面端也需要 CLI。
+如果没有 Claude Code CLI 或没有登录，有终端时脚本运行官方安装命令和 `claude auth login`；没有终端时只给命令，弄好后在聊天里说需求，后台会自己开起来。桌面端不能跑后台任务，只装了桌面端也需要 CLI。
 
 安装内容包括程序、任务流程和审查用的技能、项目模板和一份通用工程规则，已有配置不修改。网络不通时加 `--proxy <地址>` 或 `--mirror <前缀>`，用镜像时校验文件和源码仍从原地址取。卸载用 `agentq remove --yes`，数据保留。其他安装方式和参数见[入门指南](docs/guide/getting-started.md#其他安装方式)。
 
@@ -52,13 +52,17 @@ curl -fsSL https://github.com/dodo258/agentq/releases/latest/download/install.sh
 
 ## 用法
 
-在项目目录打开 Claude Code（CLI 或桌面端），说明要做什么：
+装好，开口说。打开 Claude Code 或 Codex（CLI、桌面端都行），在项目目录里直接说要做什么：
 
 ```text
-派活：导出失败时重试 3 次，断网时要能看到重试日志
+导出失败时重试 3 次，断网时要能看到重试日志
 ```
 
-`dispatch` 技能把这句话写成带验收标准的条目，提交到 `docs/BACKLOG.md` 并启动后台任务。项目要是 Git 仓库，不要求放在 `~/projects` 下。
+不用说「派活」，也不用敲 agentq 命令。`dispatch` 技能自己判断：加功能、修 bug、改界面，哪怕很小，都写成带验收标准的条目，提交到 `docs/BACKLOG.md` 交给后台，做完通知你；只是问问、改错字改文案这类零碎改动、你说「直接改」「我看着」的，当场做。
+
+- 目录不在 `~/projects` 下、不是 Git 仓库、没有 BACKLOG，都不用先处理：技能自己 `git init`（现有文件做初始提交，`.gitignore` 挡住密钥和依赖）、补文件、登记到 `extra_projects`。在家目录、桌面这类不像项目的地方说需求，它会问一句项目叫什么、放哪，带默认答案。
+- 后台没在跑（被卸、重启后没加载）时技能自己拉起来；你自己暂停的不会替你打开。
+- 进度、验收、停也在聊天里说：「做得怎样」「做完的怎么看」「先停下」。
 
 也可以在终端操作：
 
@@ -67,7 +71,6 @@ agentq add "..."                  # 往当前项目的「待做」加一条，�
 agentq run my-app                 # 立刻启动该项目的一条待做
 agentq new "..."                  # 按一句话新建项目并做出第一版
 agentq discuss                    # 查看开工前等你回答的大方向问题
-agentq inbox add "..."            # 添加不属于任何项目的任务，产出写到 ~/.agentq/outbox/
 
 agentq status                     # 查看额度、运行中的任务、各项目待做和最近结束的任务
 agentq logs 1105-211629-shop-api  # 查看一个任务的结果全文
@@ -119,7 +122,7 @@ agentq gate abandon <任务id>               # 放弃，分支保留
 
 设计、界面和技术选型这类方向问题，在开工前问一次：最多 3 个问题，每个带默认答案。在 Claude Code 会话里派活时当场问。条目标了 `（大方向）` 或使用 `agentq new` 时，后台通过 Telegram 卡片问，2 小时没有回答就按默认开工，其他条目不等待；没配 Telegram 时直接按默认。
 
-`agentq health` 显示每个模块最近的改动次数、修复次数和两周返工率，`agentq stats` 显示每道门的拦截和放行次数，`agentq quality` 按提交记录计算一次满意率和返工率。细节见[质量门和引擎合并](docs/reference/features.md#质量门和引擎合并)。
+`agentq health` 显示每个模块最近的改动次数、修复次数和两周返工率，`agentq stats` 显示每道门的拦截和放行次数，以及按提交记录计算的一次满意率和返工率。细节见[质量门和引擎合并](docs/reference/features.md#质量门和引擎合并)。
 
 ## 故障处理
 
@@ -131,7 +134,7 @@ agentq gate abandon <任务id>               # 放弃，分支保留
 | **任务启动后立刻失败** | 连续 3 个任务在 3 分钟内退出时熔断，暂停启动 30 分钟，再次失败时时长翻倍，最长 4 小时 |
 | **任务失控** | 单次运行有预算上限，子代理失控时自动停止，超时默认 4 小时。已有改动保留 |
 | **状态文件损坏** | 读不了时不收尾也不启动。内容损坏时备份坏文件，按任务记录重建，那一轮不启动新任务 |
-| **运行数据增长** | 任务记录默认保留 90 天，日志定期截断 |
+| **运行数据增长** | 任务记录保留 90 天，日志定期截断 |
 
 这些路径有假 CLI 和暴力测试覆盖，真实撞限还没有跑过。暴力测试会杀进程、写坏状态文件、制造并发、写满磁盘、跳变时钟，依赖全部是假的，目前只在 macOS 上跑过。方法见 [CONTRIBUTING](CONTRIBUTING.md#暴力测试)，规则见[调度规则](docs/reference/scheduling.md)。
 
@@ -146,7 +149,6 @@ Telegram 是可选的。配好后可以给机器人发需求，也可以带截�
 - 回复「要你定」的消息或点按钮，决定写回条目，任务继续。
 - 回复任务提醒，接上那个任务。
 - `状态`、`额度`、`暂停`、`恢复` 由代码直接回答，不消耗额度。
-- 打开 `router_enabled` 后，发一句新项目的描述，比如 `一个记录读书笔记的网页工具`，agentq 新建项目并做出第一版，合并后推送结果。这条的真实 Telegram 往返没有验证过。
 
 每天最多推送 10 条，23:00 到 08:00 的消息攒到早上发，同类消息 30 分钟内合并。任务合并后推送合并提交，失败、中断、卡住也推送。没配 Telegram 时用本机通知。
 
@@ -172,17 +174,14 @@ Telegram 是可选的。配好后可以给机器人发需求，也可以带截�
 | :-- | :-- | :-- |
 | **夜班** | `night_enabled` | 每天 01:00 推进待做、分诊 issue 并写报告 |
 | **复盘** | `review_enabled` | 每天 06:30 复盘近期提交和失败任务，写早报 |
-| **巡逻** | `patrol_enabled` | 每小时检查服务、备份、卡住的任务、额度和磁盘 |
-| **闲时找活** | `suggest_enabled` | 所有项目的待做都空时读一遍项目，低风险的写进待做，会改产品的写成建议等你确认 |
-| **主动感知** | `sense_enabled` | 读 App Store 评价、TestFlight 反馈和 GitHub issue，判为真问题的写成建议 |
-| **发版助手** | `release_assist_enabled` | 检查 App Store Connect 的发版条件，满足后推送，回复「发」才提交审核 |
+| **巡逻** | `patrol_enabled` | 每小时检查服务、备份、卡住的任务、额度和磁盘，有新异常时起一次只读分析 |
 
 ## 支持范围
 
 | 项目 | 状态 |
 | :-- | :-- |
 | **Claude Code CLI** | 默认后端。2.1.316 在 macOS 上真实走到合并，包括审查门、界面门、`agentq new`、launchd 后台和桌面端派活 |
-| **Codex CLI** | 手动选择。codex-cli 0.166.0 在 macOS 上真实走到合并和 SIGTERM 续跑。Router、闲时找活、主动感知、发版准备在它上面不启动，没有美元上限 |
+| **Codex CLI** | 手动选择。codex-cli 0.166.0 在 macOS 上真实走到合并和 SIGTERM 续跑。大方向商量和巡逻分析在它上面不启动，没有美元上限 |
 | **opencode** | 实验，真实的 opencode 没跑过 |
 | **macOS** | arm64 是主要平台。amd64 能交叉编译，没有在 Intel Mac 上跑过 |
 | **Linux** | 需要 `systemd --user`。amd64 在 CI 上跑测试和真实 systemd 验收，没跑过真实任务。arm64 能交叉编译 |
@@ -198,7 +197,7 @@ Claude 桌面端的 Code 标签页和 CLI 读同一份规则和技能。后台�
 
 无人值守写代码需要 `bypassPermissions`。任务以你的系统用户运行，有你的全部文件权限，能读本地密钥（包括 App Store Connect 私钥和 SSH key），能运行任意命令。提示词和 deny 规则不是安全边界。agentq 能防模型偷懒和误操作，防不了存心破坏。
 
-在高敏感的机器上，用单独的系统用户或容器运行，主动感知用只读的 App Store Connect key，不放生产凭据。详见 [SECURITY](SECURITY.md)。
+在高敏感的机器上，用单独的系统用户或容器运行，不放生产凭据。详见 [SECURITY](SECURITY.md)。
 
 其他限制：
 
@@ -208,13 +207,13 @@ Claude 桌面端的 Code 标签页和 CLI 读同一份规则和技能。后台�
 
 ## 隐私
 
-agentq 没有遥测，不收集数据。任务内容只发给你使用的模型服务。除安装和升级外，agentq 自身只在对应功能打开时访问 Telegram、App Store Connect 和 GitHub。
+agentq 没有遥测，不收集数据。任务内容只发给你使用的模型服务。除安装和升级外，agentq 自身只在对应功能打开时访问 Telegram 和 GitHub。
 
 ## 常见问题
 
 - **什么任务不适合用 agentq？** 需要边做边看、频繁对话的任务，直接用 Claude Code。
 - **没有待做时会消耗额度吗？** 不会。没有待做时不启动模型。夜班和巡逻分析要打开开关才运行。
-- **项目已有规则时怎么办？** 项目的 `CLAUDE.md`、`AGENTS.md` 照常生效。agentq 第一次同意启动时放一份通用工程规则到 `~/.claude/rules/agentq/`，已有全局规则时不放。`agentq env on` 添加，`agentq env off` 移除。这份规则第一条写明项目规则优先，但这只是提示，所以里面只放通用工程习惯。
+- **项目已有规则时怎么办？** 项目的 `CLAUDE.md`、`AGENTS.md` 照常生效。agentq 装完第一次运行时放一份通用工程规则到 `~/.claude/rules/agentq/`，已有全局规则时不放。`agentq env on` 添加，`agentq env off` 移除。这份规则第一条写明项目规则优先，但这只是提示，所以里面只放通用工程习惯。
 - **用哪个模型？** 新安装跟随你在 CLI 里选的模型和强度，不传参数。已有配置里写了的照用。
 - **会把代码推到远程吗？** 调度器不推送，任务按 `agent-task` 技能也只走本地合并，推送要另外授权。这条对任务是技能约定，不是技术限制：任务能用你已登录的 `git`。可选的 `--backup` 服务只推 `~/.agentq/backup.json` 明确列出的私有目标。
 - **怎么立刻停下？** `agentq pause` 不再启动新任务，`agentq stop <任务id>` 停止运行中的任务。
@@ -233,7 +232,7 @@ agentq 没有遥测，不收集数据。任务内容只发给你使用的模型�
 | **[命令参考](docs/reference/commands.md)** | 每个命令 |
 | **[配置参考](docs/reference/config.md)** | 每个键的类型、默认值和作用 |
 | **[调度规则](docs/reference/scheduling.md)** | 选择条目、并发、额度、熔断、续跑、状态损坏 |
-| **[功能参考](docs/reference/features.md)** | 任务箱、质量门、感知、发版助手、夜班、巡逻、推送 |
+| **[功能参考](docs/reference/features.md)** | 新项目、质量门、建议、夜班、巡逻、推送 |
 | **[文件参考](docs/reference/files.md)** | `~/.agentq/` 下每个文件 |
 | **[支持矩阵](docs/reference/support-matrix.md)** | 每项能力的验证情况 |
 | **[安装指南](docs/install.zh-CN.md)** | 候选自检、冲突、事务备份和回滚 |

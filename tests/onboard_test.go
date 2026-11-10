@@ -597,7 +597,7 @@ func TestAddArgumentsAndTargetErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"不在项目里", []string{"活"}, "agentq init"},
+		{"在家目录里", []string{"活"}, "不像一个项目"},
 		{"项目不存在", []string{"活", "--project", "nope"}, "agentq init"},
 		{"路径穿越", []string{"活", "--project", "../ready"}, "agentq init"},
 		{"--project 没值", []string{"活", "--project"}, "项目名"},
@@ -615,6 +615,20 @@ func TestAddArgumentsAndTargetErrors(t *testing.T) {
 			}
 			testkit.AssertContains(t, err.Error(), c.want)
 		})
+	}
+	// 桌面、文档、下载、临时目录本身放的是杂物和私人文件：不建仓库、不提交、不登记
+	for _, sub := range []string{"Desktop", "Documents", "Downloads"} {
+		junk := filepath.Join(a.Home, sub)
+		testkit.WriteInstall(t, filepath.Join(junk, "tax.pdf"), "私人文件", 0o644)
+		t.Chdir(junk)
+		err := a.Onboard.CmdAdd([]string{"活"})
+		if err == nil {
+			t.Fatalf("%s 应拒绝", sub)
+		}
+		testkit.AssertContains(t, err.Error(), "不像一个项目")
+		if _, err := os.Lstat(filepath.Join(junk, ".git")); err == nil {
+			t.Fatalf("%s 里不该建 .git", sub)
+		}
 	}
 	// 根目录本身不属于任何项目
 	t.Chdir(a.ProjectsRoot())
@@ -1213,7 +1227,7 @@ func TestMissingConfigIsWrittenLikeInstaller(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, cfg := range []config.Config{a.Cfg, startReloadCfg(t, a)} {
-		if !cfg.Paused || cfg.PermissionMode != "default" || cfg.NightEnabled || cfg.ReviewEnabled || cfg.PatrolEnabled || cfg.PatrolAnalyze || cfg.NotifyEnabled {
+		if !cfg.Paused || cfg.PermissionMode != "default" || cfg.NightEnabled || cfg.ReviewEnabled || cfg.PatrolEnabled || cfg.NotifyEnabled {
 			t.Fatalf("不是安全默认：%+v", cfg)
 		}
 	}
@@ -1263,7 +1277,7 @@ func TestExistingConfigUntouchedAndKeepsLegacyDefaults(t *testing.T) {
 func TestStartReport(t *testing.T) {
 	a, _, _, out := onboardApp(t)
 	a.Onboard.StartReport()
-	testkit.AssertContains(t, out.String(), "没有待做", "agentq add", "agentq status", "agentq pause")
+	testkit.AssertContains(t, out.String(), "没有待做", onboard.IdleHint, "agentq status", "agentq pause")
 
 	dir := onboardRepo(t, a, "rep", true)
 	if err := a.Onboard.CmdInit([]string{dir}); err != nil {

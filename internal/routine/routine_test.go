@@ -11,7 +11,6 @@ import (
 
 	"agentq/internal/config"
 	"agentq/internal/env"
-	"agentq/internal/inbox"
 	"agentq/internal/state"
 	"agentq/internal/testkit"
 	"agentq/internal/testkit/stack"
@@ -20,8 +19,7 @@ import (
 // wireRoutine 建模块实例。
 func wireRoutine(e *env.Env) *Service {
 	k := stack.New(e)
-	ib := &inbox.Service{Env: e, Ledger: k.Ledger, Notify: k.Notify, Runner: k.Runner}
-	return &Service{Env: e, Backlog: k.Backlog, Gitx: k.Gitx, Inbox: ib, Ledger: k.Ledger, Notify: k.Notify, Runner: k.Runner, Service: k.Service}
+	return &Service{Env: e, Backlog: k.Backlog, Gitx: k.Gitx, Ledger: k.Ledger, Notify: k.Notify, Runner: k.Runner, Service: k.Service}
 }
 
 // newRoutineApp 带临时 HOME 的实例。

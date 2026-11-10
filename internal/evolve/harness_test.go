@@ -23,7 +23,10 @@ func TestRepoCases(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{"001-impl-go": "backend", "002-fix-revert": "backend", "003-new-project": "product", "004-conflict": "process",
-		"005-tamper-test": "process", "006-ui-page": "frontend", "007-install-existing-skill": "install", "008-service-env-user": "install"}
+		"005-tamper-test": "process", "006-ui-page": "frontend", "007-install-existing-skill": "install", "008-service-env-user": "install",
+		"009-paused-gate-return": "engine", "010-stopped-item-wait": "engine", "011-routine-on-same-day": "routine", "012-idle-skip-repo-gone": "routine",
+		"013-excluded-manual-return": "engine", "014-design-rework-signal": "routine", "015-report-language": "product", "016-add-not-in-documents": "install",
+		"017-retention-zero-keeps": "engine", "018-ui-dark-mode": "frontend", "019-docs-usage": "docs", "020-docs-fix-wrong-flags": "docs", "021-setup-keeps-config": "install"}
 	got := map[string]string{}
 	for _, c := range cases {
 		got[c.ID] = c.Domain

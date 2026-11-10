@@ -52,9 +52,8 @@ func TestEmbeddedAssetsMatchRepo(t *testing.T) {
 	compare("evalAssets", evalAssets, testkit.EvalAssetPatterns)
 
 	for path, got := range map[string]string{
-		"skills/feedback-triage/SKILL.md": feedbackTriageSkill,
-		"prompts/night.md":                routineText[config.KindNight],
-		"prompts/review.md":               routineText[config.KindReview],
+		"prompts/night.md":  routineText[config.KindNight],
+		"prompts/review.md": routineText[config.KindReview],
 	} {
 		want, err := os.ReadFile(path)
 		if err != nil {

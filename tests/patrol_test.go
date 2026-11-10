@@ -150,7 +150,7 @@ func TestIntegrationPatrol(t *testing.T) {
 // 集成：tick 里巡逻一次，紧接着的 tick 不巡逻（patrol.json 记了时间）。
 func TestIntegrationTickPatrols(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, map[string]any{"patrol_enabled": true, "patrol_analyze": false})
+	e := newEnv(t, map[string]any{"patrol_enabled": true})
 	out := e.mustRun("tick")
 	if !strings.Contains(out, "巡逻：") {
 		t.Fatalf("第一次 tick 应巡逻：\n%s", out)

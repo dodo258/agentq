@@ -324,6 +324,12 @@ func (i *Installer) doctorSkillDirs(r InstallReceipt, cfg config.Config) error {
 			return fmt.Errorf("skills are not projected to %s for the configured backend; run agentq setup --yes", dir)
 		}
 	}
+	// 装完才用上的前台工具：不挡任务，只说一声
+	for _, dir := range i.frontSkillDirs() {
+		if !slices.Contains(have, dir) {
+			fmt.Fprintf(i.Out, "这台机器后来用上了读 %s 的工具，派活技能还没装到那里，在那个工具里说需求不会自动派活。运行 agentq update 就装上。\n", dir)
+		}
+	}
 	return nil
 }
 

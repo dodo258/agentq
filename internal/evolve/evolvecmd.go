@@ -31,9 +31,6 @@ func (s *Service) CmdEvolve(args []string) error {
 }
 
 func (s *Service) cmdSignals() error {
-	if !s.Cfg.EvolveSignalsEnabled {
-		fmt.Fprintln(s.Out, "evolve_signals_enabled 关着：tick 不收信号，下面是关之前收到的")
-	}
 	st, err := s.LoadSignals()
 	if err != nil {
 		return err
@@ -70,9 +67,6 @@ func (s *Service) cmdConstraints(project string) error {
 	items, err := s.LoadConstraints(project)
 	if err != nil {
 		return err
-	}
-	if !s.Cfg.LearnedConstraintsEnabled {
-		fmt.Fprintln(s.Out, "learned_constraints_enabled 关着：新任务合同不带这些，也不再学新的")
 	}
 	if len(items) == 0 {
 		fmt.Fprintf(s.Out, "%s 还没有学到的约束\n", project)

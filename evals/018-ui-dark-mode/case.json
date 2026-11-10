@@ -1,0 +1,18 @@
+{
+  "domain": "frontend",
+  "kind": "task",
+  "request": "给待办页加暗色模式：系统是深色时背景变深、文字变浅，只用 CSS 的 prefers-color-scheme，不加 JavaScript，三条待办和勾选框不变",
+  "expect": {
+    "merged": true,
+    "item": [
+      "done"
+    ],
+    "verify_exit": 0,
+    "gates_ran": [
+      "ui"
+    ],
+    "shots": true,
+    "max_rounds": 2,
+    "human": false
+  }
+}

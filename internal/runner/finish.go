@@ -28,7 +28,7 @@ func (a *Service) Reap(st *state.State) int {
 	n := 0
 	for _, j := range st.Running() {
 		if j.Status != state.StatusRunning {
-			continue // 收尾 Router 时它的 stop 动作已经停了这个任务
+			continue // 循环里前面的收尾可能已经收了这个任务
 		}
 		if !a.adoptPID(j) && !a.bootChanged(j) { // 重启过的话外壳也没了，走下面按重启收尾
 			if a.startingUp(j) {
@@ -169,19 +169,13 @@ func (a *Service) FinishFromResult(st *state.State, j *state.Job) {
 			j.SessionID = res.SessionID
 		}
 		summary = summaryParagraph(res.Text)
-		if j.Kind == state.KindSense { // 结果文字可能带外部原文，不进摘要（摘要进 meta 和汇总）
-			summary = ""
-		}
-		if j.Kind == state.KindPatrol || state.IsChatKind(j.Kind) || j.Kind == state.KindInbox { // 分析结论、对话回答、任务箱结论整段都要，不按合并情况挑段落
+		if j.Kind == state.KindPatrol || state.IsChatKind(j.Kind) { // 分析结论、对话回答整段都要，不按合并情况挑段落
 			summary = textfmt.OneLine(res.Text, 600)
 		}
 		limit = a.jobHitLimit(j, res)
 		// 回答类任务撞自己的回合、预算上限是这次没答完，不是系统出问题，不算连环失败
-		if (state.IsChatKind(j.Kind) || j.Kind == state.KindSuggest || j.Kind == state.KindSense || j.Kind == state.KindRelease || j.Kind == state.KindDiscuss) && res.Stop.SelfLimit() {
+		if (state.IsChatKind(j.Kind) || j.Kind == state.KindDiscuss) && res.Stop.SelfLimit() {
 			j.LimitHit = true
-		}
-		if j.Kind == state.KindRelease && res.Stop == backend.StopMaxBudget { // 不走通用的撞预算收尾：只留 finishReleasePrep 那一条提醒
-			summary = "撞到预算上限（" + backend.BudgetLabel(a.Cfg.ReleaseBudgetUSD) + "，失控兜底），项目里的改动都留着；" + summary
 		}
 		if !res.Failed {
 			status = state.StatusDone
@@ -193,9 +187,6 @@ func (a *Service) FinishFromResult(st *state.State, j *state.Job) {
 			summary += "；stderr 末尾：" + textfmt.OneLine(t, 200)
 		}
 		limit = !limitFromStructuredOnly(j.Kind) && res.LimitText
-		if j.Kind == state.KindSense { // stderr 里可能带外部原文，不进摘要（摘要进 meta 和汇总）
-			summary = "没有可读的结果（详情在 " + a.Tilde(a.Ledger.SenseRunDir(j.ID)) + "）"
-		}
 		if !limit && res.SessionID != "" && be.Caps().Resume && j.Kind == "" { // 事件流开头就有会话 id 的后端：中途死了也接得上。只在结束时写结果的后端走不到这里
 			j.SessionID = res.SessionID
 			status, summary = a.interruptedNoResult(j, status, summary)
@@ -234,7 +225,7 @@ func (a *Service) FinishFromResult(st *state.State, j *state.Job) {
 			}
 		}
 	}
-	if parsed && res.Stop == backend.StopMaxBudget && j.Kind != state.KindInbox && j.Kind != state.KindSuggest && j.Kind != state.KindSense && j.Kind != state.KindRelease && j.Kind != state.KindDiscuss && !state.IsChatKind(j.Kind) { // 任务箱、闲时找活、主动感知、发版准备自己定（inboxResult、suggestResult、senseResult、finishReleasePrep），回答类任务回「没答完」
+	if parsed && res.Stop == backend.StopMaxBudget && j.Kind != state.KindDiscuss && !state.IsChatKind(j.Kind) { // 回答类任务回「没答完」
 		status, summary = a.budgetResult(st, j, summary)
 	}
 	if summary == "" && status == state.StatusFailed {
@@ -293,15 +284,6 @@ func (a *Service) FinishFromResult(st *state.State, j *state.Job) {
 			summary = a.noteStillListed(st, j, summary)
 			summary = a.noteBypass(j, summary)
 		}
-	}
-	if j.Kind == state.KindInbox {
-		status, summary = a.Hooks.InboxResult(j, res, status, summary)
-	}
-	if j.Kind == state.KindSuggest && parsed {
-		status, summary = a.Hooks.SuggestResult(j, res, status, summary)
-	}
-	if j.Kind == state.KindSense && parsed {
-		status, summary = a.Hooks.SenseResult(j, res, status, summary)
 	}
 	a.Finish(st, j, status, summary)
 }
@@ -595,24 +577,16 @@ func (a *Service) Finish(st *state.State, j *state.Job, status, summary string) 
 	} else {
 		a.noticeEnded(j)
 	}
-	if j.BudgetHit && j.Kind != state.KindNew && j.Kind != state.KindInbox {
+	if j.BudgetHit && j.Kind != state.KindNew {
 		a.noticeBudget(j, stuck)
 	}
 	switch {
-	case j.Kind == state.KindRouter:
-		a.Hooks.FinishRouter(st, j)
-	case j.Kind == state.KindInbox:
-		a.Hooks.FinishInbox(st, j)
 	case state.IsChatKind(j.Kind):
 		if !a.Hooks.RequeueThread(j) {
 			a.Hooks.ReplyChat(j)
 		}
 	case j.Kind == "" && j.FromThread:
 		a.Hooks.RequeueThread(j)
-	case j.Kind == state.KindSuggest:
-		a.Hooks.NoticeSuggest(j)
-	case j.Kind == state.KindRelease:
-		a.Hooks.FinishReleasePrep(j)
 	case j.Kind == state.KindNew:
 		a.Hooks.NoticeNew(j)
 	case j.Kind == state.KindDiscuss:

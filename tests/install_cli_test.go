@@ -77,7 +77,6 @@ exec `+fsx.ShQuote(realCurl)+` "$@"
 func newNoCLIKit(t *testing.T, mode string) *installKit {
 	t.Helper()
 	k := newInstallKit(t, "claude")
-	k.useFakeLaunchctl()
 	k.useFakeOfficialInstaller(mode)
 	k.serveRelease("v1.0.0")
 	k.env = append(k.env, "SHELL=/bin/zsh")
@@ -105,11 +104,11 @@ func TestOnlyDesktopAppWalkthrough(t *testing.T) {
 	original := "# 我的配置\nalias ll='ls -l'\n"
 	testkit.WriteInstall(t, rc, original, 0o640)
 
-	out, code := k.runTTY(enterAt("\n"))
+	out, code := k.runTTY(nil)
 	if code != 0 {
 		t.Fatalf("%d\n%s", code, out)
 	}
-	testkit.AssertContains(t, out, "检测到 Claude 桌面端", "还要安装官方 Claude CLI", officialInstallCommand, "打开浏览器", "~/.zshrc", "Claude Code successfully installed!", "Login successful", onboard.IdleHint)
+	testkit.AssertContains(t, out, "检测到 Claude 桌面端", "还没有官方 Claude CLI", officialInstallCommand, "打开浏览器", "~/.zshrc", "Claude Code successfully installed!", "Login successful", onboard.IdleHint)
 	if k.officialCalls() != 1 {
 		t.Fatalf("官方地址没收到或收到多次：%s", k.logFile("curl-calls"))
 	}
@@ -119,7 +118,7 @@ func TestOnlyDesktopAppWalkthrough(t *testing.T) {
 	if exists(touched) {
 		t.Fatal("不该调用桌面端里的程序")
 	}
-	k.assertStarted("enter")
+	k.assertStarted("install")
 	k.assertNoClaudeWork()
 	cli := filepath.Join(k.home, ".local", "bin", "claude")
 	if got := k.installedConfig().ClaudePath; got != cli {
@@ -146,11 +145,11 @@ func TestOnlyDesktopAppWalkthrough(t *testing.T) {
 func TestNothingInstalledWalkthrough(t *testing.T) {
 	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
 	k := newNoCLIKit(t, "")
-	out, code := k.runTTY(enterAt("\n"))
+	out, code := k.runTTY(nil)
 	if code != 0 {
 		t.Fatalf("%d\n%s", code, out)
 	}
-	k.assertStarted("enter")
+	k.assertStarted("install")
 	rc := filepath.Join(k.home, ".zshrc")
 	if !exists(rc) {
 		t.Fatal("应建 rc")
@@ -166,7 +165,7 @@ func TestLoggedOutCLILogsIn(t *testing.T) {
 	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
 	k := newNoCLIKit(t, "")
 	k.writeBin("claude", loginFakeClaude)
-	out, code := k.runTTY(enterAt("\n"))
+	out, code := k.runTTY(nil)
 	if code != 0 {
 		t.Fatalf("%d\n%s", code, out)
 	}
@@ -174,36 +173,35 @@ func TestLoggedOutCLILogsIn(t *testing.T) {
 	if strings.Contains(out, "还要安装官方") || k.officialCalls() != 0 {
 		t.Fatalf("CLI 在就不用装：\n%s", out)
 	}
-	k.assertStarted("enter")
+	k.assertStarted("install")
 }
 
-// 登录失败：不开后台，说明原因，同意没记，rc 没动，可以重来。
+// 登录失败：后台不开，说明原因。安装就是同意，同意和权限已经记下；弄好登录后派活技能查到 not-running，agentq start 直接拉起，不用再同意。
 func TestLoginFailureKeepsBackgroundOff(t *testing.T) {
 	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
 	k := newNoCLIKit(t, "")
 	k.writeBin("claude", loginFakeClaude)
 	testkit.WriteInstall(t, filepath.Join(k.home, "fake-login-fails"), "", 0o644)
-	out, code := k.runTTY(enterAt("\n"))
+	out, code := k.runTTY(nil)
 	if code == 0 {
 		t.Fatalf("应退出非 0：\n%s", out)
 	}
-	testkit.AssertContains(t, out, "login cancelled", "还没登录，后台没开", "claude auth login", "agentq 已经装好")
-	k.assertInstalledNotStarted()
-	if exists(filepath.Join(k.home, ".zshrc")) {
-		t.Fatal("没开后台不该动 rc")
-	}
-	// 修好后 agentq start 能接着走：plain start 里的 y/N 走 --accept-bypass。
+	testkit.AssertContains(t, out, "login cancelled", "还没登录，后台没开", "claude auth login", "agentq 已经装好", "后台会自己开起来")
+	k.assertConsentedNotStarted()
 	if err := os.Remove(filepath.Join(k.home, "fake-login-fails")); err != nil {
 		t.Fatal(err)
 	}
 	testkit.WriteInstall(t, filepath.Join(k.home, "fake-logged-in"), "", 0o644)
-	if out, code := k.agentq(k.home, "start", "--accept-bypass"); code != 0 {
+	if out, code := k.agentq(k.home, "start", "--check"); code != 0 || !strings.HasPrefix(out, "not-running\n") {
 		t.Fatalf("%d\n%s", code, out)
 	}
-	k.assertStarted("accept-bypass")
+	if out, code := k.agentq(k.home, "start"); code != 0 {
+		t.Fatalf("%d\n%s", code, out)
+	}
+	k.assertStarted("install")
 }
 
-// 官方安装失败：停，贴原文，给 Homebrew 和 npm，不留半截状态（同意、rc、服务都没动）。
+// 官方安装失败：停，贴原文，给 Homebrew 和 npm；后台没开，配置里的 CLI 路径不变。
 func TestOfficialInstallFailure(t *testing.T) {
 	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
 	for mode, want := range map[string]string{
@@ -213,47 +211,49 @@ func TestOfficialInstallFailure(t *testing.T) {
 	} {
 		t.Run(mode, func(t *testing.T) {
 			k := newNoCLIKit(t, mode)
-			out, code := k.runTTY(enterAt("\n"))
+			out, code := k.runTTY(nil)
 			if code == 0 {
 				t.Fatalf("应退出非 0：\n%s", out)
 			}
 			testkit.AssertContains(t, out, want, officialBrewCommand, officialNpmCommand, officialLoginCommand, "agentq 已经装好")
-			k.assertInstalledNotStarted()
+			k.assertConsentedNotStarted()
 			if k.loginCalls() != 0 {
 				t.Fatal("没装上不该登录")
 			}
-			if exists(filepath.Join(k.home, ".zshrc")) {
-				t.Fatal("没装上不该动 rc")
-			}
 			cfg := string(testkit.ReadBytes(t, k.configPath()))
 			if !strings.Contains(cfg, `"claude_path": "claude"`) {
-				t.Fatalf("配置不该变：%s", cfg)
+				t.Fatalf("CLI 路径不该变：%s", cfg)
 			}
 		})
 	}
 }
 
-// 输入 n：不装 CLI、不登录、不动 rc，给后续命令。
+// --paused：只装。不装 CLI、不登录、不动 rc、不记同意，给后续命令；升级不打开。之后自己装好 CLI 再 agentq start 能开。
 func TestDeclineLeavesCLIAlone(t *testing.T) {
 	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
 	k := newNoCLIKit(t, "")
-	out, code := k.runTTY(enterAt("n\n"))
+	out, code := k.runTTY(nil, "--paused")
 	if code != 0 {
 		t.Fatalf("%d\n%s", code, out)
 	}
-	testkit.AssertContains(t, out, "只安装，没有启动", officialInstallCommand, officialLoginCommand, "agentq start")
+	testkit.AssertContains(t, out, "--paused 只安装", officialInstallCommand, officialLoginCommand, "agentq start")
 	k.assertInstalledNotStarted()
 	if k.officialCalls() != 0 || k.loginCalls() != 0 || exists(filepath.Join(k.home, ".zshrc")) {
 		t.Fatalf("不该动：\n%s", k.logFile("curl-calls"))
 	}
-	// 重跑脚本（升级）不被缺 CLI 挡住。
+	if out, code := k.agentq(k.home, "start", "--check"); code != 0 || !strings.HasPrefix(out, "need-cli\n") {
+		t.Fatalf("%d\n%s", code, out)
+	}
 	k.serveRelease("v2.0.0")
 	out = k.mustInstall()
-	testkit.AssertContains(t, out, "已升级", "agentq start")
-	// 用户自己照提示装好、登录，再 agentq start：CLI 还不在 PATH 里也能找到。
+	testkit.AssertContains(t, out, "已升级", "升级不替你打开", "agentq start")
+	k.assertInstalledNotStarted()
 	dist := filepath.Join(k.log, "claude-dist")
 	testkit.WriteInstall(t, filepath.Join(k.home, ".local", "bin", "claude"), string(testkit.ReadBytes(t, dist)), 0o755)
 	testkit.WriteInstall(t, filepath.Join(k.home, "fake-logged-in"), "", 0o644)
+	if out, code := k.agentq(k.home, "start", "--check"); code != 0 || !strings.HasPrefix(out, "off\n") {
+		t.Fatalf("先不跑的不替他开：%d\n%s", code, out)
+	}
 	if out, code := k.agentq(k.home, "start", "--accept-bypass"); code != 0 {
 		t.Fatalf("%d\n%s", code, out)
 	}
@@ -263,82 +263,52 @@ func TestDeclineLeavesCLIAlone(t *testing.T) {
 	}
 }
 
-// 没有终端、CI：不装 CLI，打印官方命令，退出 0。
+// 没有终端、CI：不装 CLI、不登录（登录离不开终端，也不悄悄联网装程序），给官方命令，退出非 0；同意已记下，弄好后派活技能自己拉起后台。
 func TestNoTerminalPrintsOfficialCommand(t *testing.T) {
 	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
-	t.Run("无 tty", func(t *testing.T) {
-		k := newNoCLIKit(t, "")
-		out := k.mustInstall()
-		testkit.AssertContains(t, out, "这里没有终端", officialInstallCommand, officialLoginCommand, "agentq start")
-		if strings.Contains(strings.ToLower(out), "token") {
-			t.Fatalf("不该提 token：\n%s", out)
-		}
-		k.assertInstalledNotStarted()
-		if k.officialCalls() != 0 {
-			t.Fatal("不该运行官方脚本")
-		}
-	})
-	t.Run("CI 有终端", func(t *testing.T) {
-		k := newNoCLIKit(t, "")
-		k.env = append(k.env, "CI=1")
-		out, code := k.runTTY(nil)
-		if code != 0 {
-			t.Fatalf("%d\n%s", code, out)
-		}
-		testkit.AssertContains(t, out, "自动化环境", officialInstallCommand)
-		k.assertInstalledNotStarted()
-		if k.officialCalls() != 0 {
-			t.Fatal("不该运行官方脚本")
-		}
-	})
+	for name, env := range map[string][]string{"无 tty": nil, "CI": {"CI=1"}} {
+		t.Run(name, func(t *testing.T) {
+			k := newNoCLIKit(t, "")
+			k.env = append(k.env, env...)
+			out, code := k.run()
+			if code == 0 {
+				t.Fatalf("应退出非 0：\n%s", out)
+			}
+			testkit.AssertContains(t, out, officialInstallCommand, officialLoginCommand, "这里没有终端", "agentq 已经装好", "后台会自己开起来")
+			if strings.Contains(strings.ToLower(out), "token") {
+				t.Fatalf("不该提 token：\n%s", out)
+			}
+			if k.officialCalls() != 0 || k.loginCalls() != 0 {
+				t.Fatalf("官方 %d 登录 %d\n%s", k.officialCalls(), k.loginCalls(), out)
+			}
+			k.assertConsentedNotStarted()
+		})
+	}
 }
 
-// --yes：有终端就装、登录；没有终端不装，给命令，退出非 0（要的是启动，没启动就不能说成功）。
+// 有终端：装 CLI、登录、开后台，一个回车都不用按。旧的 --yes 照样认。
 func TestAssumeYesWithoutCLI(t *testing.T) {
 	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
-	t.Run("没有终端", func(t *testing.T) {
-		k := newNoCLIKit(t, "")
-		out, code := k.run("--yes")
-		if code == 0 {
-			t.Fatalf("应退出非 0：\n%s", out)
-		}
-		testkit.AssertContains(t, out, officialInstallCommand, "后台没开", "agentq 已经装好")
-		k.assertInstalledNotStarted()
-		if k.officialCalls() != 0 {
-			t.Fatal("没有终端不该装")
-		}
-	})
-	t.Run("有终端", func(t *testing.T) {
-		k := newNoCLIKit(t, "")
-		out, code := k.runTTY(nil, "--yes")
-		if code != 0 {
-			t.Fatalf("%d\n%s", code, out)
-		}
-		if k.officialCalls() != 1 || k.loginCalls() != 1 {
-			t.Fatalf("官方 %d 登录 %d\n%s", k.officialCalls(), k.loginCalls(), out)
-		}
-		k.assertStarted("assume-yes")
-	})
-	t.Run("没登录没有终端", func(t *testing.T) {
-		k := newNoCLIKit(t, "")
-		k.writeBin("claude", loginFakeClaude)
-		out, code := k.run("--yes")
-		if code == 0 {
-			t.Fatalf("应退出非 0：\n%s", out)
-		}
-		testkit.AssertContains(t, out, officialLoginCommand, "后台没开")
-		k.assertInstalledNotStarted()
-		if k.loginCalls() != 0 {
-			t.Fatal("没有终端不该登录")
-		}
-	})
+	for name, args := range map[string][]string{"不带参数": nil, "--yes": {"--yes"}} {
+		t.Run(name, func(t *testing.T) {
+			k := newNoCLIKit(t, "")
+			out, code := k.runTTY(nil, args...)
+			if code != 0 {
+				t.Fatalf("%d\n%s", code, out)
+			}
+			if k.officialCalls() != 1 || k.loginCalls() != 1 {
+				t.Fatalf("官方 %d 登录 %d\n%s", k.officialCalls(), k.loginCalls(), out)
+			}
+			k.assertStarted("install")
+		})
+	}
 }
 
 // 直接 agentq start：没有 CLI 或没登录时，什么都没改，给官方命令。
 func TestPlainStartExplainsMissingCLI(t *testing.T) {
 	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
 	k := newNoCLIKit(t, "")
-	k.mustInstall()
+	k.mustInstall("--paused")
 	before := string(testkit.ReadBytes(t, k.configPath()))
 	out, code := k.agentq(k.home, "start", "--accept-bypass")
 	if code == 0 {
@@ -354,14 +324,14 @@ func TestPathAlreadySetLeavesRCAlone(t *testing.T) {
 	k := newWelcomeKit(t)
 	k.env[1] = "PATH=" + k.bin + ":" + filepath.Join(k.home, ".local", "bin") + ":" + k.tools
 	k.env = append(k.env, "SHELL=/bin/zsh")
-	out, code := k.runTTY(enterAt("\n"))
+	out, code := k.runTTY(nil)
 	if code != 0 {
 		t.Fatalf("%d\n%s", code, out)
 	}
 	if strings.Contains(out, ".zshrc") || exists(filepath.Join(k.home, ".zshrc")) {
 		t.Fatalf("不该动 rc：\n%s", out)
 	}
-	k.assertStarted("enter")
+	k.assertStarted("install")
 }
 
 // 别的 shell：不改配置文件，给手动的那一行。
@@ -369,12 +339,12 @@ func TestOtherShellGetsManualLine(t *testing.T) {
 	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
 	k := newWelcomeKit(t)
 	k.env = append(k.env, "SHELL=/usr/bin/fish")
-	out, code := k.runTTY(enterAt("\n"))
+	out, code := k.runTTY(nil)
 	if code != 0 {
 		t.Fatalf("%d\n%s", code, out)
 	}
 	testkit.AssertContains(t, out, "fish", `export PATH="$HOME/.local/bin:$PATH"`)
-	k.assertStarted("enter")
+	k.assertStarted("install")
 	entries, err := os.ReadDir(k.home)
 	if err != nil {
 		t.Fatal(err)
@@ -394,11 +364,11 @@ func TestRCMentionIsNotEnough(t *testing.T) {
 	rc := filepath.Join(k.home, ".zshrc")
 	original := "alias foo=~/.local/bin/foo\n"
 	testkit.WriteInstall(t, rc, original, 0o644)
-	out, code := k.runTTY(enterAt("\n"))
+	out, code := k.runTTY(nil)
 	if code != 0 {
 		t.Fatalf("%d\n%s", code, out)
 	}
-	testkit.AssertContains(t, out, "会往 ~/.zshrc 加", "加进了 ~/.zshrc")
+	testkit.AssertContains(t, out, "往 ~/.zshrc 加带标记", "加进了 ~/.zshrc")
 	if got := string(testkit.ReadBytes(t, rc)); !strings.Contains(got, "agentq managed") {
 		t.Fatalf("应加那一行：\n%s", got)
 	}
@@ -414,12 +384,12 @@ func TestRCAlreadyAssignsGetsHint(t *testing.T) {
 	rc := filepath.Join(k.home, ".zshrc")
 	original := "export PATH=\"$HOME/.local/bin:$PATH\"\n"
 	testkit.WriteInstall(t, rc, original, 0o644)
-	out, code := k.runTTY(enterAt("\n"))
+	out, code := k.runTTY(nil)
 	if code != 0 {
 		t.Fatalf("%d\n%s", code, out)
 	}
 	testkit.AssertContains(t, out, "~/.zshrc 里已经把 ~/.local/bin 放进 PATH", "~/.local/bin/agentq")
-	if strings.Contains(out, "会往 ~/.zshrc 加") {
+	if strings.Contains(out, "往 ~/.zshrc 加带标记") {
 		t.Fatalf("不会改就不该说要改：\n%s", out)
 	}
 	testkit.AssertBytes(t, rc, original)

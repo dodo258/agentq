@@ -230,15 +230,15 @@ func TestStartFirstConsentEnablesRules(t *testing.T) {
 	})
 }
 
-// 真走一遍安装脚本，第一次按回车：同意文字里有一行，规则装上。
+// 真走一遍安装脚本：装完即运行，规则装上并说一句。
 func TestWelcomeInstallsRules(t *testing.T) {
 	t.Parallel() // 真装一遍要几秒
 	k := newWelcomeKit(t)
-	out, code := k.runTTY(enterAt("\n"))
+	out, code := k.runTTY(nil)
 	if code != 0 {
 		t.Fatalf("%d\n%s", code, out)
 	}
-	testkit.AssertContains(t, out, "会把一份通用工程规则放到 ~/.claude/rules/agentq/")
+	testkit.AssertContains(t, out, "通用工程规则放到了 ~/.claude/rules/agentq/")
 	assertRuleFiles(t, k.home, true)
 	if exists(filepath.Join(k.home, ".claude", "CLAUDE.md")) {
 		t.Fatal("不该写用户的 CLAUDE.md")
@@ -250,13 +250,13 @@ func TestWelcomeInstallsRules(t *testing.T) {
 	assertRuleFiles(t, k.home, false)
 }
 
-// 已有全局规则：同意文字说明，不装。
+// 已有全局规则：装完的告知里说明，不装。
 func TestWelcomeKeepsExistingRules(t *testing.T) {
 	t.Parallel() // 真装一遍要几秒
 	k := newWelcomeKit(t)
 	mine := filepath.Join(k.home, ".claude", "rules", "mine.md")
 	testkit.WriteInstall(t, mine, "我的规则\n", 0o644)
-	out, code := k.runTTY(enterAt("\n"))
+	out, code := k.runTTY(nil)
 	if code != 0 {
 		t.Fatalf("%d\n%s", code, out)
 	}

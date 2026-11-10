@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"agentq/internal/config"
 	"agentq/internal/gate"
 	"agentq/internal/proc"
 	"agentq/internal/setup"
@@ -89,7 +90,7 @@ fi
 exec %[1]q "$@"
 `, cli), 0o755)
 	r.env = setup.InstallEnv(r.home)
-	r.env = append(r.env, "PATH="+filepath.Dir(wrapper)+":"+os.Getenv("PATH"), "CODEX_HOME="+codexHome, "GIT_CONFIG_NOSYSTEM=1")
+	r.env = append(r.env, "PATH="+filepath.Dir(wrapper)+":"+os.Getenv("PATH"), "CODEX_HOME="+codexHome, "GIT_CONFIG_NOSYSTEM=1", config.TestTuningEnv+`={"tick_after_job":false}`)
 	testkit.WriteInstall(t, filepath.Join(r.home, ".gitconfig"), "[user]\n\tname = t\n\temail = t@t\n[commit]\n\tgpgsign = false\n[core]\n\thooksPath = /dev/null\n", 0o644)
 	out := r.run(r.home, agentqBin, "setup", "--yes", "--backend", "codex", "--backend-path", wrapper)
 	os.WriteFile(filepath.Join(base, "install.log"), out, 0o600)
@@ -159,7 +160,6 @@ func (r *realCodex) setProject(item string) {
 	root := filepath.Join(r.base, "projects")
 	cfg["projects_root"] = root
 	cfg["permission_mode"] = "danger-full-access"
-	cfg["tick_after_job"] = false
 	cfg["timeout"] = "20m"
 	b, _ := json.MarshalIndent(cfg, "", "  ")
 	testkit.WriteInstall(t, cfgPath, string(b)+"\n", 0o600)

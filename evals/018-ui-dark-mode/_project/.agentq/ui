@@ -1,0 +1,12 @@
+#!/bin/sh
+# 把页面截图写到 $AGENTQ_ARTIFACTS。
+page="$PWD/index.html"
+out="$AGENTQ_ARTIFACTS/home.png"
+if [ -x "$HOME/.local/bin/headless-shot" ]; then exec "$HOME/.local/bin/headless-shot" "$page" "$out"; fi
+for c in chromium chromium-browser google-chrome "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
+  if command -v "$c" >/dev/null 2>&1; then
+    exec "$c" --headless=new --disable-gpu --window-size=1280,800 --screenshot="$out" "file://$page"
+  fi
+done
+echo "没有无头浏览器，截不了图" >&2
+exit 1

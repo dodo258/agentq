@@ -74,20 +74,36 @@ func TestIntegrationLearnedConstraints(t *testing.T) {
 	waitExit(t, j.PID, 20*time.Second)
 }
 
-// learned_constraints_enabled 关着：不学、合同一字不变（和没有这个功能时一样）。
-func TestIntegrationLearnedConstraintsOff(t *testing.T) {
-	e := newEnv(t, map[string]any{"paused": true, "learned_constraints_enabled": false})
-	gateRepo(t, e, "demo", "- [ ] 新的活 NOMERGE")
-	seedConfirmedBlocks(t, e)
-	e.mustRun("tick")
-	if _, err := os.Stat(filepath.Join(e.home, ".agentq", "evolve", "constraints", "demo.json")); err == nil {
-		t.Error("关着不该学")
-	}
-	e.mustRun("run", "demo")
-	j := e.jobByTitle("新的活 NOMERGE")
-	prompt, err := os.ReadFile(filepath.Join(jobHome(j, e), "prompt.txt"))
-	if err != nil || strings.Contains(string(prompt), "被门拦过") {
-		t.Errorf("关着合同不带：%v\n%s", err, prompt)
-	}
+// 用户亲手 stop、门卡片上退回、验收后返工：tick 只读本机数据收成信号（不调模型），agentq evolve signals 看得到种类、领域和证据。
+func TestIntegrationUserSignals(t *testing.T) {
+	e := newEnv(t, map[string]any{"paused": true})
+	gateRepo(t, e, "demo", "- [ ] 甲 —— SLEEP=120", "- [ ] 验收 首页改版 的意见 —— 按钮错位（范围：web/）")
+	e.mustRun("run", "demo", "甲")
+	j := e.jobByTitle("甲")
+	e.mustRun("stop", j.ID)
 	waitExit(t, j.PID, 20*time.Second)
+	audit := filepath.Join(e.home, ".agentq", "gate", "audit.log")
+	os.MkdirAll(filepath.Dir(audit), 0o700)
+	if err := os.WriteFile(audit, []byte(time.Now().Add(-time.Hour).Format(time.RFC3339)+" 退回 g1 demo「旧活」分支 agent/g1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls := fakeCalls(t, e)
+	e.mustRun("tick")
+	if n := fakeCalls(t, e); n != calls {
+		t.Fatalf("收信号不该调模型：%d → %d", calls, n)
+	}
+	sig := e.mustRun("evolve", "signals")
+	for _, want := range []string{"user-stop", "证据：任务 " + j.ID + "（demo）「甲」", "user-decide", "退回了「旧活」", "rework", "前端返工", "项目 demo「验收 首页改版 的意见」"} {
+		if !strings.Contains(sig, want) {
+			t.Errorf("evolve signals 缺 %q：\n%s", want, sig)
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(e.home, ".agentq", "evolve", "signals.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.mustRun("tick")
+	if again, _ := os.ReadFile(filepath.Join(e.home, ".agentq", "evolve", "signals.json")); string(again) != string(raw) {
+		t.Error("没有新数据，信号文件不该变")
+	}
 }

@@ -31,129 +31,100 @@
         "State.Jobs[].ProgressNoted[]-32"
       ],
       "kind": "State.Jobs[].Kind-33",
-      "output": "State.Jobs[].Output-34",
-      "inbox_synced": true,
       "projects_before": [
-        "State.Jobs[].ProjectsBefore[]-37"
+        "State.Jobs[].ProjectsBefore[]-35"
       ],
       "new_report": {
-        "path": "State.Jobs[].NewReport.Path-40",
-        "assumptions": "State.Jobs[].NewReport.Assumptions-41",
-        "view": "State.Jobs[].NewReport.View-42",
-        "commit": "State.Jobs[].NewReport.Commit-43",
-        "branch": "State.Jobs[].NewReport.Branch-44",
-        "root": "State.Jobs[].NewReport.Root-45"
+        "path": "State.Jobs[].NewReport.Path-38",
+        "assumptions": "State.Jobs[].NewReport.Assumptions-39",
+        "view": "State.Jobs[].NewReport.View-40",
+        "commit": "State.Jobs[].NewReport.Commit-41",
+        "branch": "State.Jobs[].NewReport.Branch-42",
+        "root": "State.Jobs[].NewReport.Root-43"
       },
       "first_item": {
-        "project": "State.Jobs[].FirstItem.Project-48",
-        "dir": "State.Jobs[].FirstItem.Dir-49",
-        "fingerprint": "State.Jobs[].FirstItem.Fingerprint-50",
-        "title": "State.Jobs[].FirstItem.Title-51",
-        "branch": "State.Jobs[].FirstItem.Branch-52",
-        "view": "State.Jobs[].FirstItem.View-53",
-        "assumptions": "State.Jobs[].FirstItem.Assumptions-54"
+        "project": "State.Jobs[].FirstItem.Project-46",
+        "dir": "State.Jobs[].FirstItem.Dir-47",
+        "fingerprint": "State.Jobs[].FirstItem.Fingerprint-48",
+        "title": "State.Jobs[].FirstItem.Title-49",
+        "branch": "State.Jobs[].FirstItem.Branch-50",
+        "view": "State.Jobs[].FirstItem.View-51",
+        "assumptions": "State.Jobs[].FirstItem.Assumptions-52"
       },
-      "first_note": "State.Jobs[].FirstNote-55",
+      "first_note": "State.Jobs[].FirstNote-53",
       "held_projects": [
-        "State.Jobs[].HeldProjects[]-57"
+        "State.Jobs[].HeldProjects[]-55"
       ],
       "from_thread": true,
-      "thread_fp": "State.Jobs[].ThreadFP-59",
-      "thread_dir": "State.Jobs[].ThreadDir-60",
+      "thread_fp": "State.Jobs[].ThreadFP-57",
+      "thread_dir": "State.Jobs[].ThreadDir-58",
       "budget_hit": true,
-      "auto_stop": "State.Jobs[].AutoStop-62",
-      "stuck_pending": "State.Jobs[].StuckPending-63",
+      "auto_stop": "State.Jobs[].AutoStop-60",
+      "stuck_pending": "State.Jobs[].StuckPending-61",
       "stuck_marked": true,
       "handoff": true,
       "still_listed": true,
-      "stuck_branch": "State.Jobs[].StuckBranch-67",
-      "stuck_worktree": "State.Jobs[].StuckWorktree-68",
-      "suggest_projects": [
-        "State.Jobs[].SuggestProjects[]-70"
-      ],
+      "stuck_branch": "State.Jobs[].StuckBranch-65",
+      "stuck_worktree": "State.Jobs[].StuckWorktree-66",
       "manual": true,
-      "suggest_snaps": {
-        "State.Jobs[].SuggestSnaps.key-73": {
-          "head": "State.Jobs[].SuggestSnaps.value.Head-75",
-          "later": "State.Jobs[].SuggestSnaps.value.Later-76"
-        }
-      },
-      "suggest": {
-        "candidates": 79,
-        "todo": [
-          "State.Jobs[].Suggest.Todo[]-81"
-        ],
-        "proposed": [
-          "State.Jobs[].Suggest.Proposed[]-83"
-        ],
-        "skipped": [
-          "State.Jobs[].Suggest.Skipped[]-85"
-        ],
-        "failed": [
-          "State.Jobs[].Suggest.Failed[]-87"
-        ],
-        "new_failed": [
-          "State.Jobs[].Suggest.NewFailed[]-89"
-        ]
-      },
       "usage": {
-        "input_tokens": 92,
-        "output_tokens": 93,
-        "cache_read_tokens": 94,
-        "cache_write_tokens": 95,
-        "cost_usd": 96.5
+        "input_tokens": 70,
+        "output_tokens": 71,
+        "cache_read_tokens": 72,
+        "cache_write_tokens": 73,
+        "cost_usd": 74.5
       },
       "verify": {
-        "commit": "State.Jobs[].Verify.Commit-99",
-        "on_main": "State.Jobs[].Verify.OnMain-100",
-        "review": "State.Jobs[].Verify.Review-101",
-        "script": "State.Jobs[].Verify.Script-102",
+        "commit": "State.Jobs[].Verify.Commit-77",
+        "on_main": "State.Jobs[].Verify.OnMain-78",
+        "review": "State.Jobs[].Verify.Review-79",
+        "script": "State.Jobs[].Verify.Script-80",
         "failed": true,
-        "note": "State.Jobs[].Verify.Note-104",
-        "pid": 105,
-        "started_at": "2026-03-19T20:00:00Z",
-        "deadline": "2026-03-19T21:00:00Z",
-        "boot_time": 108,
-        "regression": "State.Jobs[].Verify.Regression-109",
-        "regression_pending": "State.Jobs[].Verify.RegressionPending-110",
-        "regression_err": "State.Jobs[].Verify.RegressionErr-111",
-        "clean_err": "State.Jobs[].Verify.CleanErr-112"
+        "note": "State.Jobs[].Verify.Note-82",
+        "pid": 83,
+        "started_at": "2026-03-18T22:00:00Z",
+        "deadline": "2026-03-18T23:00:00Z",
+        "boot_time": 86,
+        "regression": "State.Jobs[].Verify.Regression-87",
+        "regression_pending": "State.Jobs[].Verify.RegressionPending-88",
+        "regression_err": "State.Jobs[].Verify.RegressionErr-89",
+        "clean_err": "State.Jobs[].Verify.CleanErr-90"
       }
     }
   ],
-  "cooldown_until": "2026-03-20T03:00:00Z",
-  "breaker_until": "2026-03-20T04:00:00Z",
-  "fail_streak": 115,
-  "breaker_level": 116,
+  "cooldown_until": "2026-03-19T05:00:00Z",
+  "breaker_until": "2026-03-19T06:00:00Z",
+  "fail_streak": 93,
+  "breaker_level": 94,
   "item_hold": {
-    "State.ItemHold.key-118": "2026-03-20T09:00:00Z"
+    "State.ItemHold.key-96": "2026-03-19T11:00:00Z"
   },
   "branch_blocked": {
-    "State.BranchBlocked.key-121": "State.BranchBlocked.value-122"
+    "State.BranchBlocked.key-99": "State.BranchBlocked.value-100"
   },
   "usage": {
-    "checked_at": "2026-03-20T15:00:00Z",
+    "checked_at": "2026-03-19T17:00:00Z",
     "windows": [
       {
-        "label": "State.Usage.Windows[].Label-128",
-        "scope": "State.Usage.Windows[].Scope-129",
-        "used": 130.5,
-        "resets_at": "2026-03-20T22:00:00Z"
+        "label": "State.Usage.Windows[].Label-106",
+        "scope": "State.Usage.Windows[].Scope-107",
+        "used": 108.5,
+        "resets_at": "2026-03-20T00:00:00Z"
       }
     ],
-    "err": "State.Usage.Err-133",
-    "noted_day": "State.Usage.NotedDay-134",
-    "noted_level": 135
+    "err": "State.Usage.Err-111",
+    "noted_day": "State.Usage.NotedDay-112",
+    "noted_level": 113
   },
   "routine_marks": {
-    "State.RoutineMarks.key-137": {
-      "job_id": "State.RoutineMarks.value.JobID-140",
-      "at": "2026-03-21T07:00:00Z",
+    "State.RoutineMarks.key-115": {
+      "job_id": "State.RoutineMarks.value.JobID-118",
+      "at": "2026-03-20T09:00:00Z",
       "heads": {
-        "State.RoutineMarks.value.Heads.key-143": "State.RoutineMarks.value.Heads.value-144"
+        "State.RoutineMarks.value.Heads.key-121": "State.RoutineMarks.value.Heads.value-122"
       },
       "issues": {
-        "State.RoutineMarks.value.Issues.key-146": "State.RoutineMarks.value.Issues.value-147"
+        "State.RoutineMarks.value.Issues.key-124": "State.RoutineMarks.value.Issues.value-125"
       }
     }
   }

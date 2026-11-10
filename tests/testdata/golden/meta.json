@@ -29,92 +29,63 @@
     "Job.ProgressNoted[]-29"
   ],
   "kind": "Job.Kind-30",
-  "output": "Job.Output-31",
-  "inbox_synced": true,
   "projects_before": [
-    "Job.ProjectsBefore[]-34"
+    "Job.ProjectsBefore[]-32"
   ],
   "new_report": {
-    "path": "Job.NewReport.Path-37",
-    "assumptions": "Job.NewReport.Assumptions-38",
-    "view": "Job.NewReport.View-39",
-    "commit": "Job.NewReport.Commit-40",
-    "branch": "Job.NewReport.Branch-41",
-    "root": "Job.NewReport.Root-42"
+    "path": "Job.NewReport.Path-35",
+    "assumptions": "Job.NewReport.Assumptions-36",
+    "view": "Job.NewReport.View-37",
+    "commit": "Job.NewReport.Commit-38",
+    "branch": "Job.NewReport.Branch-39",
+    "root": "Job.NewReport.Root-40"
   },
   "first_item": {
-    "project": "Job.FirstItem.Project-45",
-    "dir": "Job.FirstItem.Dir-46",
-    "fingerprint": "Job.FirstItem.Fingerprint-47",
-    "title": "Job.FirstItem.Title-48",
-    "branch": "Job.FirstItem.Branch-49",
-    "view": "Job.FirstItem.View-50",
-    "assumptions": "Job.FirstItem.Assumptions-51"
+    "project": "Job.FirstItem.Project-43",
+    "dir": "Job.FirstItem.Dir-44",
+    "fingerprint": "Job.FirstItem.Fingerprint-45",
+    "title": "Job.FirstItem.Title-46",
+    "branch": "Job.FirstItem.Branch-47",
+    "view": "Job.FirstItem.View-48",
+    "assumptions": "Job.FirstItem.Assumptions-49"
   },
-  "first_note": "Job.FirstNote-52",
+  "first_note": "Job.FirstNote-50",
   "held_projects": [
-    "Job.HeldProjects[]-54"
+    "Job.HeldProjects[]-52"
   ],
   "from_thread": true,
-  "thread_fp": "Job.ThreadFP-56",
-  "thread_dir": "Job.ThreadDir-57",
+  "thread_fp": "Job.ThreadFP-54",
+  "thread_dir": "Job.ThreadDir-55",
   "budget_hit": true,
-  "auto_stop": "Job.AutoStop-59",
-  "stuck_pending": "Job.StuckPending-60",
+  "auto_stop": "Job.AutoStop-57",
+  "stuck_pending": "Job.StuckPending-58",
   "stuck_marked": true,
   "handoff": true,
   "still_listed": true,
-  "stuck_branch": "Job.StuckBranch-64",
-  "stuck_worktree": "Job.StuckWorktree-65",
-  "suggest_projects": [
-    "Job.SuggestProjects[]-67"
-  ],
+  "stuck_branch": "Job.StuckBranch-62",
+  "stuck_worktree": "Job.StuckWorktree-63",
   "manual": true,
-  "suggest_snaps": {
-    "Job.SuggestSnaps.key-70": {
-      "head": "Job.SuggestSnaps.value.Head-72",
-      "later": "Job.SuggestSnaps.value.Later-73"
-    }
-  },
-  "suggest": {
-    "candidates": 76,
-    "todo": [
-      "Job.Suggest.Todo[]-78"
-    ],
-    "proposed": [
-      "Job.Suggest.Proposed[]-80"
-    ],
-    "skipped": [
-      "Job.Suggest.Skipped[]-82"
-    ],
-    "failed": [
-      "Job.Suggest.Failed[]-84"
-    ],
-    "new_failed": [
-      "Job.Suggest.NewFailed[]-86"
-    ]
-  },
   "usage": {
-    "input_tokens": 89,
-    "output_tokens": 90,
-    "cache_read_tokens": 91,
-    "cache_write_tokens": 92,
-    "cost_usd": 93.5
+    "input_tokens": 67,
+    "output_tokens": 68,
+    "cache_read_tokens": 69,
+    "cache_write_tokens": 70,
+    "cost_usd": 71.5
   },
   "verify": {
-    "commit": "Job.Verify.Commit-96",
-    "on_main": "Job.Verify.OnMain-97",
-    "review": "Job.Verify.Review-98",
-    "script": "Job.Verify.Script-99",
+    "commit": "Job.Verify.Commit-74",
+    "on_main": "Job.Verify.OnMain-75",
+    "review": "Job.Verify.Review-76",
+    "script": "Job.Verify.Script-77",
     "failed": true,
-    "note": "Job.Verify.Note-101",
-    "pid": 102,
-    "started_at": "2026-03-19T17:00:00Z",
-    "deadline": "2026-03-19T18:00:00Z",
-    "boot_time": 105,
-    "regression": "Job.Verify.Regression-106",
-    "regression_pending": "Job.Verify.RegressionPending-107",
-    "regression_err": "Job.Verify.RegressionErr-108",
-    "clean_err": "Job.Verify.CleanErr-109"
+    "note": "Job.Verify.Note-79",
+    "pid": 80,
+    "started_at": "2026-03-18T19:00:00Z",
+    "deadline": "2026-03-18T20:00:00Z",
+    "boot_time": 83,
+    "regression": "Job.Verify.Regression-84",
+    "regression_pending": "Job.Verify.RegressionPending-85",
+    "regression_err": "Job.Verify.RegressionErr-86",
+    "clean_err": "Job.Verify.CleanErr-87"
   }
 }

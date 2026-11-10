@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -54,97 +55,72 @@ type Config struct {
 	RetryAfter     Duration `json:"retry_after"`
 	LimitCooldown  Duration `json:"limit_cooldown"`
 	Paused         bool     `json:"paused"`
-	// TickAfterJob：任务结束时马上 tick 一次，让排队的待做接上；关掉就只靠 launchd 每 5 分钟的定时 tick。
-	TickAfterJob bool `json:"tick_after_job"`
-	// 连环失败熔断：连续 BreakerStreak 个任务都在 BreakerQuick 内结束且没做完，就暂停启动 BreakerCooldown；
-	// 熔断过后第一个任务又秒退，时长翻倍，最多 BreakerMax。
-	BreakerStreak   int      `json:"breaker_streak"`
-	BreakerQuick    Duration `json:"breaker_quick"`
-	BreakerCooldown Duration `json:"breaker_cooldown"`
-	BreakerMax      Duration `json:"breaker_max"`
-	// StallAfter：运行中的任务会话记录这么久没增长，就在 status 和当天汇总里标「疑似卡死」（只提醒，不杀）。
-	StallAfter Duration `json:"stall_after"`
 	// 夜班、复盘：launchd 每天 01:00、06:30 叫醒 agentq night/review，开关为假时只记一行日志不执行。
-	// 夜班一跑就是几个小时，所以超时单独配。
-	NightEnabled  bool     `json:"night_enabled"`
-	ReviewEnabled bool     `json:"review_enabled"`
-	NightTimeout  Duration `json:"night_timeout"`
-	ReviewTimeout Duration `json:"review_timeout"`
-	// 巡逻：tick 每小时纯脚本检查一圈（见 internal/patrol/patrol.go）；PatrolAnalyze 打开时，有新异常就启动一次 claude -p 分析原因（每天最多 3 次）。
+	NightEnabled  bool `json:"night_enabled"`
+	ReviewEnabled bool `json:"review_enabled"`
+	// 巡逻：tick 每小时纯脚本检查一圈（见 internal/patrol/patrol.go），有新异常就启动一次只读分析（每天最多 3 次）。
 	PatrolEnabled bool `json:"patrol_enabled"`
-	PatrolAnalyze bool `json:"patrol_analyze"`
 	// 推送：要用户知道的事推到 Telegram（没配就弹本机通知），tick 顺带收用户发来的 Telegram 消息（见 internal/notify/notify.go）。
 	NotifyEnabled bool `json:"notify_enabled"`
-	// Router：新消息由只读的 Router 处理，动作由 agentq 校验后执行（见 internal/chat/router.go）。关着时对话流程和原来完全一样。
-	RouterEnabled bool   `json:"router_enabled"`
-	RouterModel   string `json:"router_model"`
-	// 按活分配模型和强度（docs/reference/config.md「按活分配模型」）：配了专用模型的那类调用用它，没配照 model、effort。
-	// 默认按官方定位：路由用 haiku，商量大方向、复盘、巡逻分析、答问用 sonnet；都写别名，新模型出来自动跟上。
-	DiscussModel  string `json:"discuss_model"`
-	ReviewModel   string `json:"review_model"`
-	ReviewEffort  string `json:"review_effort"`
-	PatrolModel   string `json:"patrol_model"`
-	FollowupModel string `json:"followup_model"`
-	// HeavyEffort：重写、重构、迁移、审计这类长任务的强度（模型照 model）。空就照 effort。
-	HeavyEffort string `json:"heavy_effort"`
-	// 预算兜底（美元，--max-budget-usd，按单次运行算）：只防失控，额度按正常工作量留足，撞到后保留成果（见 internal/runner/budget.go）。0 表示不传这个参数。
-	NightBudgetUSD  float64 `json:"night_budget_usd"`
-	ReviewBudgetUSD float64 `json:"review_budget_usd"`
-	PatrolBudgetUSD float64 `json:"patrol_budget_usd"`
 	// AutopushLog：外部自动推送脚本的日志路径（可写 ~），巡逻读它报推送失败。默认空，不查。
-	AutopushLog  string  `json:"autopush_log,omitempty"`
-	JobBudgetUSD float64 `json:"job_budget_usd"`
-	// LightReviewModel：轻量流程（改动小、局部、好撤回，见 internal/gate/light.go）时审查和界面审查用的模型，强度照旧 medium。空就照 model。
-	// 写别名（sonnet），不写带版本号的模型 ID：新模型出来别名自动跟上。审查不用 haiku 这一档。
-	LightReviewModel string `json:"light_review_model"`
+	AutopushLog string `json:"autopush_log,omitempty"`
 	// 后台给你留额度：计入的会话窗口（5 小时）、周窗口用到这个百分比，tick 就不领新活（正在跑的不动），等那个窗口重置。
 	// 会话默认 70，留 30% 给你自己用；周默认 90。agentq run 不受它管，到 98% 才拒绝。
 	UsageStopSessionPct float64 `json:"usage_stop_session_pct"`
 	UsageStopWeekPct    float64 `json:"usage_stop_week_pct"`
-	// ProgressAutostop：看进展的「子代理失控」信号命中时自动停掉任务（见 internal/runner/budget.go）；关掉时和其他信号一样只报不停。
-	ProgressAutostop bool `json:"progress_autostop"`
-	// LowRiskModel、LowRiskEffort：非空时，条目标题带「（低风险）」标记的待做任务用这个模型和强度（见 runner.TaskModel）；空的时候照 model、effort。
-	LowRiskModel  string `json:"low_risk_model"`
-	LowRiskEffort string `json:"low_risk_effort"`
-	// ModelPolicy：fixed（默认，不写也是）照 model 和 low_risk_model；auto 按任务类型选，见 runner.TaskModel。降级省额度却可能做坏，所以默认不开。
-	ModelPolicy string `json:"model_policy,omitempty"`
-	// 闲时找活（suggest_enabled，默认关）：所有项目没有待做、额度宽裕时，每天最多一次起只读的 claude -p 找值得做的活（见 internal/suggest/suggest.go）。
-	// 关着时不起任何进程，行为和原来完全一样。
-	SuggestEnabled   bool    `json:"suggest_enabled"`
-	SuggestModel     string  `json:"suggest_model"`
-	SuggestBudgetUSD float64 `json:"suggest_budget_usd"`
-	// 主动感知（sense_enabled，默认关）：定点复盘前读 App Store 评价、TestFlight 反馈和 GitHub issue，有新内容才起没有工具的 claude -p 判断（见 internal/sense/sense.go）。
-	SenseEnabled   bool    `json:"sense_enabled"`
-	SenseModel     string  `json:"sense_model"`
-	SenseBudgetUSD float64 `json:"sense_budget_usd"`
-	// 发版助手（release_assist_enabled，默认关）：条件都满足时起任务准备提交审核，用户回复「发」才提交（见 internal/release/release.go）。
-	ReleaseAssistEnabled bool    `json:"release_assist_enabled"`
-	ReleaseBudgetUSD     float64 `json:"release_budget_usd"`
-	// 自我进化（见 internal/evolve/signals.go）：evolve_signals_enabled 时 tick 每小时从门结果、任务记录、巡逻里收信号，只读本机文件，不调模型；
-	// learned_constraints_enabled 时确认过的门拦截记成项目约束，接在新任务合同末尾。self_project 是 agentq 源码所在的项目名，
-	// 配了就把 agentq 自身反复出现的问题写成那个项目「## 建议」里的提案，没配只写 ~/.agentq/evolve/proposals.md。
-	EvolveSignalsEnabled      bool   `json:"evolve_signals_enabled"`
-	LearnedConstraintsEnabled bool   `json:"learned_constraints_enabled"`
-	SelfProject               string `json:"self_project,omitempty"`
-	// VerifyAfterMerge 是老配置键，合并后核验已经并进质量门（见 internal/gate），它不再起作用，留着是为了已有配置读写字节不变。
-	// VerifyTimeout 是门里每个脚本、每次调模型的超时，超时算判不了。
-	VerifyAfterMerge bool     `json:"verify_after_merge"`
-	VerifyTimeout    Duration `json:"verify_timeout"`
-	// ExcludeProjects：projects_root 下这些项目 tick、闲时找活、主动感知都不碰（可能是公开仓库或不想交出去的）；agentq run 明确指定时仍可跑。
+	// SelfProject 是 agentq 源码所在的项目名：配了就把 agentq 自身反复出现的问题写成那个项目「## 建议」里的提案，没配只写 ~/.agentq/evolve/proposals.md（见 internal/evolve）。
+	SelfProject string `json:"self_project,omitempty"`
+	// ExcludeProjects：projects_root 下这些项目 tick 不碰（可能是公开仓库或不想交出去的）；agentq run 明确指定时仍可跑。
 	ExcludeProjects []string `json:"exclude_projects,omitempty"`
 	// ExtraProjects：projects_root 外的项目，绝对路径。agentq add 在外面的仓库里运行时自动登记。项目名还是目录名，exclude_projects 优先。
 	ExtraProjects []string `json:"extra_projects,omitempty"`
-	// RetentionDays：任务记录这些运行数据留多少天，超过的 tick 每天清一次（见 internal/sched/retention.go）。0 表示不删。
-	RetentionDays int `json:"retention_days"`
-	// 大方向商量（discuss_enabled，默认开）：标了（大方向）的条目和 agentq new 开工前问一次，等 discuss_wait 没回就按默认（见 internal/discuss）。
-	DiscussEnabled bool     `json:"discuss_enabled"`
-	DiscussWait    Duration `json:"discuss_wait"`
+	// 大方向商量（discuss_enabled，默认开）：标了（大方向）的条目和 agentq new 开工前问一次，等 2 小时没回就按默认（见 internal/discuss）。
+	DiscussEnabled bool `json:"discuss_enabled"`
 	// Backend：用哪个 CLI 后端，不写就是 claude，已有配置不用动。写了不认识的名字不回退：任务不启动，status 和 doctor 说明。
 	Backend string `json:"backend,omitempty"`
 	// ProjectBackends：按项目换后端。放用户配置，不放项目仓库：项目文件可能来自别人，不能让它决定代码发给哪家。
 	ProjectBackends map[string]string `json:"project_backends,omitempty"`
 	// Backends：每个后端自己的路径、模型、强度、权限。顶层的 model、effort、permission_mode 这些是默认后端的，别的后端只看这里，见 ForBackend。
 	Backends map[string]BackendConfig `json:"backends,omitempty"`
+
+	// 下面是写死的默认值：不从 config.json 读写，值在 Default() 里定；留成字段让测试能调（进程内直接改，真实二进制用 TestTuningEnv）。
+
+	// TickAfterJob：任务、门结束时马上 tick 一次，让排队的待做接上。
+	TickAfterJob bool `json:"-"`
+	// 连环失败熔断：连续 BreakerStreak 个任务都在 BreakerQuick 内结束且没做完，就暂停启动 BreakerCooldown；
+	// 熔断过后第一个任务又秒退，时长翻倍，最多 BreakerMax。
+	BreakerStreak   int      `json:"-"`
+	BreakerQuick    Duration `json:"-"`
+	BreakerCooldown Duration `json:"-"`
+	BreakerMax      Duration `json:"-"`
+	// StallAfter：运行中的任务会话记录这么久没增长，就在 status 和当天汇总里标「疑似卡死」（只提醒，不杀）。
+	StallAfter Duration `json:"-"`
+	// 夜班、复盘一跑就是几个小时，超时单独定。
+	NightTimeout  Duration `json:"-"`
+	ReviewTimeout Duration `json:"-"`
+	// 预算兜底（美元，--max-budget-usd，按单次运行算）：只防失控，额度按正常工作量留足，撞到后保留成果（见 internal/runner/budget.go）。
+	NightBudgetUSD  float64 `json:"-"`
+	ReviewBudgetUSD float64 `json:"-"`
+	PatrolBudgetUSD float64 `json:"-"`
+	JobBudgetUSD    float64 `json:"-"`
+	// VerifyTimeout 是门里每个脚本、每次调模型的超时，超时算判不了。
+	VerifyTimeout Duration `json:"-"`
+	// DiscussWait：商量大方向等用户回答多久，没回就按默认。
+	DiscussWait Duration `json:"-"`
+	// RetentionDays：任务记录这些运行数据留多少天，超过的 tick 每天清一次（见 internal/sched/retention.go）。0 表示不删。
+	// 不写死：改错了会删掉用户的记录，删了就回不来，留给用户定。
+	RetentionDays int `json:"retention_days"`
+	// 按活分配模型和强度（依据官方对各档模型的定位）：只在默认后端是 Claude、model 非空时用，
+	// 否则清空，照 model、effort（见 RolesApply）。都写别名，新模型出来自动跟上；审查不用 haiku 这一档。
+	DiscussModel     string `json:"-"`
+	ReviewModel      string `json:"-"` // 复盘
+	ReviewEffort     string `json:"-"`
+	PatrolModel      string `json:"-"`
+	FollowupModel    string `json:"-"`
+	HeavyEffort      string `json:"-"` // 重写、重构、迁移、难撤回的待做
+	LowRiskModel     string `json:"-"` // 条目标了（低风险）的待做
+	LowRiskEffort    string `json:"-"`
+	LightReviewModel string `json:"-"` // 轻量流程（见 internal/gate/light.go）的审查和界面审查
 }
 
 // BackendConfig 是 backends 下一个后端的配置。空的项跟随 CLI 自己的设置，CLI 路径空的时候按后端名在 PATH 里找。
@@ -154,12 +130,6 @@ type BackendConfig struct {
 	Effort     string `json:"effort,omitempty"`
 	Permission string `json:"permission,omitempty"`
 }
-
-// model_policy 的取值。
-const (
-	ModelPolicyFixed = "fixed"
-	ModelPolicyAuto  = "auto"
-)
 
 // ModelLabel 是给人看的模型名：空的就是跟随 CLI。
 func ModelLabel(model string) string {
@@ -269,14 +239,63 @@ func (c Config) PermissionProblems() []string {
 	return out
 }
 
-// claudeDefaultKeys 是默认值只对 Claude 有意义的键，前三个是 model、effort、permission_mode（ClearClaudeDefaults 靠这个顺序）。默认后端不是 Claude、配置又没写它们时要留空，不能把 opus 传给别家。
-var claudeDefaultKeys = []string{"model", "effort", "permission_mode", "router_model", "suggest_model", "sense_model", "light_review_model",
-	"discuss_model", "review_model", "review_effort", "patrol_model", "followup_model", "heavy_effort", "low_risk_model", "low_risk_effort"}
+// TestTuningEnv 只给集成测试用：值是 JSON，键名同下面的 tuning，把写死的值调小（真实二进制跑测试时等不了 30 分钟熔断、45 分钟卡死）。
+const TestTuningEnv = "AGENTQ_TEST_TUNING"
 
-// clearRoleModels 清掉按活分配的模型和强度（照 model、effort）：新配置跟随 CLI，别家后端不用 Claude 的别名。
+type tuning struct {
+	TickAfterJob    *bool     `json:"tick_after_job"`
+	BreakerStreak   *int      `json:"breaker_streak"`
+	BreakerQuick    *Duration `json:"breaker_quick"`
+	BreakerCooldown *Duration `json:"breaker_cooldown"`
+	BreakerMax      *Duration `json:"breaker_max"`
+	StallAfter      *Duration `json:"stall_after"`
+	NightTimeout    *Duration `json:"night_timeout"`
+	ReviewTimeout   *Duration `json:"review_timeout"`
+	NightBudgetUSD  *float64  `json:"night_budget_usd"`
+	ReviewBudgetUSD *float64  `json:"review_budget_usd"`
+	PatrolBudgetUSD *float64  `json:"patrol_budget_usd"`
+	JobBudgetUSD    *float64  `json:"job_budget_usd"`
+	VerifyTimeout   *Duration `json:"verify_timeout"`
+	DiscussWait     *Duration `json:"discuss_wait"`
+}
+
+// ApplyTestTuning 把 TestTuningEnv 的值盖到写死的字段上。空串什么都不做；写错了报错，测试当场看得到。
+func (c *Config) ApplyTestTuning(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var t tuning
+	if err := dec.Decode(&t); err != nil {
+		return fmt.Errorf("%s：%w", TestTuningEnv, err)
+	}
+	set := func(dst, src any) {
+		if v := reflect.ValueOf(src); !v.IsNil() {
+			reflect.ValueOf(dst).Elem().Set(v.Elem())
+		}
+	}
+	set(&c.TickAfterJob, t.TickAfterJob)
+	set(&c.BreakerStreak, t.BreakerStreak)
+	set(&c.BreakerQuick, t.BreakerQuick)
+	set(&c.BreakerCooldown, t.BreakerCooldown)
+	set(&c.BreakerMax, t.BreakerMax)
+	set(&c.StallAfter, t.StallAfter)
+	set(&c.NightTimeout, t.NightTimeout)
+	set(&c.ReviewTimeout, t.ReviewTimeout)
+	set(&c.NightBudgetUSD, t.NightBudgetUSD)
+	set(&c.ReviewBudgetUSD, t.ReviewBudgetUSD)
+	set(&c.PatrolBudgetUSD, t.PatrolBudgetUSD)
+	set(&c.JobBudgetUSD, t.JobBudgetUSD)
+	set(&c.VerifyTimeout, t.VerifyTimeout)
+	set(&c.DiscussWait, t.DiscussWait)
+	return nil
+}
+
+// clearRoleModels 清掉按活分配的模型和强度（照 model、effort）：model 跟随 CLI 时都跟随，别家后端不用 Claude 的别名。
 func (c *Config) clearRoleModels() {
 	c.DiscussModel, c.ReviewModel, c.ReviewEffort, c.PatrolModel, c.FollowupModel = "", "", "", "", ""
-	c.HeavyEffort, c.LowRiskEffort = "", ""
+	c.HeavyEffort, c.LowRiskModel, c.LowRiskEffort, c.LightReviewModel = "", "", "", ""
 }
 
 // Role：配了专用模型就用它和给的强度，没配照 model、effort。
@@ -293,22 +312,16 @@ var pinnedModelRe = regexp.MustCompile(`(?i)^claude-[a-z]+-\d`)
 // PinnedModels：配置里钉死版本号的模型键，doctor 提醒改成别名。
 func (c Config) PinnedModels() []string {
 	var out []string
-	for _, kv := range []struct{ key, val string }{{"model", c.Model}, {"router_model", c.RouterModel}, {"suggest_model", c.SuggestModel}, {"sense_model", c.SenseModel},
-		{"light_review_model", c.LightReviewModel}, {"low_risk_model", c.LowRiskModel}, {"discuss_model", c.DiscussModel}, {"review_model", c.ReviewModel},
-		{"patrol_model", c.PatrolModel}, {"followup_model", c.FollowupModel}} {
-		if pinnedModelRe.MatchString(kv.val) {
-			out = append(out, kv.key+"="+kv.val)
-		}
+	if pinnedModelRe.MatchString(c.Model) {
+		out = append(out, "model="+c.Model)
 	}
 	return out
 }
 
-// ForBackend 返回这个后端看到的配置：模型、强度、权限只传给配了它们的后端，别家的默认不串。
-// 顶层的这些键是默认后端的（后端名空表示 Claude，老任务记录就是这样），backends.<名字> 里写了的优先。
 // UsagePolicy：判断额度用的模型和后台上限。
 func (c Config) UsagePolicy() backend.UsagePolicy {
 	var also []string // 经任务启动的那些角色（门里的审查不算，它不受额度门管）
-	for _, m := range []string{c.LowRiskModel, c.ReviewModel, c.PatrolModel, c.FollowupModel, c.DiscussModel, c.RouterModel, c.SuggestModel, c.SenseModel} {
+	for _, m := range []string{c.LowRiskModel, c.ReviewModel, c.PatrolModel, c.FollowupModel, c.DiscussModel} {
 		if m != "" && m != c.Model && !slices.Contains(also, m) {
 			also = append(also, m)
 		}
@@ -316,6 +329,8 @@ func (c Config) UsagePolicy() backend.UsagePolicy {
 	return backend.UsagePolicy{Model: c.Model, Also: also, Session: c.UsageStopSessionPct, Week: c.UsageStopWeekPct}
 }
 
+// ForBackend 返回这个后端看到的配置：模型、强度、权限只传给配了它们的后端，别家的默认不串。
+// 顶层的这些键是默认后端的（后端名空表示 Claude，老任务记录就是这样），backends.<名字> 里写了的优先。
 func (c Config) ForBackend(name string) Config {
 	if name == "" {
 		name = backend.Default
@@ -326,8 +341,7 @@ func (c Config) ForBackend(name string) Config {
 	}
 	out := c
 	if name != def {
-		out.Model, out.Effort, out.PermissionMode, out.LowRiskModel = "", "", "", ""
-		out.RouterModel, out.SuggestModel, out.SenseModel, out.LightReviewModel = "", "", "", ""
+		out.Model, out.Effort, out.PermissionMode = "", "", ""
 		out.clearRoleModels()
 	}
 	s := c.Backends[name]
@@ -356,61 +370,40 @@ func Default() Config {
 		Timeout:        Duration{4 * time.Hour},
 		RetryAfter:     Duration{12 * time.Hour},
 		LimitCooldown:  Duration{time.Hour},
-		TickAfterJob:   true,
 
+		PatrolEnabled: true,
+		NotifyEnabled: true,
+
+		UsageStopSessionPct: 70,
+		UsageStopWeekPct:    90,
+
+		DiscussEnabled: true,
+
+		TickAfterJob:    true,
 		BreakerStreak:   3,
 		BreakerQuick:    Duration{3 * time.Minute},
 		BreakerCooldown: Duration{30 * time.Minute},
 		BreakerMax:      Duration{4 * time.Hour},
 		StallAfter:      Duration{45 * time.Minute},
-
-		NightTimeout:  Duration{6 * time.Hour},
-		ReviewTimeout: Duration{4 * time.Hour},
-
-		PatrolEnabled: true,
-		PatrolAnalyze: true,
-
-		NotifyEnabled: true,
-
-		RouterModel: "haiku",
-
-		DiscussModel:  "sonnet",
-		ReviewModel:   "sonnet",
-		ReviewEffort:  "high",
-		PatrolModel:   "sonnet",
-		FollowupModel: "sonnet",
-		HeavyEffort:   "xhigh",
-		LowRiskModel:  "sonnet",
-		LowRiskEffort: "medium",
-
+		NightTimeout:    Duration{6 * time.Hour},
+		ReviewTimeout:   Duration{4 * time.Hour},
 		NightBudgetUSD:  10,
 		ReviewBudgetUSD: 15,
 		PatrolBudgetUSD: 2,
 		JobBudgetUSD:    150,
+		VerifyTimeout:   Duration{30 * time.Minute},
+		DiscussWait:     Duration{2 * time.Hour},
+		RetentionDays:   90,
 
-		LightReviewModel:    "sonnet",
-		UsageStopSessionPct: 70,
-		UsageStopWeekPct:    90,
-
-		ProgressAutostop: true,
-		SuggestModel:     "sonnet",
-		SuggestBudgetUSD: 1,
-
-		SenseModel:     "sonnet",
-		SenseBudgetUSD: 1,
-
-		ReleaseBudgetUSD: 30,
-
-		EvolveSignalsEnabled:      true,
-		LearnedConstraintsEnabled: true,
-
-		VerifyAfterMerge: true,
-		VerifyTimeout:    Duration{30 * time.Minute},
-
-		RetentionDays: 90,
-
-		DiscussEnabled: true,
-		DiscussWait:    Duration{2 * time.Hour},
+		DiscussModel:     "sonnet",
+		ReviewModel:      "sonnet",
+		ReviewEffort:     "high",
+		PatrolModel:      "sonnet",
+		FollowupModel:    "sonnet",
+		HeavyEffort:      "xhigh",
+		LowRiskModel:     "sonnet",
+		LowRiskEffort:    "medium",
+		LightReviewModel: "sonnet",
 	}
 }
 
@@ -418,14 +411,11 @@ func Default() Config {
 // 已有配置缺的键不走这里：老配置靠 defaultConfig 的语义，不能悄悄变。
 func (c Config) Fresh() Config {
 	c.Model, c.Effort = "", ""
-	c.RouterModel, c.SuggestModel, c.SenseModel, c.LightReviewModel = "", "", "", ""
-	c.LowRiskModel = ""
 	c.clearRoleModels()
 	c.Paused = true
 	c.NightEnabled = false
 	c.ReviewEnabled = false
 	c.PatrolEnabled = false
-	c.PatrolAnalyze = false
 	c.NotifyEnabled = false
 	c.PermissionMode = "default"
 	return c
@@ -448,60 +438,17 @@ func (c Config) Validate() error {
 	if c.MaxParallel < 1 {
 		bad = append(bad, "max_parallel 至少为 1")
 	}
+	if c.RetentionDays < 0 {
+		bad = append(bad, "retention_days 不能是负数（0 表示不删）")
+	}
 	if c.PerProject < 1 {
 		bad = append(bad, "per_project 至少为 1")
 	}
-	if c.Timeout.Duration <= 0 || c.RetryAfter.Duration <= 0 || c.LimitCooldown.Duration <= 0 || c.StallAfter.Duration <= 0 ||
-		c.NightTimeout.Duration <= 0 || c.ReviewTimeout.Duration <= 0 {
-		bad = append(bad, "timeout、retry_after、limit_cooldown、stall_after、night_timeout、review_timeout 都要大于 0")
-	}
-	if c.BreakerStreak < 1 {
-		bad = append(bad, "breaker_streak 至少为 1")
-	}
-	if c.BreakerQuick.Duration <= 0 || c.BreakerCooldown.Duration <= 0 || c.BreakerMax.Duration < c.BreakerCooldown.Duration {
-		bad = append(bad, "breaker_quick、breaker_cooldown 要大于 0，breaker_max 不能小于 breaker_cooldown")
-	}
-	if c.NightBudgetUSD < 0 || c.ReviewBudgetUSD < 0 || c.PatrolBudgetUSD < 0 || c.JobBudgetUSD < 0 {
-		bad = append(bad, "night_budget_usd、review_budget_usd、patrol_budget_usd、job_budget_usd 不能是负数（0 表示不限）")
+	if c.Timeout.Duration <= 0 || c.RetryAfter.Duration <= 0 || c.LimitCooldown.Duration <= 0 {
+		bad = append(bad, "timeout、retry_after、limit_cooldown 都要大于 0")
 	}
 	if !(c.UsageStopSessionPct >= 1 && c.UsageStopSessionPct <= 97) || !(c.UsageStopWeekPct >= 1 && c.UsageStopWeekPct <= 97) {
 		bad = append(bad, "usage_stop_session_pct、usage_stop_week_pct 要在 1 到 97 之间（到 98% 连 agentq run 都拒绝）")
-	}
-	if c.ModelPolicy != "" && c.ModelPolicy != ModelPolicyFixed && c.ModelPolicy != ModelPolicyAuto {
-		bad = append(bad, "model_policy 只能是 fixed 或 auto")
-	}
-	if c.RouterEnabled && strings.HasPrefix(c.RouterModel, "-") {
-		bad = append(bad, "router_model 不能以 - 开头")
-	}
-	for _, kv := range [][2]string{{"discuss_model", c.DiscussModel}, {"review_model", c.ReviewModel}, {"review_effort", c.ReviewEffort}, {"patrol_model", c.PatrolModel},
-		{"followup_model", c.FollowupModel}, {"heavy_effort", c.HeavyEffort}, {"low_risk_model", c.LowRiskModel}, {"low_risk_effort", c.LowRiskEffort}} {
-		if strings.HasPrefix(kv[1], "-") {
-			bad = append(bad, kv[0]+" 不能以 - 开头")
-		}
-	}
-	if strings.HasPrefix(c.LightReviewModel, "-") {
-		bad = append(bad, "light_review_model 不能以 - 开头")
-	}
-	if strings.Contains(strings.ToLower(c.LightReviewModel), "haiku") {
-		bad = append(bad, "light_review_model 不能用 haiku：审查是合并前最后一道把关，最低用 sonnet 这一档")
-	}
-	if c.SuggestEnabled && strings.HasPrefix(c.SuggestModel, "-") {
-		bad = append(bad, "suggest_model 不能以 - 开头")
-	}
-	if !(c.SuggestBudgetUSD > 0 && c.SuggestBudgetUSD <= 1000) {
-		bad = append(bad, "suggest_budget_usd 要在 0 到 1000 之间（美元，不含 0）")
-	}
-	if c.SenseEnabled && strings.HasPrefix(c.SenseModel, "-") {
-		bad = append(bad, "sense_model 不能以 - 开头")
-	}
-	if !(c.SenseBudgetUSD > 0 && c.SenseBudgetUSD <= 1000) {
-		bad = append(bad, "sense_budget_usd 要在 0 到 1000 之间（美元，不含 0）")
-	}
-	if !(c.ReleaseBudgetUSD > 0 && c.ReleaseBudgetUSD <= 1000) {
-		bad = append(bad, "release_budget_usd 要在 0 到 1000 之间（美元，不含 0）")
-	}
-	if c.VerifyTimeout.Duration <= 0 {
-		bad = append(bad, "verify_timeout 要大于 0")
 	}
 	for _, name := range c.ExcludeProjects {
 		if strings.TrimSpace(name) == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
@@ -539,12 +486,6 @@ func (c Config) Validate() error {
 		if why := permissionProblem(name, s.Permission); why != "" {
 			bad = append(bad, "backends."+name+".permission "+why)
 		}
-	}
-	if c.DiscussWait.Duration <= 0 {
-		bad = append(bad, "discuss_wait 要大于 0")
-	}
-	if c.RetentionDays < 0 {
-		bad = append(bad, "retention_days 不能是负数（0 表示不删）")
 	}
 	if len(bad) > 0 {
 		return errors.New(strings.Join(bad, "；"))
@@ -588,29 +529,25 @@ func Load(path string) (Config, error) {
 }
 
 // ClearClaudeDefaults：文件里没写的模型类键不沿用 Claude 的默认值，两种情况：
-// 默认后端不是 Claude（不能把 opus、sonnet 传给别家）；文件明写了 "model": ""（跟随 CLI，安装器新建的就是这样：按活分配的别名也不传，跟着 CLI 走）。
-// 写了的是用户自己配的，留着。
+// 默认后端不是 Claude（不能把 opus、sonnet 传给别家）：没写的 model、effort、permission_mode 清空，按活分配也不用；
+// 文件明写了 "model": ""（跟随 CLI，安装器新建的就是这样）：按活分配的别名也不传，跟着 CLI 走。写了的是用户自己配的，留着。
 func (c *Config) ClearClaudeDefaults(raw []byte) error {
 	var written map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &written); err != nil {
 		return err
 	}
-	fields := map[string]*string{"model": &c.Model, "effort": &c.Effort, "permission_mode": &c.PermissionMode,
-		"router_model": &c.RouterModel, "suggest_model": &c.SuggestModel, "sense_model": &c.SenseModel, "light_review_model": &c.LightReviewModel,
-		"discuss_model": &c.DiscussModel, "review_model": &c.ReviewModel, "review_effort": &c.ReviewEffort, "patrol_model": &c.PatrolModel,
-		"followup_model": &c.FollowupModel, "heavy_effort": &c.HeavyEffort, "low_risk_model": &c.LowRiskModel, "low_risk_effort": &c.LowRiskEffort}
-	keys := claudeDefaultKeys
 	if c.Backend == "" || c.Backend == backend.Default {
-		if m, ok := written["model"]; !ok || string(m) != `""` {
-			return nil
+		if c.Model == "" {
+			c.clearRoleModels()
 		}
-		keys = claudeDefaultKeys[3:] // model、effort、permission_mode 文件里写了什么就是什么
+		return nil
 	}
-	for _, key := range keys {
+	for key, field := range map[string]*string{"model": &c.Model, "effort": &c.Effort, "permission_mode": &c.PermissionMode} {
 		if _, ok := written[key]; !ok {
-			*fields[key] = ""
+			*field = ""
 		}
 	}
+	c.clearRoleModels()
 	return nil
 }
 

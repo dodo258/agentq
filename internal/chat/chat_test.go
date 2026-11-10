@@ -3,17 +3,12 @@ package chat
 import (
 	"bytes"
 	"encoding/json"
-	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
-	"agentq/internal/backend"
 	"agentq/internal/config"
 	"agentq/internal/env"
-	"agentq/internal/inbox"
 	"agentq/internal/notify"
 	"agentq/internal/proc"
 	"agentq/internal/testkit"
@@ -82,32 +77,7 @@ func TestParseFastCmd(t *testing.T) {
 	}
 }
 
-func TestRouterSchemaHasInbox(t *testing.T) {
-	var schema struct {
-		Properties struct {
-			Actions struct {
-				Items struct {
-					Properties struct {
-						Type struct {
-							Enum []string `json:"enum"`
-						} `json:"type"`
-					} `json:"properties"`
-				} `json:"items"`
-			} `json:"actions"`
-		} `json:"properties"`
-	}
-	if err := json.Unmarshal([]byte(RouterSchema), &schema); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(schema.Properties.Actions.Items.Properties.Type.Enum, ","); !regexp.MustCompile(`(^|,)inbox(,|$)`).MatchString(got) {
-		t.Errorf("enum：%s", got)
-	}
-	if got := (RouterAction{Type: "inbox", Text: "调研"}).String(); got != "inbox「调研」" {
-		t.Errorf("String：%s", got)
-	}
-}
-
-// Router 关着时对话流程不知道任务箱：提示词里没有，判断不出项目照旧问一句。
+// 对话提示词：判断不出项目时问一句。
 func TestChatPromptUnchanged(t *testing.T) {
 	p := chatPrompt(nil, time.Now())
 	if strings.Contains(p, "date -j") {
@@ -181,66 +151,10 @@ func TestCutHTML(t *testing.T) {
 	}
 }
 
-// 全量记录写不了：只记日志。
-func TestAppendHistoryUnwritable(t *testing.T) {
-	a, out := newChatApp(t)
-	if err := os.MkdirAll(a.DataDir(), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(a.DataDir(), "router"), []byte("占着"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	a.appendHistory(RouterTurn{In: "x"})
-	if !strings.Contains(out.String(), "全量记录写不了") {
-		t.Errorf("%s", out.String())
-	}
-}
-
-func TestAppendRotated(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "sub", "history.jsonl")
-	line := []byte(`{"in":"x"}`)
-	for i := range 3 {
-		if err := appendRotated(p, line, 25); err != nil {
-			t.Fatal(i, err)
-		}
-	}
-	b, _ := os.ReadFile(p)
-	if strings.Count(string(b), "\n") != 3 {
-		t.Fatalf("没超过之前只追加：%q", b) // 22 字节时不超过 25，第三行之后才超过
-	}
-	if err := appendRotated(p, []byte(`{"in":"新"}`), 25); err != nil {
-		t.Fatal(err)
-	}
-	old, err := os.ReadFile(filepath.Join(dir, "sub", "history.1.jsonl"))
-	if err != nil || strings.Count(string(old), "\n") != 3 {
-		t.Errorf("旧的轮转一份：%v %q", err, old)
-	}
-	b, _ = os.ReadFile(p)
-	if string(b) != "{\"in\":\"新\"}\n" {
-		t.Errorf("%q", b)
-	}
-	// 再轮转一次：只留一份
-	for range 4 {
-		if err := appendRotated(p, line, 25); err != nil {
-			t.Fatal(err)
-		}
-	}
-	files, _ := filepath.Glob(filepath.Join(dir, "sub", "*"))
-	if len(files) != 2 {
-		t.Errorf("%v", files)
-	}
-	// 写不了返回错误
-	if err := appendRotated(filepath.Join(p, "x", "y.jsonl"), line, 25); err == nil {
-		t.Error("应报错")
-	}
-}
-
 // wireChat 建模块实例。
 func wireChat(e *env.Env) *Service {
 	k := stack.New(e)
-	ib := &inbox.Service{Env: e, Ledger: k.Ledger, Notify: k.Notify, Runner: k.Runner}
-	return &Service{Env: e, Backlog: k.Backlog, Inbox: ib, Ledger: k.Ledger, Notify: k.Notify, Runner: k.Runner, Service: k.Service, Telegram: k.Telegram}
+	return &Service{Env: e, Backlog: k.Backlog, Ledger: k.Ledger, Notify: k.Notify, Runner: k.Runner, Service: k.Service, Telegram: k.Telegram}
 }
 
 // newChatApp 带临时 HOME 的实例，这些用例不连 Telegram。
@@ -248,77 +162,6 @@ func newChatApp(t *testing.T) (*Service, *bytes.Buffer) {
 	t.Helper()
 	out := &bytes.Buffer{}
 	return wireChat(&env.Env{Home: t.TempDir(), Cfg: config.Default(), Now: time.Now, Out: out}), out
-}
-
-func TestRouterArgs(t *testing.T) {
-	cfg := config.Default()
-	if cfg.RouterEnabled || cfg.RouterModel != "haiku" {
-		t.Errorf("默认关，模型 haiku（官方定位：路由是 Haiku 的场景）：%+v", cfg)
-	}
-	args := testkit.ClaudeArgv(t, RouterRequest(cfg, "/h", "问", "s1"))
-	got := map[string]string{}
-	for i := 0; i+1 < len(args); i++ {
-		if strings.HasPrefix(args[i], "-") {
-			got[args[i]] = args[i+1]
-		}
-	}
-	want := map[string]string{"-p": "问", "--session-id": "s1", "--model": "haiku", "--effort": "medium", "--tools": "Read,Grep,Glob",
-		"--settings": testkit.ClaudeDeny(backend.DenySecrets), "--json-schema": RouterSchema, "--max-turns": "12", "--max-budget-usd": "1", "--output-format": "json"}
-	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("%s = %q，要 %q", k, got[k], v)
-		}
-	}
-	joined := strings.Join(args, " ")
-	for _, bad := range []string{"--permission-mode", "bypass", "Bash", "Write", "Edit", "-r ", "--resume", "secrets --"} {
-		if strings.Contains(strings.ReplaceAll(joined, RouterSchema, ""), bad) && !strings.Contains(testkit.ClaudeDeny(backend.DenySecrets), bad) {
-			t.Errorf("不该有 %q：%s", bad, joined)
-		}
-	}
-	for _, s := range []string{"--strict-mcp-config", "--add-dir /h/.agentq/jobs", "--add-dir /h/.claude/nightly", "--name " + proc.NameMarker(ChatJobName)} {
-		if !strings.Contains(joined, s) {
-			t.Errorf("缺 %s：%s", s, joined)
-		}
-	}
-	var deny map[string]any
-	if json.Unmarshal([]byte(testkit.ClaudeDeny(backend.DenySecrets)), &deny) != nil || json.Unmarshal([]byte(RouterSchema), &deny) != nil {
-		t.Error("settings 或 schema 不是合法 JSON")
-	}
-}
-
-// 新配置的 Router 不带模型：走后端默认。
-func TestRouterArgsFollowCLI(t *testing.T) {
-	args := testkit.ClaudeArgv(t, RouterRequest(config.Default().Fresh(), "/h", "问", "s1"))
-	if strings.Contains(strings.Join(args, " "), "--model") {
-		t.Fatalf("%v", args)
-	}
-}
-
-// Router 看得到 extra_projects，被排除的看不到。
-func TestRouterArgsExtraProjects(t *testing.T) {
-	base := t.TempDir()
-	far, secret, gone := filepath.Join(base, "far"), filepath.Join(base, "secret"), filepath.Join(base, "gone")
-	for _, d := range []string{far, secret} {
-		if err := os.Mkdir(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	cfg := config.Default()
-	cfg.ExtraProjects = []string{far, secret, gone}
-	cfg.ExcludeProjects = []string{"secret"}
-	joined := strings.Join(testkit.ClaudeArgv(t, RouterRequest(cfg, "/h", "问", "s1")), " ")
-	if !strings.Contains(joined, "--add-dir "+far) {
-		t.Errorf("缺 extra_projects：%s", joined)
-	}
-	if strings.Contains(joined, secret) {
-		t.Errorf("exclude_projects 优先：%s", joined)
-	}
-	if strings.Contains(joined, gone) {
-		t.Errorf("不在了的目录不传：%s", joined)
-	}
-	if _, missing := activeExtras(cfg); len(missing) != 1 || missing[0] != gone {
-		t.Errorf("%v", missing)
-	}
 }
 
 func TestMoveDecision(t *testing.T) {
@@ -337,43 +180,6 @@ func TestMoveDecision(t *testing.T) {
 	empty := "## 待做\n\n## 等用户决定\n- [ ] 选A\n"
 	if got, ok := MoveDecision(empty, "选A", "x"); !ok || !strings.HasPrefix(got, "## 待做\n- [ ] 选A（用户决定：x）\n") {
 		t.Errorf("待做是空的：%q", got)
-	}
-}
-
-func TestCheckSendFile(t *testing.T) {
-	a, _ := newChatApp(t)
-	root := t.TempDir()
-	a.Cfg.ProjectsRoot = root
-	jobs := filepath.Join(a.DataDir(), "jobs", "j1", "files")
-	os.MkdirAll(jobs, 0o755)
-	write := func(p string) string {
-		os.MkdirAll(filepath.Dir(p), 0o755)
-		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return p
-	}
-	for _, p := range []string{write(filepath.Join(root, "p", "a.png")), write(filepath.Join(jobs, "b.txt"))} {
-		if _, err := a.CheckSendFile(p); err != nil {
-			t.Errorf("%s 应通过：%v", p, err)
-		}
-	}
-	for name, p := range map[string]string{
-		"相对路径":     "a.png",
-		".env":     write(filepath.Join(root, "p", ".env")),
-		".ENV 大小写": filepath.Join(root, "p", ".ENV"),
-		"prod.env": write(filepath.Join(root, "p", "prod.env")),
-		"secrets":  write(filepath.Join(root, "p", "secrets", "k.txt")),
-		"SECRETS":  filepath.Join(root, "p", "SECRETS", "k.txt"),
-		".git":     write(filepath.Join(root, "p", ".git", "config")),
-		".ssh":     write(filepath.Join(root, "p", ".ssh", "id")),
-		"目录外":      write(filepath.Join(t.TempDir(), "x.txt")),
-		"不存在":      filepath.Join(root, "p", "没有.txt"),
-		"目录":       filepath.Join(root, "p"),
-	} {
-		if _, err := a.CheckSendFile(p); err == nil {
-			t.Errorf("%s 应拒绝", name)
-		}
 	}
 }
 

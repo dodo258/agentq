@@ -435,7 +435,7 @@ func (a *Service) HeldStatus(st *state.State) string {
 // 被 tick 挑走就重复做了。别人同时手动建的项目也会多等这一会儿，最多等到 new 结束或超时。
 func NewProjectBusy(st *state.State, name string) bool { return st.NewProjectBusy(name) }
 
-// NoticeNew：任务结束时推一条。用户自己停的不推（CLI 的输出、Router 的回复里已经写了多出的目录）。
+// NoticeNew：任务结束时推一条。用户自己停的不推（CLI 的输出里已经写了多出的目录）。
 func (a *Service) NoticeNew(j *state.Job) {
 	title := textfmt.TruncRunes(j.Title, 30)
 	n := notify.Notice{Cat: "alert", Key: "new:" + j.ID, JobID: j.ID}

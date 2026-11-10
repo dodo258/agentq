@@ -410,5 +410,3 @@ func readUsageText(ctx context.Context, claude string) (string, error) {
 	}
 	return "", errors.New("claude -p /usage 的输出不是 JSON 结果：" + textfmt.OneLine(msg, 200))
 }
-
-const RouterDeny = `{"permissions":{"deny":["Read(**/.env*)","Read(**/secrets/**)","Read(**/.agentq/sense/**)"]}}`

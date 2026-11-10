@@ -15,7 +15,7 @@ import (
 )
 
 // 自我派活 L0：agentq 自己的信号同一 Key 出现 proposeAt 次以上、没提过，写一条有证据的提案，只提案不动手。
-// 配了 self_project：写进那个项目 BACKLOG 的「## 建议」，编号、「做 N」「不做 N」和闲时找活同一套（suggest 的索引和不做清单），
+// 配了 self_project：写进那个项目 BACKLOG 的「## 建议」，编号、「做 N」「不做 N」用 suggest 的索引和不做清单，
 // 不进「待做」；在不做清单里的不再提。没配（或找不到这个项目）：追加到 ~/.agentq/evolve/proposals.md，当天汇总记一行。
 const (
 	proposalTitleMax = 60

@@ -2,8 +2,8 @@ package tests
 
 import (
 	"encoding/json"
-	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -20,7 +20,7 @@ import (
 	"agentq/internal/textfmt"
 )
 
-// publicFiles 是公开候选里会有的文件：整个仓库去掉 config/clean-source.json 的 private_paths。文档、脚本、配置都算，不只代码。
+// publicFiles 是公开候选里会有的文件：git 管的文件去掉 config/clean-source.json 的 private_paths。文档、脚本、配置都算，不只代码。
 func publicFiles(t *testing.T) []string {
 	t.Helper()
 	var manifest struct {
@@ -37,25 +37,19 @@ func publicFiles(t *testing.T) []string {
 		}
 		return false
 	}
-	var out []string
-	err := filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		p = filepath.ToSlash(p)
-		if p == ".git" || p == "dist" || private(p) {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Type().IsRegular() {
-			out = append(out, p)
-		}
-		return nil
-	})
+	// 导出用 git archive HEAD，所以只看 git 管的文件（含还没提交、没被忽略的新文件）；根目录编出来的二进制、.claude/worktrees 这些被忽略的不算。
+	ls, err := exec.Command("git", "ls-files", "-co", "--exclude-standard", "-z").Output()
 	if err != nil {
 		t.Fatal(err)
+	}
+	var out []string
+	for p := range strings.SplitSeq(strings.TrimSuffix(string(ls), "\x00"), "\x00") {
+		if p == "" || private(p) {
+			continue
+		}
+		if fi, err := os.Lstat(p); err == nil && fi.Mode().IsRegular() {
+			out = append(out, p)
+		}
 	}
 	return out
 }

@@ -23,7 +23,7 @@ Go 标准库，单二进制，不加第三方 Go 依赖。
 ## 开发命令
 
 ```sh
-test -z "$(gofmt -l .)" && go vet ./... && go test -race ./...
+test -z "$(git ls-files '*.go' | xargs gofmt -l)" && go vet ./... && go test -race ./...
 ```
 
 Go 版本见 `go.mod`。Go 1.26.3 在 darwin/arm64 上的 `-race` 运行时有偶发的 fork 段错误（[golang/go#79804](https://github.com/golang/go/issues/79804)），修复在 1.26.5。遇到时换新工具链：

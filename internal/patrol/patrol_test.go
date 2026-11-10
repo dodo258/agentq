@@ -530,7 +530,7 @@ func TestPatrolAnalyzeLimits(t *testing.T) {
 		set   func()
 		unset func()
 	}{
-		{"patrol_analyze=false", func() { e.a.Cfg.PatrolAnalyze = false }, func() { e.a.Cfg.PatrolAnalyze = true }},
+		{"patrol_enabled=false", func() { e.a.Cfg.PatrolEnabled = false }, func() { e.a.Cfg.PatrolEnabled = true }},
 		{"已暂停", func() { e.a.Cfg.Paused = true }, func() { e.a.Cfg.Paused = false }},
 		{"用量冷却中", func() { e.st.CooldownUntil = e.now.Add(2 * time.Hour) }, func() { e.st.CooldownUntil = time.Time{} }},
 		{"连环失败熔断中", func() { e.st.BreakerUntil = e.now.Add(2 * time.Hour) }, func() { e.st.BreakerUntil = time.Time{} }},

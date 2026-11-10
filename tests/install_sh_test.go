@@ -222,6 +222,7 @@ func newInstallKit(t *testing.T, without ...string) *installKit {
 		"AGENTQ_RELEASE_BASE=" + k.server.URL, "AGENTQ_FAKE_LOG=" + k.log, "FAKE_LOG_DIR=" + k.log,
 		"AGENTQ_MACNOTIFY_LOG=" + filepath.Join(k.log, "macnotify.log"),
 	}
+	k.useFakeLaunchctl() // 装完即运行，每次新装都会装服务
 	return k
 }
 
@@ -352,13 +353,13 @@ func (k *installKit) logFile(name string) string {
 	return string(b)
 }
 
-// 新装：校验通过，setup 真的跑了（程序、技能、回执都在），打印 PATH 那一行和接下来三步。
+// 新装：校验通过，setup 真的跑了（程序、技能、回执都在），打印 PATH 那一行；装完即运行：不暂停、权限放开。
 func TestInstallShFreshInstall(t *testing.T) {
 	t.Parallel()
 	k := newInstallKit(t)
 	k.serveRelease("v1.0.0")
 	out := k.mustInstall()
-	testkit.AssertContains(t, out, "校验通过", "agentq v1.0.0", `export PATH="$HOME/.local/bin:$PATH"`, "agentq start")
+	testkit.AssertContains(t, out, "校验通过", "agentq v1.0.0", `export PATH="$HOME/.local/bin:$PATH"`, "后台已启动")
 	testkit.AssertContains(t, out, "Warning: python3 not found") // PATH 里没有 python3，也要装成
 	r := k.receipt()
 	if r.Scope != "full" || r.Extras {
@@ -371,8 +372,8 @@ func TestInstallShFreshInstall(t *testing.T) {
 		t.Fatalf("装好的程序：%d %s", code, got)
 	}
 	cfg, _, err := setup.ReadInstallConfig(k.home)
-	if err != nil || !cfg.Paused || cfg.PermissionMode != "default" {
-		t.Fatalf("新配置应暂停、权限 default：%+v %v", cfg, err)
+	if err != nil || cfg.Paused || cfg.PermissionMode != "bypassPermissions" {
+		t.Fatalf("装完应在运行、权限放开：%+v %v", cfg, err)
 	}
 	tmpLeft, _ := filepath.Glob(filepath.Join(strings.TrimPrefix(k.env[2], "TMPDIR="), "agentq-install.*"))
 	if len(tmpLeft) != 0 {
@@ -654,13 +655,16 @@ func TestInstallShCheckout(t *testing.T) {
 	})
 }
 
-// 缺 Claude CLI、没登录（没有终端）：agentq 照装，不替用户装 CLI、不要 token，给官方命令，退出 0。有终端的情况见 install_cli_test.go。
+// 缺 Claude CLI、没登录（没有终端）：agentq 照装，不替用户装 CLI、不要 token，给官方命令；后台没开，退出非 0。有终端的情况见 install_cli_test.go。
 func TestInstallShClaudePrerequisite(t *testing.T) {
 	t.Parallel()
 	t.Run("没有 CLI", func(t *testing.T) {
 		k := newInstallKit(t, "claude")
 		k.serveRelease("v1.0.0")
-		out := k.mustInstall()
+		out, code := k.run()
+		if code == 0 {
+			t.Fatalf("后台没开，应退出非 0：\n%s", out)
+		}
 		testkit.AssertContains(t, out, "curl -fsSL https://claude.ai/install.sh | bash", "claude auth login")
 		if strings.Contains(strings.ToLower(out), "token") {
 			t.Fatalf("不该提 token：\n%s", out)
@@ -673,7 +677,10 @@ func TestInstallShClaudePrerequisite(t *testing.T) {
 		k := newInstallKit(t)
 		k.env = append(k.env, "AGENTQ_FAKE_LOGGED_OUT=1")
 		k.serveRelease("v1.0.0")
-		out := k.mustInstall()
+		out, code := k.run()
+		if code == 0 {
+			t.Fatalf("后台没开，应退出非 0：\n%s", out)
+		}
 		testkit.AssertContains(t, out, "还没登录", "claude auth login")
 		if !exists(k.receiptPath()) {
 			t.Fatal("agentq 应该装上")
@@ -900,7 +907,6 @@ func TestInstallShTruncatedDoesNothing(t *testing.T) {
 func TestInstallShLegacyBinaryUser(t *testing.T) {
 	t.Parallel()
 	k := newInstallKit(t)
-	k.useFakeLaunchctl()
 	k.serveRelease("v1.0.0")
 	// start 那次 tick 会巡逻；机器磁盘紧张时巡逻起一个后台分析任务，要等它写完再删临时目录。
 	e := &testEnv{t: t, home: k.home, root: filepath.Join(k.home, "projects"), fake: filepath.Join(k.bin, "claude"), fakeLg: k.log}
@@ -945,66 +951,60 @@ func TestInstallShLegacyBinaryUser(t *testing.T) {
 	testkit.AssertBytes(t, k.configPath(), string(want))
 }
 
-// 端到端：install → init → add → start（假 claude、假 launchctl），任务真的被拉起，claude 收到 --permission-mode bypassPermissions；
-// 任务结束后重跑 install.sh 升级，服务和开关都留着。
+// 端到端，全程零输入（假 claude、假 launchctl）：install.sh 装完就在跑；用户机器上用着 Codex，派活技能也装到 ~/.agents/skills。
+// projects_root 外一个不是 Git 仓库的新目录里，按派活技能的步骤跑（用户自己不敲 agentq）：服务没加载 → check 报 not-running → start 拉起 → add 自己 git init 接入、登记 → run 拉起任务，
+// claude 收到 --permission-mode bypassPermissions。任务结束后重跑 install.sh 升级，服务和开关都留着。
 func TestOnboardingEndToEnd(t *testing.T) {
 	t.Parallel()
 	k := newInstallKit(t)
-	k.useFakeLaunchctl()
 	k.serveRelease("v1.0.0")
 	e := &testEnv{t: t, home: k.home, root: filepath.Join(k.home, "projects"), fake: filepath.Join(k.bin, "claude"), fakeLg: k.log}
 	t.Cleanup(e.waitShells)
-	k.mustInstall()
-
-	project := filepath.Join(k.home, "projects", "my-app")
-	if err := os.MkdirAll(project, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(k.home, ".codex"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	gitIn := func(args ...string) string {
-		out, code := k.exec(nil, project, filepath.Join(k.tools, "git"), args...)
-		if code != 0 {
-			t.Fatalf("git %v：\n%s", args, out)
+	testkit.WriteInstall(t, filepath.Join(k.home, ".gitconfig"), "[user]\n\tname = t\n\temail = t@t\n", 0o644)
+	out := k.mustInstall()
+	testkit.AssertContains(t, out, "后台已启动")
+	for _, dir := range []string{".claude", ".agents"} {
+		if !exists(filepath.Join(k.home, dir, "skills", "dispatch", "SKILL.md")) {
+			t.Fatalf("%s 下没有派活技能", dir)
 		}
-		return strings.TrimSpace(out)
-	}
-	gitIn("init", "-q", "-b", "main")
-	gitIn("config", "user.name", "t")
-	gitIn("config", "user.email", "t")
-
-	if out, code := k.agentq(project, "init"); code != 0 {
-		t.Fatalf("init：%d\n%s", code, out)
-	}
-	title := "登录失败时显示具体错误"
-	if out, code := k.agentq(project, "add", title+" SLEEP=1"); code != 0 {
-		t.Fatalf("add：%d\n%s", code, out)
-	} else {
-		testkit.AssertContains(t, out, "agentq start")
 	}
 
-	// 标准输入是 /dev/null（不是终端）、没带 --accept-bypass：拒绝，什么都不改，任务不启动。
-	before := string(testkit.ReadBytes(t, k.configPath()))
-	out, code := k.agentq(project, "start")
-	if code == 0 {
-		t.Fatalf("非终端应退出非 0：\n%s", out)
-	}
-	testkit.AssertContains(t, out, "--accept-bypass", "所有文件")
-	testkit.AssertBytes(t, k.configPath(), before)
+	project := filepath.Join(k.home, "elsewhere", "my-app")
+	testkit.WriteInstall(t, filepath.Join(project, "main.py"), "print('hi')\n", 0o644)
+	project = testkit.RealPath(t, project)
 
-	out, code = k.agentq(project, "start", "--accept-bypass")
-	if code != 0 {
-		t.Fatalf("start：%d\n%s", code, out)
-	}
-	testkit.AssertContains(t, out, "my-app", title, "agentq status", "agentq pause")
-	testkit.AssertBytes(t, k.configPath(), func() string {
-		b, err := config.SetJSONKey([]byte(before), "permission_mode", `"bypassPermissions"`)
-		if err == nil {
-			b, err = config.SetJSONKey(b, "paused", "false")
-		}
-		if err != nil {
+	// 服务没加载（重启后没起来、被卸）：技能先查，查到 not-running 直接拉起。
+	for _, label := range k.receipt().Services {
+		if err := os.Remove(filepath.Join(k.home, "fake-launchd", label)); err != nil {
 			t.Fatal(err)
 		}
-		return string(b)
-	}())
+	}
+	if out, code := k.agentq(project, "start", "--check"); code != 0 || !strings.HasPrefix(out, "not-running\n") {
+		t.Fatalf("%d\n%s", code, out)
+	}
+	before := string(testkit.ReadBytes(t, k.configPath()))
+	if out, code := k.agentq(project, "start"); code != 0 {
+		t.Fatalf("start：%d\n%s", code, out)
+	}
+	testkit.AssertBytes(t, k.configPath(), before) // 开关不动，只把服务装回去
+	if out, code := k.agentq(project, "start", "--check"); code != 0 || !strings.HasPrefix(out, "ready\n") {
+		t.Fatalf("%d\n%s", code, out)
+	}
+
+	title := "登录失败时显示具体错误"
+	out, code := k.agentq(project, "add", title+" SLEEP=1")
+	if code != 0 {
+		t.Fatalf("add：%d\n%s", code, out)
+	}
+	testkit.AssertContains(t, out, "已经 git init", "已登记到 extra_projects", "已加到 my-app")
+	out, code = k.agentq(project, "run", "my-app", title)
+	if code != 0 {
+		t.Fatalf("run：%d\n%s", code, out)
+	}
+	testkit.AssertContains(t, out, "已启动任务", "my-app")
 
 	// 假 claude 真的被拉起，命令行带完全权限
 	deadline := time.Now().Add(20 * time.Second)
@@ -1021,21 +1021,11 @@ func TestOnboardingEndToEnd(t *testing.T) {
 	if args == "" {
 		t.Fatalf("假 claude 没被拉起：\n%s", out)
 	}
-	testkit.AssertContains(t, args, "ARG[--permission-mode]\nARG[bypassPermissions]\n", "PWD["+testkit.RealPath(t, project)+"]", title)
+	testkit.AssertContains(t, args, "ARG[--permission-mode]\nARG[bypassPermissions]\n", title)
 
 	calls := string(testkit.ReadBytes(t, filepath.Join(k.home, "fake-launchctl-calls")))
-	testkit.AssertContains(t, calls, "bootstrap")
 	if strings.Contains(calls, ".listen") {
 		t.Fatalf("不该碰 Telegram listen：\n%s", calls)
-	}
-
-	// 再跑一次 start：可重复，不换代，不重复接同一条。
-	gen := k.receipt().Generation
-	if out, code := k.agentq(project, "start"); code != 0 {
-		t.Fatalf("重复 start：%d\n%s", code, out)
-	}
-	if k.receipt().Generation != gen {
-		t.Fatal("重复 start 不该换代")
 	}
 	e.waitShells()
 
@@ -1057,7 +1047,6 @@ func TestOnboardingEndToEnd(t *testing.T) {
 func TestInstallShListenFlag(t *testing.T) {
 	t.Parallel()
 	k := newInstallKit(t)
-	k.useFakeLaunchctl()
 	k.serveRelease("v1.0.0")
 	out, code := k.run("--listen")
 	if code == 0 {
@@ -1093,12 +1082,14 @@ func waitNoRunningJobs(t *testing.T, k *installKit) {
 	t.Fatal("任务一直没收尾")
 }
 
-// bootstrap.sh：没有 python3 也往下走（只给一行提示）。源码树是临时拷的，go 是假的。
+// bootstrap.sh：没有 python3 也往下走（只给一行提示）。新安装装完交给 start --welcome（装完即运行），--paused 带过去、不传给 setup；
+// 已有安装（升级）不交。源码树是临时拷的，go 是假的。
 func TestBootstrapWorksWithoutPython(t *testing.T) {
 	t.Parallel()
 	k := newInstallKit(t)
 	stub := filepath.Join(k.log, "stub-agentq")
 	testkit.WriteInstall(t, stub, "#!/bin/sh\necho \"stub agentq $*\"\n", 0o755)
+	testkit.WriteInstall(t, k.binPath(), "#!/bin/sh\necho \"installed agentq $*\"\n", 0o755)
 	k.writeBin("go", installFakeGo)
 	k.env = append(k.env, "FAKE_GO_BINARY="+stub)
 	src := t.TempDir()
@@ -1108,7 +1099,23 @@ func TestBootstrapWorksWithoutPython(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("%d\n%s", code, out)
 	}
-	testkit.AssertContains(t, out, "Python 3 not found", "stub agentq setup --yes")
+	testkit.AssertContains(t, out, "Python 3 not found", "stub agentq setup --yes", "installed agentq start --welcome\n")
+	out, code = k.exec(nil, src, "/bin/sh", script, "--paused", "--yes")
+	if code != 0 {
+		t.Fatalf("%d\n%s", code, out)
+	}
+	testkit.AssertContains(t, out, "stub agentq setup --yes\n", "installed agentq start --welcome --paused")
+	for _, args := range [][]string{{"--plan"}, {"--scope", "skills", "--yes"}, {"doctor"}} {
+		out, code = k.exec(nil, src, "/bin/sh", append([]string{script}, args...)...)
+		if code != 0 || strings.Contains(out, "installed agentq") {
+			t.Fatalf("%v 不该交给 start：%d\n%s", args, code, out)
+		}
+	}
+	testkit.WriteInstall(t, k.receiptPath(), "{}", 0o600)
+	out, code = k.exec(nil, src, "/bin/sh", script, "setup", "--yes")
+	if code != 0 || strings.Contains(out, "installed agentq") {
+		t.Fatalf("升级不该交给 start：%d\n%s", code, out)
+	}
 }
 
 // Linux 上 sh 多半是 dash，比 macOS 的 sh 严格：装一遍、截断一遍。
@@ -1131,7 +1138,7 @@ func TestInstallShUnderDash(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("%d\n%s", code, out)
 	}
-	testkit.AssertContains(t, out, "校验通过", "agentq start")
+	testkit.AssertContains(t, out, "校验通过", "后台已启动")
 	if !k.receipt().Extras {
 		t.Fatal("参数没传给 setup")
 	}

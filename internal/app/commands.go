@@ -115,18 +115,6 @@ func (a *App) CmdStatus() error {
 	} else {
 		fmt.Fprintf(w, "巡逻：%s\n", a.Patrol.PatrolStatus())
 	}
-	if s := a.Inbox.InboxStatus(st); s != "空" {
-		fmt.Fprintf(w, "任务箱：%s\n", s)
-	}
-	if a.Cfg.SuggestEnabled { // 关着时不多一行，输出和原来一样
-		fmt.Fprintf(w, "闲时找活：%s\n", a.Suggest.SuggestStatus(st, now))
-	}
-	if a.Cfg.SenseEnabled { // 关着时不多一行
-		fmt.Fprintf(w, "主动感知：%s\n", a.Sense.SenseStatus())
-	}
-	if a.Cfg.ReleaseAssistEnabled { // 关着时不多一行
-		fmt.Fprintf(w, "发版助手：%s\n", a.Release.ReleaseStatus())
-	}
 	if a.Cfg.NotifyEnabled {
 		fmt.Fprintf(w, "推送：%s\n", a.Notify.NotifyStatus())
 	} else {
@@ -306,9 +294,6 @@ func (a *App) CmdLogs(id string) error {
 		}
 	}
 	fmt.Fprintf(w, "目录：%s\n", dir)
-	if j.Output != "" {
-		fmt.Fprintf(w, "产出：%s\n", j.Output)
-	}
 	if j.Status == state.StatusRunning {
 		fmt.Fprintln(w, "\n还在运行，结果要等它结束。")
 	} else {

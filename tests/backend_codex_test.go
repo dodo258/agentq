@@ -262,7 +262,7 @@ func TestCodexProjectPermissionMissing(t *testing.T) {
 		t.Errorf("同样的原因不再记：%s", tick)
 	}
 	cfg["backends"] = map[string]any{"codex": map[string]any{"path": fake, "permission": "danger-full-access"}}
-	cfg["projects_root"], cfg["claude_path"], cfg["tick_after_job"], cfg["patrol_enabled"], cfg["notify_enabled"] = e.root, e.fake, false, false, false
+	cfg["projects_root"], cfg["claude_path"], cfg["patrol_enabled"], cfg["notify_enabled"] = e.root, e.fake, false, false
 	b, _ := json.Marshal(cfg)
 	if err := os.WriteFile(filepath.Join(e.home, ".agentq", "config.json"), b, 0o644); err != nil {
 		t.Fatal(err)
@@ -743,7 +743,7 @@ func TestCodexInstallerProjectsSkills(t *testing.T) {
 	if err := i.Doctor(); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	testkit.AssertContains(t, out.String(), "后端：codex", "已登录（ChatGPT）", "美元上限：无", "额度查询：无", "命令行进程标记：无", "关掉的任务：", "Router", "主动感知", setup.PermissionDefaultHint, "permission_mode=danger-full-access")
+	testkit.AssertContains(t, out.String(), "后端：codex", "已登录（ChatGPT）", "美元上限：无", "额度查询：无", "命令行进程标记：无", "关掉的任务：", "大方向商量", setup.PermissionDefaultHint, "permission_mode=danger-full-access")
 	if strings.Contains(out.String(), "待做和 new（要合并）") {
 		t.Errorf("Codex 能做要合并的任务：\n%s", out.String())
 	}

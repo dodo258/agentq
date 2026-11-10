@@ -1,0 +1,17 @@
+{
+  "domain": "docs",
+  "kind": "task",
+  "request": "docs/usage.md 里写的参数和 count.sh 实际支持的对不上，照 count.sh 把文档改对；count.sh 不动",
+  "expect": {
+    "merged": true,
+    "item": [
+      "done"
+    ],
+    "unchanged": [
+      "count.sh"
+    ],
+    "verify_exit": 0,
+    "max_rounds": 2,
+    "human": false
+  }
+}

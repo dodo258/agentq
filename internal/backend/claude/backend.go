@@ -33,26 +33,12 @@ func (b *Backend) Name() string { return Name }
 
 func (b *Backend) Caps() backend.Caps {
 	return backend.Caps{
-		Resume: true, PresetSession: true, HardBudget: true, MaxTurns: true, Schema: true, ToolProfiles: true, DenyRules: true,
+		Resume: true, PresetSession: true, HardBudget: true, MaxTurns: true, Schema: true, ToolProfiles: true,
 		NoExternalMCP: true, Usage: true, Cost: true, LimitSignal: true, AuthProbe: true, Skills: true, ReviewProfile: true, ImageInput: true, Monitor: true,
 	}
 }
 
 func (b *Backend) EnvKeep() []string { return envKeep }
-
-// ReleaseDeny：准备任务权限是 bypassPermissions（要改版本号、跑项目脚本），这几条挡在提交接口前面。官方文档说 Bash 规则是字符串匹配，
-// 写法一变就挡不住（如换成变量），所以它只是多一道；真正的边界见 README「发版助手」的剩余风险。
-const ReleaseDeny = `{"permissions":{"deny":["Bash(*reviewSubmission*)","Bash(*appStoreVersionSubmission*)","WebFetch(domain:api.appstoreconnect.apple.com)"]}}`
-
-func denySettings(d backend.DenyPolicy) string {
-	switch d {
-	case backend.DenySecrets:
-		return RouterDeny
-	case backend.DenyStoreSubmit:
-		return ReleaseDeny
-	}
-	return ""
-}
 
 // Build 按 Profile 拼参数。两种写法的参数顺序不同，是历史留下的，argv 快照（testdata/golden/argv.txt）固定着。
 func (b *Backend) Build(req backend.Request) (backend.Invocation, []backend.Degradation, error) {
@@ -90,9 +76,6 @@ func taskArgs(req backend.Request) []string {
 	}
 	args = append(args, addDirArgs(req)...)
 	args = append(args, "--json-schema", req.Schema)
-	if s := denySettings(req.Deny); s != "" {
-		args = append(args, "--settings", s)
-	}
 	return append(args, BudgetArgs(req.BudgetUSD)...)
 }
 
@@ -115,9 +98,6 @@ func restrictedArgs(req backend.Request) []string {
 	args = append(args, "--tools", tools)
 	if req.NoExternalMCP {
 		args = append(args, "--strict-mcp-config")
-	}
-	if s := denySettings(req.Deny); s != "" {
-		args = append(args, "--settings", s)
 	}
 	if req.Resume == "" { // 接原会话的只读任务，附件目录在最后
 		args = append(args, addDirArgs(req)...)

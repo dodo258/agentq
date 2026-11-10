@@ -53,6 +53,7 @@ func fakeApp(t *testing.T, o testkit.FakeOpts, mut func(*backend.Caps)) *fakeRig
 	}
 	t.Setenv("HOME", e.home)
 	t.Setenv("AGENTQ_FAKE_LOG", e.fakeLg)
+	t.Setenv(config.TestTuningEnv, e.tuning)
 	return &fakeRig{t: t, e: e, a: a, out: &out, name: name, st: &State{}}
 }
 
@@ -136,7 +137,7 @@ func TestDegradeBudgetNoLiveUsage(t *testing.T) {
 	r := fakeApp(t, testkit.FakeOpts{Path: "/bin/true"}, func(c *backend.Caps) { c.HardBudget = false })
 	be := r.a.BackendFor(r.name)
 	_, degraded, err := be.Build(backend.Request{Prompt: "p", Label: "l", BudgetUSD: 10})
-	if err != nil || len(degraded) != 1 || !strings.Contains(degraded[0].Note, "job_budget_usd 不生效") {
+	if err != nil || len(degraded) != 1 || !strings.Contains(degraded[0].Note, "任务预算不生效") {
 		t.Errorf("%v %v", degraded, err)
 	}
 	j := r.job("", testkit.FakeEvent{Type: "usage", Cost: 999})
@@ -147,7 +148,7 @@ func TestDegradeBudgetNoLiveUsage(t *testing.T) {
 	// agentq start 要明说
 	r.out.Reset()
 	r.a.Onboard.StartReport()
-	if !strings.Contains(r.out.String(), "job_budget_usd 不生效") {
+	if !strings.Contains(r.out.String(), "任务预算不生效") {
 		t.Errorf("agentq start 要提醒：%s", r.out.String())
 	}
 }
@@ -155,7 +156,7 @@ func TestDegradeBudgetNoLiveUsage(t *testing.T) {
 // §4.4 回合上限：靠回合收住的短任务用短超时。
 func TestDegradeMaxTurnsShortTimeout(t *testing.T) {
 	r := fakeApp(t, testkit.FakeOpts{}, func(c *backend.Caps) { c.MaxTurns = false })
-	for _, k := range []string{state.KindRouter, state.KindSuggest, state.KindSense} {
+	for _, k := range []string{state.KindDiscuss} {
 		if got := r.a.Runner.JobTimeout(&Job{Kind: k, Backend: r.name}); got != 10*time.Minute {
 			t.Errorf("%s：%v", k, got)
 		}
@@ -164,12 +165,12 @@ func TestDegradeMaxTurnsShortTimeout(t *testing.T) {
 		t.Errorf("待做不受影响：%v", got)
 	}
 	r2 := fakeApp(t, testkit.FakeOpts{}, nil)
-	if got := r2.a.Runner.JobTimeout(&Job{Kind: state.KindRouter, Backend: r2.name}); got == 10*time.Minute {
+	if got := r2.a.Runner.JobTimeout(&Job{Kind: state.KindDiscuss, Backend: r2.name}); got != 10*time.Minute {
 		t.Errorf("有回合上限不该用短超时：%v", got)
 	}
 }
 
-// §4.4 结构化输出：追问靠提示词要 JSON 并校验，失败当没结果；外部输入的任务不用这个补法，直接不启动。
+// §4.4 结构化输出：追问靠提示词要 JSON 并校验，失败当没结果。
 func TestDegradeSchemaFallback(t *testing.T) {
 	cli := fakeCLI(t, `echo '{"type":"result","ok":true,"text":"这是回答 {\"reply\":\"你好\",\"todo\":\"\"}"}'`)
 	r := fakeApp(t, testkit.FakeOpts{Path: cli}, func(c *backend.Caps) { c.Schema = false })
@@ -197,13 +198,6 @@ func TestDegradeSchemaFallback(t *testing.T) {
 	if res := r.a.Ledger.ReadResult(j); len(res.Structured) != 0 || res.Text != "" {
 		t.Errorf("校验不过应当没结果：%+v", res)
 	}
-	// 外部输入的任务不用这个补法
-	for _, kind := range []string{state.KindSense, state.KindSuggest, state.KindRelease, state.KindRouter} {
-		_, err := r.a.Runner.Start(r.st, &Job{Kind: kind, Project: "demo", ProjectDir: dir, Title: "x"}, "p", "")
-		if !errors.Is(err, backend.ErrUnsupported) {
-			t.Errorf("%s 应该拒绝：%v", kind, err)
-		}
-	}
 }
 
 func TestExtractJSON(t *testing.T) {
@@ -228,16 +222,15 @@ func TestExtractJSON(t *testing.T) {
 	}
 }
 
-// §4.4 工具限制、拒绝规则、隔离 MCP：声明 Must 的任务不启动，如实说原因；Router 走对话任务，巡逻分析不起，巡逻照常。
+// §4.4 工具限制、隔离 MCP：声明 Must 的任务不启动，如实说原因；巡逻分析不起，巡逻照常。
 func TestDegradeMustRefused(t *testing.T) {
 	for name, tc := range map[string]struct {
 		mut   func(*backend.Caps)
 		kinds []string
 		want  string
 	}{
-		"只读":     {func(c *backend.Caps) { c.ToolProfiles = false }, []string{state.KindSense, state.KindSuggest, state.KindRouter}, "不能强制只读"},
-		"拒绝规则":   {func(c *backend.Caps) { c.DenyRules = false }, []string{state.KindSuggest, state.KindRouter, state.KindRelease}, "不能强制拒绝规则"},
-		"隔离 MCP": {func(c *backend.Caps) { c.NoExternalMCP = false }, []string{state.KindSense, state.KindSuggest, state.KindRouter}, "不能隔离"},
+		"只读":     {func(c *backend.Caps) { c.ToolProfiles = false }, []string{state.KindDiscuss}, "不能强制只读"},
+		"隔离 MCP": {func(c *backend.Caps) { c.NoExternalMCP = false }, []string{state.KindDiscuss}, "不能隔离"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := fakeApp(t, testkit.FakeOpts{Path: "/bin/true"}, tc.mut)
@@ -262,11 +255,8 @@ func TestDegradeMustRefused(t *testing.T) {
 
 func TestDegradeFeaturesOffWithoutProfile(t *testing.T) {
 	r := fakeApp(t, testkit.FakeOpts{Path: "/bin/true"}, func(c *backend.Caps) { c.ToolProfiles = false })
-	if ok, why := r.a.Runner.CheckReady(backend.MustSuggest); ok || !strings.Contains(why, "不能强制只读") {
+	if ok, why := r.a.Runner.CheckReady(backend.MustDiscuss); ok || !strings.Contains(why, "不能强制只读") {
 		t.Errorf("%v %q", ok, why)
-	}
-	if why := r.a.Runner.Lacks(backend.MustRouter); why == "" {
-		t.Error("Router 应该被关")
 	}
 	if ok, why := r.a.Runner.CheckReady(backend.MustPatrol); ok || why == "" {
 		t.Error("巡逻分析应该被关")
@@ -628,6 +618,7 @@ func TestProjectBackendAndResumeSticks(t *testing.T) {
 	}
 	t.Setenv("HOME", e.home)
 	t.Setenv("AGENTQ_FAKE_LOG", e.fakeLg)
+	t.Setenv(config.TestTuningEnv, e.tuning)
 	useRealShell(t)
 	dir := testkit.MkProject(t, e.root, "demo", "- [ ] 修登录\n")
 	st := &State{}
@@ -723,7 +714,7 @@ func TestDescribeBackend(t *testing.T) {
 	c.HardBudget, c.ReviewProfile, c.ToolProfiles, c.Resume, c.AuthProbe = false, false, false, false, false
 	weak := testkit.RegisterFake(t, testkit.FakeOpts{Path: "/x/weak", Caps: c})
 	s = backend.Describe(backend.Get(weak, backend.Options{}), backend.Probe{Path: "/x/weak", Version: "2.0"}, nil)
-	for _, want := range []string{"美元上限：无，job_budget_usd 不生效", "续跑：无", "引擎审查：无", "认证：查不了", "待做和 new", "Router", "主动感知", "巡逻分析"} {
+	for _, want := range []string{"美元上限：无，任务预算不生效", "续跑：无", "引擎审查：无", "认证：查不了", "待做和 new", "大方向商量", "巡逻分析"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("缺 %q：\n%s", want, s)
 		}
@@ -837,20 +828,6 @@ func TestBackendRegistry(t *testing.T) {
 	}
 }
 
-// Router 打开、后端做不到它的硬要求：消息走对话任务，不起 Router。
-func TestDegradeRouterFallsBackToChat(t *testing.T) {
-	cli := fakeCLI(t, `echo '{"type":"result","ok":true,"text":"答"}'`)
-	r := fakeApp(t, testkit.FakeOpts{Path: cli}, func(c *backend.Caps) { c.DenyRules = false })
-	r.a.Cfg.RouterEnabled = true
-	useRealShell(t)
-	s := &notify.State{Inbox: []notify.InMsg{{ID: 1, Text: "帮我看看"}}}
-	r.a.Chat.ServeInbox(s, r.st, nil)
-	r.e.waitShells()
-	if len(r.st.Jobs) != 1 || r.st.Jobs[0].Kind != state.KindChat {
-		t.Fatalf("应该起对话任务：%+v；日志 %s", r.st.Jobs, r.out.String())
-	}
-}
-
 // 追问：后端做不到只读就回退成普通对话任务；能做到才只读续跑。
 func TestDegradeFollowupFallsBack(t *testing.T) {
 	route := func(mut func(*backend.Caps)) int {
@@ -869,22 +846,6 @@ func TestDegradeFollowupFallsBack(t *testing.T) {
 	}
 	if got := route(func(c *backend.Caps) { c.Resume = false }); got != chat.RoutePlain {
 		t.Errorf("不能续跑应该回退：%d", got)
-	}
-}
-
-// 手动跑闲时找活也如实拒绝，不占今天。
-func TestDegradeSuggestRefused(t *testing.T) {
-	r := fakeApp(t, testkit.FakeOpts{Path: "/bin/true"}, func(c *backend.Caps) { c.ToolProfiles = false })
-	dir := testkit.MkProject(t, r.e.root, "alpha", "")
-	testkit.GitT(t, r.e.home, dir, "init", "-q", "-b", "main")
-	testkit.GitT(t, r.e.home, dir, "add", "-A")
-	testkit.GitT(t, r.e.home, dir, "commit", "-q", "-m", "init")
-	err := r.a.Suggest.CmdSuggest("")
-	if err == nil || !strings.Contains(err.Error(), "不能强制只读") {
-		t.Errorf("%v；日志 %s", err, r.out.String())
-	}
-	if s, _ := r.a.Suggest.LoadSuggest(); s != nil && s.LastDay != "" {
-		t.Errorf("没跑不该占今天：%+v", s)
 	}
 }
 
@@ -938,10 +899,10 @@ func TestStartChecksMustEvenIfBuildForgets(t *testing.T) {
 	r := fakeApp(t, testkit.FakeOpts{Path: cli, SkipCheckMust: true}, func(c *backend.Caps) { c.ToolProfiles = false })
 	useRealShell(t)
 	dir := testkit.MkProject(t, r.e.root, "demo", "")
-	if _, _, err := r.a.BackendFor(r.name).Build(backend.Request{Profile: backend.ProfileNoTools, Must: backend.MustSense}); err != nil {
+	if _, _, err := r.a.BackendFor(r.name).Build(backend.Request{Profile: backend.ProfileNoTools, Must: backend.MustDiscuss}); err != nil {
 		t.Fatalf("这个假后端的 Build 不该自己拒绝：%v", err)
 	}
-	j, err := r.a.Runner.Start(r.st, &Job{Kind: state.KindSense, Project: "demo", ProjectDir: dir, Title: "主动感知"}, "外部原文", "")
+	j, err := r.a.Runner.Start(r.st, &Job{Kind: state.KindDiscuss, Project: "demo", ProjectDir: dir, Title: "大方向"}, "条目原文", "")
 	r.e.waitShells()
 	if j != nil || !errors.Is(err, backend.ErrUnsupported) {
 		t.Errorf("Start 应该拒绝：%+v %v", j, err)

@@ -26,30 +26,34 @@ curl -fsSL https://github.com/dodo258/agentq/releases/latest/download/install.sh
 脚本下载预编译程序并校验，不需要 Go。已安装时重跑就是升级，配置和数据保留。
 
 
-安装结束时，脚本说明任务的权限（独立进程能读写当前用户的所有文件，任务内容发给你使用的模型服务），然后询问：
+装好就在运行，不问也不等输入：安装本身就是同意，记录在 `~/.agentq/consent.json`（方式 `install`）。装之前先读 [SECURITY](../../SECURITY.md)。安装结束时脚本如实说明：后台任务由独立进程完成，能读写当前用户的所有文件、运行命令，任务内容发给你使用的模型服务、用你自己的额度；再给出暂停（`agentq pause`）和卸载（`agentq remove --yes`）命令。接着脚本做以下操作：
 
-```text
-按回车同意并启动，输入 n 只安装不启动：
-```
-
-只有空行算同意，同意记录在 `~/.agentq/consent.json`。回答前先读 [SECURITY](../../SECURITY.md)。同意后，脚本做以下操作：
-
-- 安装缺少的 CLI 并登录。
-- `~/.local/bin` 不在 PATH 时，往 zsh 或 bash 的配置文件加一行带标记的 export，改前备份成 `*.pre-agentq`，卸载时只删这一行。其他 shell 不改，打印需要手动添加的那一行。写入哪个文件见[命令参考](../reference/commands.md#agentq-start---welcome---assume-yes)。
-- 第一次同意时，把通用工程规则放到 `~/.claude/rules/agentq/`，前台会话和后台任务都会读取。`~/.claude/CLAUDE.md` 或 `~/.claude/rules/` 里已有内容时不放。`agentq env on` 添加，`agentq env off` 移除。
+- 有终端时安装缺少的 CLI 并登录。
+- `~/.local/bin` 不在 PATH 时，往 zsh 或 bash 的配置文件加一行带标记的 export，改前备份成 `*.pre-agentq`，卸载时只删这一行。其他 shell 不改，打印需要手动添加的那一行。写入哪个文件见[命令参考](../reference/commands.md#agentq-start---welcome---paused)。
+- 第一次运行时，把通用工程规则放到 `~/.claude/rules/agentq/`，前台会话和后台任务都会读取。`~/.claude/CLAUDE.md` 或 `~/.claude/rules/` 里已有内容时不放。`agentq env on` 添加，`agentq env off` 移除。
 - 把 `permission_mode` 设成 `bypassPermissions`。任务无人值守时要改文件、运行命令，新安装的 `default` 写不了文件。
 - 打开推送。任务合并、失败、中断、卡住时通知你，没配 Telegram 时用本机通知。
 - 安装服务，取消暂停，立刻检查一次待做。没有待做时不调用模型，不消耗额度。
 
-没有终端（管道、容器）或设了 `CI`、`NONINTERACTIVE` 时，脚本只安装不启动，退出码 0：不装 CLI，不改 shell 配置，打印需要运行的官方命令。之后运行 `agentq start` 启动。
+想先不跑就加 `--paused`（`... | sh -s -- --paused`，或 `AGENTQ_PAUSED=1`）：只安装，不改权限、不装服务，之后运行 `agentq start`，或在聊天里说「开后台」。
 
-在脚本里要一次完成时加 `--yes`（`... | sh -s -- --yes`，或 `AGENTQ_ASSUME_YES=1`），这算明确同意。没有终端时它同样不安装 CLI 和登录，缺少时以非 0 退出。
+没有终端（管道、容器、CI）时 CLI 没装或没登录：脚本不装 CLI、不登录，打印官方命令，以非 0 退出。弄好 CLI 后不用再敲 agentq 命令，在 Claude Code 或 Codex 里说需求，派活技能发现后台没开会自己启动。
+
+已有安装重跑是升级：配置、开关都保留，暂停着的不会被打开。
 
 当前终端找不到 `agentq` 时，用 `~/.local/bin/agentq`，或新开一个终端。
 
 ## 添加第一个任务
 
-在项目目录打开 Claude Code，说明要做什么。`dispatch` 技能把它写成带验收标准的条目。
+装好，开口说。在任何目录打开 Claude Code 或 Codex，直接说要做什么，不用说「派活」：
+
+```text
+给这个项目加一个 hello 命令
+```
+
+`dispatch` 技能判断：加功能、修 bug、改界面，哪怕很小，都写成带验收标准的条目交给后台，做完通知你；只是问问、改错字改文案这类零碎改动、你说「直接改」「我看着」的，当场做。目录还没接入也不用管：不是 Git 仓库时它 `git init`，现有文件做初始提交（自动写的 `.gitignore` 挡住 `.env`、密钥和依赖目录），补上 `docs/BACKLOG.md` 等文件；不在 `projects_root`（默认 `~/projects`）下的登记到 `extra_projects`。在家目录、桌面这类不像项目的地方，它先问一句项目叫什么、放哪，带默认答案。后台没在跑时它自己拉起；你自己暂停的不替你打开。
+
+进度、验收、停也在聊天里说：「做得怎样」「做完的怎么看」「先停下」。
 
 不打开 Claude Code 时，用 `agentq add`：
 
@@ -58,9 +62,7 @@ cd ~/code/my-app
 agentq add "给导出流程加失败重试并补测试"
 ```
 
-`agentq add` 往「待做」加一条并提交。不在项目目录时加 `--project my-app`。条目写清要什么、怎样算完成，任务结果更容易符合预期。
-
-第一次 `add` 时项目自动接入：缺少的 `docs/BACKLOG.md` 等文件会生成，已有文件不改。项目要是 Git 仓库，主目录在默认分支上。项目不要求放在 `projects_root`（默认 `~/projects`）下，放在外面时自动登记到 `extra_projects`，并打印一行说明。
+`agentq add` 往「待做」加一条并提交，接入规则和上面一样。不在项目目录时加 `--project my-app`。条目写清要什么、怎样算完成，任务结果更容易符合预期。
 
 ## 查看结果
 
@@ -102,7 +104,7 @@ agentq run my-app 导出流程
 
 | 参数 | 作用 |
 | --- | --- |
-| `--yes` | 明确同意启动，不再询问（`AGENTQ_ASSUME_YES=1` 同义） |
+| `--paused` | 只安装，后台先不跑（`AGENTQ_PAUSED=1` 同义）。升级时不管这个参数，保留原来的开关 |
 | `--proxy <地址>` | 下载走代理，支持 `http://`、`https://`、`socks5://`、`socks5h://`（`AGENTQ_PROXY` 同义） |
 | `--mirror <前缀>` | GitHub 下载镜像（`AGENTQ_MIRROR` 同义）。校验文件和源码仍从原地址取，镜像改过的文件会被拒绝 |
 | `--version <版本>` | 要安装的版本，默认最新。`main` 走源码，要有 Go（`AGENTQ_VERSION` 同义） |
@@ -113,6 +115,8 @@ agentq run my-app 导出流程
 ```sh
 sh scripts/bootstrap.sh --yes
 ```
+
+新安装同样装完即运行，`--paused` 只装。
 
 下面的选项 `scripts/bootstrap.sh` 和 `install.sh` 都接受：
 
@@ -128,11 +132,11 @@ sh scripts/bootstrap.sh --yes
 | `--backup` | 安装可选的私有 Git 备份服务，需要 `gh`，还要在 `~/.agentq/backup.json` 明确列出目标 |
 | `--watchdog` | 安装可选的本地看门狗，只写本地报告 |
 
-只安装不启动时的默认状态：暂停，夜班、复盘、巡逻、推送关闭，权限 `default`。已有配置逐字节保留。同名技能用你自己的版本，只有任务合同依赖的四个（`agent-task`、`dispatch`、`new-project`、`nightly-review`）内容不同时才停下。本地修改或非法配置先报告并停止，不覆盖。
+`--paused` 安装时的状态：暂停，夜班、复盘、巡逻、推送关闭，权限 `default`。已有配置逐字节保留。同名技能用你自己的版本，只有任务合同依赖的四个（`agent-task`、`dispatch`、`new-project`、`nightly-review`）内容不同时才停下。本地修改或非法配置先报告并停止，不覆盖。
 
-先只安装、后来用 `agentq start` 启动时，推送不会自动打开，要自己打开。夜班、巡逻等开关也要自己打开，见[配置](configuration.md)。
+`--paused` 装的、后来用 `agentq start` 启动时，推送不会自动打开，要自己打开。夜班、巡逻等开关也要自己打开，见[配置](configuration.md)。
 
-由 agent 代装时，可以这样说：读本仓 `llms.txt`，一条命令装好 agentq，只装不启动，把 `agentq start` 交给我确认。
+由 agent 代装时，可以这样说：读本仓 `llms.txt`，一条命令装好 agentq。
 
 完整的检测项、所有权规则和恢复流程见[安装指南](../install.zh-CN.md)。旧版 binary-only 安装见 [legacy-install](../legacy-install.md)。
 

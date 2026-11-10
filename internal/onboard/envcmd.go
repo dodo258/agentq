@@ -27,6 +27,9 @@ func (a *Service) envFirstTime() bool {
 	return err == nil && c == nil && s.State == envlayer.StateNone
 }
 
+// envKeptLine：第一次同意时用户已有自己的全局规则，不装 agentq 的。
+const envKeptLine = "检测到你已有全局规则，保留你的，不加 agentq 的。要加：agentq env on"
+
 // envConsentLine 是同意文字里关于规则的那一行，不是第一次就没有。
 func (a *Service) envConsentLine() string {
 	if !a.envFirstTime() {
@@ -37,7 +40,7 @@ func (a *Service) envConsentLine() string {
 		return ""
 	}
 	if !s.ShouldAutoEnable() {
-		return "检测到你已有全局规则，保留你的，不加 agentq 的。要加：agentq env on"
+		return envKeptLine
 	}
 	return fmt.Sprintf("会把一份通用工程规则放到 %s，这台机器上所有项目的会话都会读到；项目规则和你自己的规则优先。不想要：agentq env off", a.ruleWhere(s.Dir))
 }

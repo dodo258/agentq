@@ -34,7 +34,7 @@ tail -50 ~/.agentq/launchd.log
 
 ## 任务运行了但没写文件
 
-`permission_mode` 是 `default`。这个模式下无人值守的任务写不了文件，任务箱的摘要也会提示。先读 [SECURITY](../../SECURITY.md)，然后运行 `agentq start`，或手动把 `permission_mode` 改成 `bypassPermissions`。
+`permission_mode` 是 `default`。这个模式下无人值守的任务写不了文件。先读 [SECURITY](../../SECURITY.md)，然后运行 `agentq start`，或手动把 `permission_mode` 改成 `bypassPermissions`。
 
 ## 任务反复重做同一条
 
@@ -51,10 +51,10 @@ tail -50 ~/.agentq/launchd.log
 | 疑似卡死 | 会话记录 45 分钟没有增长，可能在运行长测试 | 不会自动杀掉，`timeout`（默认 4 小时）到时才杀。确认卡住时运行 `agentq stop <id>` |
 | 中断 | 进程退出但条目还标着进行中，或做到一半撞上上限 | 自动续跑一次，见[中断与自动续跑](../reference/scheduling.md#中断与自动续跑) |
 | 续跑后仍中断 | 不再自动续跑 | 查看分支现状，手动 `claude -r` 接着做，或去掉标记 |
-| 子代理失控，自动停止 | 子代理日志 ≥25 个或再派子代理的日志 ≥8 个 | 回复通知接回，或去掉卡住标记。不想自动停止时设 `progress_autostop=false` |
-| 撞预算两次，卡住 | 单次超过 `job_budget_usd`，续跑又超过 | 同上，或调高预算 |
+| 子代理失控，自动停止 | 子代理日志 ≥25 个或再派子代理的日志 ≥8 个 | 回复通知接回，或去掉卡住标记 |
+| 撞预算两次，卡住 | 单次超过预算上限（待做 150 美元），续跑又超过 | 同上 |
 | 质量门未通过，条目标了卡住 | 退回两轮仍未通过，或无法判定（比如没有 `.agentq/verify`） | `agentq gate report <任务>` 查看报告。在卡片上点放行、退回、放弃或再审一次，或运行 `agentq gate pass <任务> --reason "..."`、`agentq gate rerun <任务>`、`agentq gate abandon <任务>`，也可以去掉卡住标记从分支接着做 |
-| 条目标了 `（大方向）` 没有开工 | 在等你回答：Telegram 卡片或 `agentq discuss`。到 `discuss_wait` 没有回答就按默认开工，其他条目不等待 | 回答问题。要马上开工时运行 `agentq discuss answer <编号> 随便` |
+| 条目标了 `（大方向）` 没有开工 | 在等你回答：Telegram 卡片或 `agentq discuss`。2 小时没有回答就按默认开工，其他条目不等待 | 回答问题。要马上开工时运行 `agentq discuss answer <编号> 随便` |
 | 新项目后面的条目不开工 | 第一版还没合并，后面的条目要在它上面做 | `agentq status` 写明卡在哪和三种处理方式：去掉第一条的卡住标记，从分支重做（第二条继续等）；`agentq gate abandon <任务>` 放弃，分支保留，后面的开工；把第一条从 `docs/BACKLOG.md` 删掉并提交，后面的开工 |
 | 界面门无法判定，或没有交付单 | 项目还没有 `.agentq/ui`、`.agentq/smoke`，默认只记录，不挡合并 | 见[界面门和成品门的脚本](configuration.md#界面门和成品门的脚本) |
 | 退回时任务要求改成重写 | 补丁门调成了 `error`，同一模块 30 天内第三次修复 | `agentq health <项目>` 查看是哪个模块。任务重写后 `type` 写 `rewrite` |
@@ -82,7 +82,7 @@ tail -50 ~/.agentq/launchd.log
 
 | 症状 | 含义 | 处理 |
 | --- | --- | --- |
-| 额度：未知，照常接活 | `claude -p /usage` 读不出 | 不影响运行。真撞上上限时进入冷却。闲时找活读不出时不生成 |
+| 额度：未知，照常接活 | `claude -p /usage` 读不出 | 不影响运行。真撞上上限时进入冷却 |
 | `agentq status` 比平时慢 | 额度缓存过期，status 重新读取一次，最多 60 秒 | 正常现象 |
 
 ## 服务
@@ -128,17 +128,7 @@ agentq 修改 BACKLOG 前要求主目录在默认分支，且 BACKLOG 没有未�
 | 回复「按钮过期了」 | 超过 14 天，或进程重启前发出的旧按钮 | 回复文字 |
 | 回复「条目改过了，请回文字」 | 发卡片后条目被修改 | 回复文字 |
 | 回复「没定成」 | 主目录暂时提交不了 | 处理后再点 |
-| 「发」没有提交 | 只认回复那条提示消息、整句就是「发」，7 天内，构建没变 | 按回复里写的原因处理 |
 | 巡逻报监听服务不在列表里 | 配好 Telegram 后还没运行过 `agentq start`，或 `notify_enabled` 关闭 | 打开 `notify_enabled` 后运行 `agentq start` |
 | 基础设施问题没有推送 | 这类问题只写 `patrol.json` 和汇总 | 查看 `agentq patrol`。随仓库的看门狗也只写本地报告 |
 
 推送规则（合并窗口、夜间、每天上限）见[推送规则](telegram.md#推送规则)。
-
-## 主动感知和发版助手
-
-| 症状 | 原因 | 处理 |
-| --- | --- | --- |
-| 没配 App Store Connect | 没有 `~/.appstoreconnect/config.env` | 感知只看 GitHub，发版助手不工作 |
-| 第一次运行没有结果 | 第一次只记基线，历史不算新内容 | 正常现象 |
-| 项目对应不上 App | bundle id 精确对应失败 | 查看日志。id 要在 `project.pbxproj` 或 `project.yml` 里，三层以内 |
-| 读取失败 | 接口 401、403、429、5xx | 只记日志，下次再读。这条路径只用假服务测过，遇到实际差异请提 Issue |

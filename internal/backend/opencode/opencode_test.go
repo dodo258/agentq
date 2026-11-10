@@ -72,7 +72,7 @@ func TestBuildReview(t *testing.T) {
 // 安全边界没真实验证过：要它们的任务不启动，不靠提示词假装。
 func TestBuildRefusesUnverifiedBoundaries(t *testing.T) {
 	b := New(backend.Options{})
-	for _, m := range []backend.Must{backend.MustRouter, backend.MustSuggest, backend.MustSense, backend.MustRelease, backend.MustFollowup, backend.MustPatrol, backend.MustDiscuss, backend.MustProfile, backend.MustDeny, backend.MustSchema, backend.MustNoExternalMCP} {
+	for _, m := range []backend.Must{backend.MustFollowup, backend.MustPatrol, backend.MustDiscuss, backend.MustProfile, backend.MustSchema, backend.MustNoExternalMCP} {
 		if _, _, err := b.Build(backend.Request{Prompt: "x", Must: m}); !errors.Is(err, backend.ErrUnsupported) {
 			t.Errorf("Must %d 应该拒绝：%v", m, err)
 		}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"agentq/internal/chat"
+	"agentq/internal/config"
 	"agentq/internal/fsx"
 	"agentq/internal/proc"
 	"agentq/internal/state"
@@ -44,7 +45,7 @@ func TestIntegrationListen(t *testing.T) {
 				envs = append(envs, kv)
 			}
 		}
-		cmd.Env = append(append(envs, "HOME="+e.home, "AGENTQ_FAKE_LOG="+e.fakeLg), e.extra...)
+		cmd.Env = append(append(envs, "HOME="+e.home, "AGENTQ_FAKE_LOG="+e.fakeLg, config.TestTuningEnv+"="+e.tuning), e.extra...)
 		cmd.Stdout, cmd.Stderr = &logBuf, &logBuf
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)

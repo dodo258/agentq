@@ -1,6 +1,7 @@
 package evolve
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 //   - 门 error 档没过、退回了任务的拦截先记着；这一条后来合并了（门是对的）或用户放弃了，才算确认，并进项目约束（constraints.go）。
 //     用户放行、再审过了的不算：放行记成 gate-override 信号，是门的问题。
 //   - agentq 自己的信号（见 selfKind）同一 Key 出现两次以上，写一条提案（proposal.go），同一 Key 只提一次。
+//   - 用户和真实使用里冒出来的问题（亲手 stop、门卡片上退回或放弃、验收后返工、巡逻疑似误报、retry_after 挡太久）见 usersignals.go。
 //   - tick 每小时最多收一次；没有新数据就什么都不写，下次 tick 再看（stat 门结果和任务记录，读一次 patrol.json）。
 const (
 	collectEvery    = time.Hour
@@ -54,7 +56,8 @@ const (
 // selfKind：说的是 agentq 自己的问题，不分项目归并，够次数写提案。其余是项目自己的事。
 func selfKind(kind string) bool {
 	switch kind {
-	case KindGateUnknown, KindGateOverride, KindPlan, KindCrash, KindTimeout, KindPatrol:
+	case KindGateUnknown, KindGateOverride, KindPlan, KindCrash, KindTimeout, KindPatrol,
+		KindUserStop, KindUserDecide, KindRework, KindPatrolGone, KindRetryWait:
 		return true
 	}
 	return false
@@ -70,6 +73,11 @@ var kindWords = map[string]string{
 	KindFailed:       "任务失败",
 	KindCrash:        "门进程没留下结果",
 	KindPatrol:       "巡逻发现问题",
+	KindUserStop:     "用户亲手停了任务",
+	KindUserDecide:   "用户在门卡片上退回或放弃",
+	KindRework:       "验收后返工",
+	KindPatrolGone:   "巡逻报了又自己消失",
+	KindRetryWait:    "条目被 retry_after 挡住超过 6 小时",
 }
 
 // Signal 是归并后的一类信号。
@@ -111,6 +119,12 @@ type SignalStore struct {
 	Signals     []Signal      `json:"signals"`
 	Pending     []pendingFail `json:"pending,omitempty"`
 	ProposedKey []string      `json:"proposed_keys,omitempty"` // 提过案的 Key：信号过期删掉了也不再提
+	// AuditAfter：读过的门审计日志里最晚的一行的时间（用户退回、放弃）。
+	AuditAfter time.Time `json:"audit_after,omitzero"`
+	// PatrolOpen：上次读到的、算 agentq 问题的巡逻问题。这次不在了、又是当天首次发现的，算疑似误报。
+	PatrolOpen []patrolIssue `json:"patrol_open,omitempty"`
+	// ReworkSeen：记过的返工意见（见 reworkKey）。意见留在「已完成」里，信号过期了也不再算。
+	ReworkSeen []string `json:"rework_seen,omitempty"`
 }
 
 func (s *Service) evolveDir() string         { return filepath.Join(s.DataDir(), "evolve") }
@@ -236,9 +250,6 @@ func gateWord(name string) string {
 
 // CollectIfDue：tick 调用。开关开着、离上次收到新数据满一小时才收；出错只记日志，不影响 tick。
 func (s *Service) CollectIfDue() {
-	if !s.Cfg.EvolveSignalsEnabled {
-		return
-	}
 	defer func() { // 收集出了没想到的错也不能让 tick 非 0 退出
 		if p := recover(); p != nil {
 			s.Logf("自我进化：收信号出错，本次作废，不影响 tick：%v", p)
@@ -251,9 +262,6 @@ func (s *Service) CollectIfDue() {
 
 // Collect 收一次信号。force 为假时离上次收到新数据不满一小时就不收。返回这次有没有新数据（有才写文件）。
 func (s *Service) Collect(force bool) (bool, error) {
-	if !s.Cfg.EvolveSignalsEnabled {
-		return false, nil
-	}
 	st, err := s.loadForCollect()
 	if err != nil {
 		return false, err
@@ -262,7 +270,8 @@ func (s *Service) Collect(force bool) (bool, error) {
 	if !force && !st.Checked.IsZero() && !now.Before(st.Checked) && now.Sub(st.Checked) < collectEvery {
 		return false, nil
 	}
-	in := s.scan(st, now)
+	// tick 和命令都没有上层 ctx：读 git 的那几次各有超时
+	in := s.scan(context.Background(), st, now)
 	if in.empty() {
 		return false, nil
 	}
@@ -289,14 +298,28 @@ func (s *Service) Collect(force bool) (bool, error) {
 			learned[c.project] = append(learned[c.project], c)
 		}
 	}
-	if in.patrol != nil {
+	if in.patrolRead {
 		s.absorbPatrol(st, in.patrol, now)
+		for _, is := range in.patrolGone {
+			s.absorbPatrolGone(st, is, now)
+		}
+		st.PatrolOpen = in.patrolOpen
 	}
-	if s.Cfg.LearnedConstraintsEnabled {
-		for project, cs := range learned {
-			if err := s.learn(project, cs, now); err != nil {
-				s.Logf("自我进化：%s 的约束没存下：%v", project, err)
-			}
+	for _, d := range in.decisions {
+		s.absorbDecision(st, d, now)
+	}
+	if in.auditAfter.After(st.AuditAfter) {
+		st.AuditAfter = in.auditAfter
+	}
+	for _, r := range in.rework {
+		s.absorbRework(st, r, now)
+	}
+	for _, w := range in.retry {
+		s.absorbRetryWait(st, w, now)
+	}
+	for project, cs := range learned {
+		if err := s.learn(project, cs, now); err != nil {
+			s.Logf("自我进化：%s 的约束没存下：%v", project, err)
 		}
 	}
 	st.prune(now)
@@ -324,18 +347,25 @@ type patrolIssue struct {
 }
 
 type scanned struct {
-	gates   []gateObs
-	metas   []*state.Job
-	patrol  []patrolIssue
-	files   map[string]string // 这次看到的文件，写回 SignalStore.Files
-	touched bool              // 有没读过的文件，或巡逻有新发现
+	gates      []gateObs
+	metas      []*state.Job
+	patrol     []patrolIssue
+	patrolRead bool          // patrol.json 读出来了（问题可能一个都没有）
+	patrolOpen []patrolIssue // 这次还在的、算 agentq 问题的巡逻问题
+	patrolGone []patrolIssue // 当天报了又消失的
+	decisions  []gateDecision
+	auditAfter time.Time
+	rework     []reworkItem
+	retry      []retryWait
+	files      map[string]string // 这次看到的文件，写回 SignalStore.Files
+	touched    bool              // 有没读过的文件，或巡逻、审计日志、BACKLOG、状态文件里有新的
 }
 
 func (in *scanned) empty() bool { return !in.touched }
 
 // scan 读没读过的（新的、改过的）门结果和任务记录，和巡逻的新发现。读不了、坏了的跳过：信号是可有可无的事，不挡别的。
 // 没记过、30 天前就改过的文件不看（第一次收集只看最近 30 天）；文件没了就从记录里去掉。
-func (s *Service) scan(st *SignalStore, now time.Time) *scanned {
+func (s *Service) scan(ctx context.Context, st *SignalStore, now time.Time) *scanned {
 	in := &scanned{files: map[string]string{}}
 	fresh := func(path string) (time.Time, bool) {
 		fi, err := os.Stat(path)
@@ -358,17 +388,6 @@ func (s *Service) scan(st *SignalStore, now time.Time) *scanned {
 		in.touched = true
 		return fi.ModTime(), true
 	}
-	readMeta := func(path string) *state.Job {
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		var j state.Job
-		if json.Unmarshal(b, &j) != nil || j.ID == "" || j.ID != filepath.Base(filepath.Dir(path)) {
-			return nil
-		}
-		return &j
-	}
 	lasts, _ := filepath.Glob(filepath.Join(s.DataDir(), "gate", "*", "last.json")) // 模式是固定的，不会报错
 	for _, p := range lasts {
 		at, ok := fresh(p)
@@ -376,7 +395,7 @@ func (s *Service) scan(st *SignalStore, now time.Time) *scanned {
 			continue
 		}
 		id := filepath.Base(filepath.Dir(p))
-		j := readMeta(filepath.Join(s.JobDir(id), "meta.json"))
+		j := s.readMeta(filepath.Join(s.JobDir(id), "meta.json"))
 		b, err := os.ReadFile(p)
 		var res gate.RunResult
 		if j == nil || err != nil || json.Unmarshal(b, &res) != nil {
@@ -396,7 +415,7 @@ func (s *Service) scan(st *SignalStore, now time.Time) *scanned {
 		if !ok {
 			continue
 		}
-		if j := readMeta(p); j != nil {
+		if j := s.readMeta(p); j != nil {
 			ms = append(ms, metaAt{j, at})
 		}
 	}
@@ -410,13 +429,30 @@ func (s *Service) scan(st *SignalStore, now time.Time) *scanned {
 			Issues []patrolIssue `json:"issues"`
 		}
 		if json.Unmarshal(b, &ps) == nil {
-			in.patrol = ps.Issues
+			in.patrol, in.patrolRead = ps.Issues, true
 			if slices.ContainsFunc(ps.Issues, func(is patrolIssue) bool { return is.FirstSeen.After(st.PatrolAfter) && selfPatrol(is.Check) }) {
 				in.touched = true
 			}
+			s.scanPatrolGone(st, ps.Issues, now, in)
 		}
 	}
+	s.scanDecisions(st, now, in)
+	s.scanRework(ctx, st, in)
+	s.scanRetryWait(st, now, in)
 	return in
+}
+
+// readMeta 读一份任务记录。读不了、坏了、和目录名对不上的是 nil。
+func (s *Service) readMeta(path string) *state.Job {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var j state.Job
+	if json.Unmarshal(b, &j) != nil || j.ID == "" || j.ID != filepath.Base(filepath.Dir(path)) {
+		return nil
+	}
+	return &j
 }
 
 // absorbGate：一份门结果。error 档没过的记成 gate-fail，同时记下等确认；判不了的记成 gate-unknown。
@@ -518,6 +554,7 @@ func (s *Service) absorbMeta(st *SignalStore, j *state.Job, now time.Time) []con
 			}
 		}
 	}
+	s.absorbStop(st, j, now)
 	switch j.Status {
 	case state.StatusTimeout:
 		kind := j.Kind

@@ -25,9 +25,8 @@ const (
 )
 
 var (
-	retentionJobIDRe = regexp.MustCompile(`^\d{4}-\d{6}-.+$`)        // newJobID 的格式
-	retentionReplyRe = regexp.MustCompile(`^\d{4}-\d{6}-.+\.md$`)    // replies/<任务id>.md
-	retentionDayRe   = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}\.md$`) // sense/<日期>.md
+	retentionJobIDRe = regexp.MustCompile(`^\d{4}-\d{6}-.+$`)     // newJobID 的格式
+	retentionReplyRe = regexp.MustCompile(`^\d{4}-\d{6}-.+\.md$`) // replies/<任务id>.md
 )
 
 func (a *Service) retentionDayPath() string { return filepath.Join(a.DataDir(), "retention-day") }
@@ -109,7 +108,7 @@ func keepFileTail(path string, size, keep int64) error {
 	return nil
 }
 
-// removeOldEntries 删超过 retention_days 的运行数据。
+// removeOldEntries 删超过 Config.RetentionDays 的运行数据。
 //
 // 基准不是当前时间，是「现在」和记录里最新时间中较早的那个：时钟往前跳一年时，不能把全部记录都算成过期。
 // 比现在还晚的记录（时钟往回跳过）不算过期。代价是长期没有新任务时不清理，磁盘也没有在涨。
@@ -210,12 +209,7 @@ func (a *Service) retentionEntries() []retentionEntry {
 		return nil
 	}
 	var entries []retentionEntry
-	dirs := []string{filepath.Join(data, "jobs"), filepath.Join(data, "gate"), filepath.Join(data, "verify"), filepath.Join(data, "inbox-work")}
-	sense := a.Ledger.SenseDir()
-	senseOK := a.retentionRealDir(sense)
-	if senseOK {
-		dirs = append(dirs, filepath.Join(sense, "runs"))
-	}
+	dirs := []string{filepath.Join(data, "jobs"), filepath.Join(data, "gate"), filepath.Join(data, "verify")}
 	for _, dir := range dirs {
 		for _, d := range a.retentionList(dir) {
 			if !d.IsDir() || !retentionJobIDRe.MatchString(d.Name()) {
@@ -235,9 +229,6 @@ func (a *Service) retentionEntries() []retentionEntry {
 		}
 	}
 	files(filepath.Join(data, "replies"), retentionReplyRe)
-	if senseOK {
-		files(sense, retentionDayRe)
-	}
 	// 审查记录按它是哪个任务的：任务还在记录里（在跑、在过门、卡住的都在）就留着，审完又跑门要用
 	for _, dir := range a.reviewDirs() {
 		for _, d := range a.retentionList(dir) {

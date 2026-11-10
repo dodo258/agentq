@@ -326,7 +326,7 @@ func (a *Service) QualitySection(now time.Time) string {
 		}
 		fmt.Fprintf(&b, "- %s：%s\n", p.Name, projectLine(p))
 	}
-	b.WriteString("- 每条的依据：终端跑 `agentq quality`\n")
+	b.WriteString("- 每条的依据：终端跑 `agentq stats`\n")
 	return b.String()
 }
 

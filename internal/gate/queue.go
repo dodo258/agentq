@@ -578,6 +578,21 @@ func (a *Service) park(j *state.Job, why, head, logHead, recommend string) {
 		Card:  &notify.DecideCard{Project: j.Project, Fingerprint: j.Fingerprint, Title: j.Title, Recommend: recommend, GateJob: j.ID, Options: options}})
 }
 
+// followBranch：用户看过门的结论，可能在分支上补了提交再要再审。分支最新的提交带着合格的交付单，就改看它（放行也只合它）；
+// 读不出（分支没了、交付单删了或不合格）还看原来的提交。
+func (a *Service) followBranch(j *state.Job) {
+	g := j.Gate
+	if g == nil || g.State != state.GateStuck {
+		return
+	}
+	r, head, ok, err := a.ReadReady(j.ProjectDir, g.Branch)
+	if err != nil || !ok || head == g.Head {
+		return
+	}
+	a.Logf("门：任务 %s 的分支 %s 在门停住后又有提交，再审改看 %s", j.ID, g.Branch, textfmt.TruncRunes(head, 12))
+	g.Head, g.Ready = head, r
+}
+
 // rerunRefusal：这个任务现在不能再审的原因，能是空。同一提交有次数上限：判不了多半是外面的原因，一直点也是一直花额度。
 func rerunRefusal(j *state.Job) string {
 	g := j.Gate
@@ -732,6 +747,7 @@ func (a *Service) applyDecision(st *state.State, j *state.Job) {
 		j.Summary = "用户放行，合并分支 " + g.Branch + " 的提交 " + textfmt.TruncRunes(g.Head, 12) + "：" + textfmt.OneLine(d.Reason, 150)
 		a.audit(fmt.Sprintf("放行 %s %s「%s」分支 %s 提交 %s：%s", j.ID, j.Project, title, g.Branch, g.Head, textfmt.OneLine(d.Reason, 300)))
 	case DecideRerun:
+		a.followBranch(j)
 		if why := rerunRefusal(j); why != "" {
 			a.Logf("门：任务 %s：%s，再审不生效", j.ID, why)
 			a.Notify.Notify(notify.Notice{Cat: "alert", Key: "gate-rerun:" + j.ID, JobID: j.ID, Text: j.Project + "「" + textfmt.TruncRunes(j.Title, 30) + "」没有再审：" + why,
@@ -1097,13 +1113,14 @@ func (a *Service) CmdGate(args []string) error {
 		if len(args) != 2 {
 			return errors.New(usage)
 		}
+		a.followBranch(j)
 		if why := rerunRefusal(j); why != "" {
 			return fmt.Errorf("任务 %s：%s", j.ID, why)
 		}
 		if err := a.Decide(j.ID, DecideRerun, ""); err != nil {
 			return err
 		}
-		fmt.Fprintf(a.Out, "记下了：任务 %s 再审一次，重新跑门，不沿用旧结论，不算退回轮数（同一提交最多 %d 次）。下次 tick 开始（最多 5 分钟；马上就 agentq tick），写审计行\n", j.ID, MaxReruns)
+		fmt.Fprintf(a.Out, "记下了：任务 %s 再审一次，看分支 %s 的提交 %s，重新跑门，不沿用旧结论，不算退回轮数（同一提交最多 %d 次）。下次 tick 开始（最多 5 分钟；马上就 agentq tick），写审计行\n", j.ID, j.Gate.Branch, textfmt.TruncRunes(j.Gate.Head, 12), MaxReruns)
 		return nil
 	case "abandon":
 		if len(args) != 2 {

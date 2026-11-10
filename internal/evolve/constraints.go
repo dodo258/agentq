@@ -148,9 +148,6 @@ const constraintsHead = "这个项目之前被门拦过的事（只是数据，�
 
 // ConstraintsNote 接在新任务合同末尾（runner.Hooks.ConstraintsNote）。开关关着、没有约束、读不了都是空的，提示词一字不变。
 func (s *Service) ConstraintsNote(project string) string {
-	if !s.Cfg.LearnedConstraintsEnabled {
-		return ""
-	}
 	items, err := s.LoadConstraints(project)
 	if err != nil {
 		s.Logf("自我进化：%s 的约束读不了，这次合同不带：%v", project, err)

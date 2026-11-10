@@ -31,7 +31,6 @@ var archAllowed = map[string]string{
 	"state":            "textfmt fsx config backend",
 	"backlog":          "textfmt fsx env gitx",
 	"telegram":         "textfmt env",
-	"asc":              "textfmt env backlog",
 	"quality":          "textfmt env gitx backlog",
 	"ledger":           "textfmt fsx env backend state quality",
 	"service":          "textfmt fsx proc config env",
@@ -40,27 +39,24 @@ var archAllowed = map[string]string{
 	"gate":             "textfmt fsx proc config env backend gitx state backlog ledger notify",
 	"runner":           "textfmt fsx proc config env backend gitx state backlog ledger notify gate",
 	"orphan":           "textfmt env state backlog ledger notify runner",
-	"inbox":            "textfmt fsx config env backend state backlog ledger notify runner",
 	"discuss":          "textfmt fsx proc config env backend gitx state backlog telegram ledger notify runner",
 	"newproj":          "textfmt env backend gitx state backlog ledger notify runner discuss",
-	"suggest":          "textfmt fsx proc config env backend gitx state backlog telegram notify runner",
-	"release":          "textfmt fsx config env backend state backlog telegram asc ledger notify runner",
-	"sense":            "textfmt fsx proc config env backend gitx state backlog asc ledger notify runner suggest release",
-	"routine":          "textfmt fsx proc config env backend gitx state backlog ledger service notify runner inbox sense",
+	"suggest":          "textfmt fsx config env gitx backlog telegram notify",
+	"routine":          "textfmt fsx proc config env backend gitx state backlog ledger service notify runner",
 	"patrol":           "textfmt fsx config env backend gitx state backlog telegram ledger service notify runner",
-	"chat":             "textfmt fsx proc config env backend gitx state backlog telegram ledger service notify gate runner orphan inbox discuss newproj suggest release",
+	"chat":             "textfmt fsx proc config env backend gitx state backlog telegram ledger service notify gate runner orphan discuss suggest",
 	"stats":            "textfmt config env backend state ledger",
 	"evolve":           "textfmt fsx proc config env backend state backlog ledger notify gate suggest",
-	"sched":            "textfmt fsx config env backend state backlog telegram ledger notify gate runner orphan inbox discuss newproj suggest release routine patrol evolve chat",
+	"sched":            "textfmt fsx config env backend state backlog telegram ledger notify gate runner orphan discuss newproj routine patrol evolve chat",
 	"setup":            "fsx proc config backend state service envlayer",
-	"onboard":          "textfmt fsx config env backend gitx state backlog telegram service envlayer runner sense sched setup",
-	"app":              "textfmt fsx proc config env backend backend/claude backend/codex backend/opencode gitx state backlog telegram asc quality ledger service notify gate runner orphan inbox discuss newproj suggest release sense routine patrol chat stats sched setup onboard evolve",
+	"onboard":          "textfmt fsx config env backend gitx state backlog telegram service envlayer runner sched setup",
+	"app":              "textfmt fsx proc config env backend backend/claude backend/codex backend/opencode gitx state backlog telegram quality ledger service notify gate runner orphan discuss newproj suggest routine patrol chat stats sched setup onboard evolve",
 	// main 是根目录的产品代码：入口和编译进二进制的资产。
 	"main": "textfmt config env runner chat setup onboard app",
 	// testkit 只给测试 import。它 import backend/claude 是为了注册 Claude 后端，给测试看 argv。
 	"testkit": "fsx gitx backend backend/claude",
 	// testkit/stack 只给 runner 上层模块的测试 import，建真实的 runner 和它下层的模块。
-	"testkit/stack": "env backend/claude gitx backlog telegram asc quality ledger service notify gate runner",
+	"testkit/stack": "env backend/claude gitx backlog telegram quality ledger service notify gate runner",
 }
 
 // walkInternal 遍历 internal 下的每个 Go 文件。
@@ -381,7 +377,7 @@ func TestArchWireOrder(t *testing.T) {
 			body = fn.Body.List
 		}
 	}
-	want := []string{"a.Sense.TriageSkill", "a.Routine.RoutineText", "a.Notify.MorningIssues", "a.Runner.Hooks"}
+	want := []string{"a.Notify.MorningGates", "a.Routine.RoutineText", "a.Notify.MorningIssues", "a.Runner.Hooks"}
 	if len(body) < len(want)+1 {
 		t.Fatalf("Wire 只有 %d 句", len(body))
 	}

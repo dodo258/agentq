@@ -33,9 +33,6 @@ func (b *Backend) CLIHelp() backend.CLIHelp {
 	return backend.CLIHelp{Name: "Claude CLI", Command: "claude", Install: cliInstallCommand, Alternatives: []string{cliBrewCommand, cliNpmCommand}, Login: cliLoginCommand, Desktop: "Claude 桌面端"}
 }
 
-// LightModel 实现 backend.LightModeler。
-func (b *Backend) LightModel() string { return "sonnet" }
-
 // IdentityLinks 实现 backend.IdentityLinker：macOS 上订阅登录在钥匙串里，CLI 按 HOME 找钥匙串目录。
 // ~/.claude/.credentials.json 不算：CLI 刷新登录时原子替换它，换掉链接后真实家目录那份就失效了。Linux 上的订阅登录所以还不支持。
 func (b *Backend) IdentityLinks() []string { return []string{"Library/Keychains"} }

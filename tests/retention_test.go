@@ -3,11 +3,8 @@ package tests
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
-
-	"agentq/internal/config"
 )
 
 // rootAgeDir 建一个目录，里面一个文件，都拨到 at。
@@ -52,11 +49,5 @@ func TestRetentionRunsInTick(t *testing.T) {
 	}
 	if _, err := os.Lstat(old); err == nil {
 		t.Errorf("应该删掉：%s", old)
-	}
-
-	c := config.Default()
-	c.RetentionDays = -1
-	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "retention_days") {
-		t.Fatalf("负数应拒绝：%v", err)
 	}
 }

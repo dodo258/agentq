@@ -19,9 +19,7 @@ import (
 	"agentq/internal/env"
 	"agentq/internal/notify"
 	"agentq/internal/proc"
-	"agentq/internal/release"
 	"agentq/internal/runner"
-	"agentq/internal/sense"
 	"agentq/internal/state"
 	"agentq/internal/suggest"
 	"agentq/internal/testkit"
@@ -127,7 +125,7 @@ func assertNoZero(t *testing.T, v reflect.Value, path string) {
 			return
 		}
 		for i := range v.NumField() {
-			if sf := v.Type().Field(i); sf.IsExported() {
+			if sf := v.Type().Field(i); sf.IsExported() && sf.Tag.Get("json") != "-" { // json:"-" 的不进文件
 				assertNoZero(t, v.Field(i), path+"."+sf.Name)
 			}
 		}
@@ -199,20 +197,6 @@ func TestGoldenFileFormats(t *testing.T) {
 			t.Fatal(err)
 		}
 		goldenRoundTrip[suggest.SuggestStore](t, "suggestions.json", testkit.ReadBytes(t, a.Suggest.SuggestionsPath()))
-	})
-	t.Run("sense", func(t *testing.T) {
-		a, full := goldenApp(t), goldenFull[sense.SenseStore](t, "senseStore")
-		if err := a.Sense.WithSense(func(s *sense.SenseStore) error { *s = *full; return nil }); err != nil {
-			t.Fatal(err)
-		}
-		goldenRoundTrip[sense.SenseStore](t, "sense.json", testkit.ReadBytes(t, a.Sense.SensePath()))
-	})
-	t.Run("release", func(t *testing.T) {
-		a, full := goldenApp(t), goldenFull[release.ReleaseStore](t, "releaseStore")
-		if err := a.Release.WithRelease(func(s *release.ReleaseStore) error { *s = *full; return nil }); err != nil {
-			t.Fatal(err)
-		}
-		goldenRoundTrip[release.ReleaseStore](t, "release.json", testkit.ReadBytes(t, a.Release.ReleasePath()))
 	})
 }
 
@@ -322,22 +306,6 @@ func TestGoldenOldFormats(t *testing.T) {
 		}
 		output(t, "suggestions", testkit.ReadBytes(t, a.Suggest.SuggestionsPath()))
 	})
-	t.Run("sense", func(t *testing.T) {
-		a := goldenApp(t)
-		input(t, "sense", a.Sense.SensePath())
-		if err := a.Sense.WithSense(func(s *sense.SenseStore) error { return nil }); err != nil {
-			t.Fatal(err)
-		}
-		output(t, "sense", testkit.ReadBytes(t, a.Sense.SensePath()))
-	})
-	t.Run("release", func(t *testing.T) {
-		a := goldenApp(t)
-		input(t, "release", a.Release.ReleasePath())
-		if err := a.Release.WithRelease(func(s *release.ReleaseStore) error { return nil }); err != nil {
-			t.Fatal(err)
-		}
-		output(t, "release", testkit.ReadBytes(t, a.Release.ReleasePath()))
-	})
 }
 
 // 默认配置写出来的样子：老配置靠 defaultConfig 的语义，新配置（fresh）是装好后用户看到的文件。
@@ -390,6 +358,7 @@ func goldenStart(t *testing.T, cfg map[string]any, j *Job, resume string, prepar
 	}
 	t.Setenv("HOME", e.home)
 	t.Setenv("AGENTQ_FAKE_LOG", e.fakeLg)
+	t.Setenv(config.TestTuningEnv, e.tuning)
 	old := runner.JobExecutable
 	runner.JobExecutable = func() (string, error) { return agentqBin, nil }
 	t.Cleanup(func() { runner.JobExecutable = old })
@@ -431,19 +400,12 @@ func TestGoldenArgv(t *testing.T) {
 	}{
 		{name: "task", job: Job{Project: "demo", Title: "修登录", Item: "- [ ] 修登录"}},
 		{name: "task-resume", job: Job{Project: "demo", Title: "修登录", Item: "- [ ] 修登录"}, resume: "s-old"},
-		{name: "task-low-risk", cfg: map[string]any{"low_risk_model": "haiku"}, job: Job{Project: "demo", Title: "改错字", Item: "- [ ] 改错字（低风险）"}},
-		{name: state.KindInbox, job: Job{Kind: state.KindInbox, Project: "demo", Title: "查资料"}},
-		{name: state.KindInbox + "-resume", job: Job{Kind: state.KindInbox, Project: "demo", Title: "查资料"}, resume: "s-old"},
+		{name: "task-low-risk", job: Job{Project: "demo", Title: "改错字", Item: "- [ ] 改错字（低风险）"}},
 		{name: state.KindNew, job: Job{Kind: state.KindNew, Project: "demo", Title: "做个小工具"}},
-		{name: state.KindRelease, job: Job{Kind: state.KindRelease, Project: "demo", Title: "发版准备"}},
 		{name: config.KindNight, job: Job{Kind: config.KindNight, Project: "demo", Title: "agentq night"}},
 		{name: config.KindReview, job: Job{Kind: config.KindReview, Project: "demo", Title: "agentq review"}},
-		{name: state.KindSense, job: Job{Kind: state.KindSense, Project: "demo", Title: "主动感知"}},
-		{name: state.KindSuggest, job: Job{Kind: state.KindSuggest, Project: "demo", Title: "闲时找活"}},
 		{name: state.KindPatrol, job: Job{Kind: state.KindPatrol, Project: "demo", Title: "巡逻分析"}},
 		{name: state.KindChat, job: Job{Kind: state.KindChat, Project: "demo", Title: "对话"}},
-		{name: state.KindQuick, job: Job{Kind: state.KindQuick, Project: "demo", Title: "快问"}},
-		{name: state.KindRouter, job: Job{Kind: state.KindRouter, Project: "demo", Title: "看消息"}},
 		{name: state.KindFollowup, job: Job{Kind: state.KindFollowup, Project: "demo", Title: "接着问"}, resume: "s-old"},
 		{name: state.KindFollowup + "-files", job: Job{Kind: state.KindFollowup, Project: "demo", Title: "接着问"}, resume: "s-old", prepare: func(a *App, e *testEnv, j *Job) {
 			j.ID = "0315-100000-demo"
@@ -517,7 +479,7 @@ func TestGoldenHelp(t *testing.T) {
 
 // 固定时间、固定状态下 status 的全文。假 launchctl：两个平台都走同一份文字。
 func TestGoldenStatus(t *testing.T) {
-	e := newEnv(t, map[string]any{"suggest_enabled": true, "sense_enabled": true, "release_assist_enabled": true, "exclude_projects": []string{"private-one"}})
+	e := newEnv(t, map[string]any{"exclude_projects": []string{"private-one"}})
 	launchctl := filepath.Join(t.TempDir(), "launchctl")
 	testkit.WriteInstall(t, launchctl, "#!/bin/sh\nexit 0\n", 0o755)
 	e.extra = append(e.extra, "TZ=UTC", "AGENTQ_TEST_NOW=2026-03-15T10:00:00Z", "AGENTQ_TEST_LAUNCHCTL="+launchctl)

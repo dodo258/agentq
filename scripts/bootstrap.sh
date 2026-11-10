@@ -18,4 +18,24 @@ trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 (cd "$src" && go build -o "$tmp/agentq" .)
 cmd=setup
 case ${1:-} in setup|doctor|rollback|remove|restore) cmd=$1; shift;; esac
+# 新的完整安装装完即运行，和 install.sh 一样交给 start --welcome；--paused 只装不跑。升级（已有安装记录）保留原来的开关。
+fresh=0; paused=0; welcome=1
+[ -f "$HOME/.local/share/agentq/receipt.json" ] || fresh=1
+n=$#
+while [ "$n" -gt 0 ]; do
+ a=$1; shift; n=$((n-1))
+ case $a in
+  --paused) paused=1; continue;;
+  --plan|-plan|--scope=skills|-scope=skills) welcome=0;;
+  --scope|-scope) [ "${1:-}" != skills ] || welcome=0;;
+ esac
+ set -- "$@" "$a"
+done
 "$tmp/agentq" "$cmd" "$@"
+[ "$cmd" = setup ] && [ "$fresh" = 1 ] && [ "$welcome" = 1 ] || exit 0
+set --
+[ "$paused" = 0 ] || set -- --paused
+if [ -z "${CI:-}${NONINTERACTIVE:-}" ] && (: </dev/tty) 2>/dev/null; then
+ exec "$HOME/.local/bin/agentq" start --welcome "$@" </dev/tty
+fi
+exec "$HOME/.local/bin/agentq" start --welcome "$@" </dev/null

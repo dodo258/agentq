@@ -24,7 +24,6 @@ import (
 	"agentq/internal/gitx"
 	"agentq/internal/runner"
 	"agentq/internal/sched"
-	"agentq/internal/sense"
 	"agentq/internal/service"
 	"agentq/internal/setup"
 	"agentq/internal/state"
@@ -38,14 +37,13 @@ type Service struct {
 	Backlog  *backlog.Service
 	Gitx     *gitx.Service
 	Sched    *sched.Service
-	Sense    *sense.Service
 	Service  *service.Service
 	Telegram *telegram.Service
 	// Assets 是编译进二进制的 skills、templates、support，embed 在根目录，由组装层注入。
 	Assets fs.FS
 }
 
-// AddTextMax：一条待做最多多少字，和 Router、Telegram 写待做的上限一致。
+// AddTextMax：一条待做最多多少字。
 const AddTextMax = 800
 
 // OnboardFiles 是 init 负责补齐的文件：模板在二进制里，缺哪个生成哪个。
@@ -406,6 +404,11 @@ func (a *Service) addTarget(project string) (p backlog.Project, register bool, e
 	if err != nil {
 		return p, false, fmt.Errorf("读不了当前目录：%w", err)
 	}
+	if _, err := a.Gitx.Git(realCwd, "rev-parse", "--git-common-dir"); err != nil {
+		if err := a.initRepo(realCwd); err != nil {
+			return p, false, err
+		}
+	}
 	if realRoot, err := filepath.EvalSymlinks(a.ProjectsRoot()); err == nil {
 		rel, relErr := filepath.Rel(realRoot, realCwd)
 		if relErr == nil && rel == "." {
@@ -421,7 +424,76 @@ func (a *Service) addTarget(project string) (p backlog.Project, register bool, e
 	return a.repoOutsideRoot(realCwd)
 }
 
-// repoOutsideRoot：当前目录所在的仓库不在 projects_root 下一层。不是 Git 仓库的不接管，不替用户建。
+// defaultGitignore 是替用户建仓库时写的 .gitignore：密钥、依赖目录不进提交。不猜构建目录（build/ 这类名字有时放的是源码，漏提交了后台任务就看不到）。目录里已有 .gitignore 就不写。
+const defaultGitignore = `# agentq 接入时生成，按项目改
+.env
+.env.*
+*.pem
+*.key
+.DS_Store
+node_modules/
+.venv/
+venv/
+__pycache__/
+`
+
+// initRepo：当前目录还不在任何 Git 仓库里，就地建一个，把现有文件做初始提交（后台任务从默认分支开 worktree，没提交的文件它看不到）。
+// 家目录、它的上级、projects_root 本身不是项目，不建；桌面、文档、下载、临时目录本身放的是杂物和私人文件，也不建（它们的子目录照常）。失败时撤掉这次建的 .git 和 .gitignore，别的不碰。
+func (a *Service) initRepo(dir string) error {
+	notProject := fmt.Errorf("%s 不像一个项目（是家目录、它的上级、放项目的目录，或桌面、文档、下载、临时目录），不在这里建仓库。cd 进项目目录，或新建一个项目目录再运行 agentq add", dir)
+	for _, not := range []string{a.Home, a.ProjectsRoot()} {
+		real, err := filepath.EvalSymlinks(not)
+		if err != nil {
+			continue
+		}
+		if rel, err := filepath.Rel(dir, real); err == nil && (rel == "." || !strings.HasPrefix(rel, "..")) {
+			return notProject
+		}
+	}
+	for _, not := range []string{filepath.Join(a.Home, "Desktop"), filepath.Join(a.Home, "Documents"), filepath.Join(a.Home, "Downloads"), os.TempDir(), "/tmp"} {
+		if real, err := filepath.EvalSymlinks(not); err == nil && real == dir {
+			return notProject
+		}
+	}
+	gitDir, ignore := filepath.Join(dir, ".git"), filepath.Join(dir, ".gitignore")
+	if _, err := os.Lstat(gitDir); err == nil {
+		return fmt.Errorf("%s 里有 .git，但 git 认不出这个仓库（可能坏了），agentq 不动它。先修好或挪走 .git 再运行 agentq add", dir)
+	}
+	wroteIgnore := false
+	undo := func() {
+		os.RemoveAll(gitDir)
+		if wroteIgnore {
+			os.Remove(ignore)
+		}
+	}
+	if out, err := a.Gitx.Git(dir, "init", "-q", "-b", "main"); err != nil {
+		os.RemoveAll(gitDir)
+		return fmt.Errorf("git init 失败：%v %s", err, textfmt.OneLine(out, 300))
+	}
+	if _, err := os.Lstat(ignore); errors.Is(err, os.ErrNotExist) {
+		if err := os.WriteFile(ignore, []byte(defaultGitignore), 0o644); err != nil {
+			undo()
+			return fmt.Errorf("写 .gitignore 失败：%w", err)
+		}
+		wroteIgnore = true
+	}
+	if out, err := a.Gitx.Git(dir, "add", "-A"); err != nil {
+		undo()
+		return fmt.Errorf("git add 失败，建的仓库已撤掉：%v %s", err, textfmt.OneLine(out, 300))
+	}
+	if out, err := a.Gitx.Git(dir, "commit", "-q", "-m", "初始提交（agentq 接入）"); err != nil {
+		undo()
+		return fmt.Errorf("初始提交失败，建的仓库已撤掉（没配 git 用户名时先执行 git config --global user.name 和 user.email）：%v %s", err, textfmt.OneLine(out, 300))
+	}
+	note := "现有文件做了初始提交"
+	if wroteIgnore {
+		note += "，.gitignore 排除了密钥和依赖目录"
+	}
+	fmt.Fprintf(a.Out, "%s 还不是 Git 仓库，已经 git init（分支 main），%s。\n", dir, note)
+	return nil
+}
+
+// repoOutsideRoot：当前目录所在的仓库不在 projects_root 下一层。
 func (a *Service) repoOutsideRoot(cwd string) (p backlog.Project, register bool, err error) {
 	common, gitErr := a.Gitx.Git(cwd, "rev-parse", "--git-common-dir")
 	if gitErr != nil {
@@ -553,7 +625,7 @@ func (a *Service) CmdAdd(args []string) error {
 	if a.Backlog.Excluded(p.Name) {
 		fmt.Fprintf(a.Out, "%s 在 exclude_projects 里，tick 不会接；要做就运行 agentq run %s\n", p.Name, p.Name)
 	} else if a.Cfg.Paused {
-		fmt.Fprintln(a.Out, "后台还没开：运行 agentq start")
+		fmt.Fprintf(a.Out, "后台暂停着，不会自动接这一条：要开就 agentq start，只做这一条就 agentq run %s\n", p.Name)
 	}
 	return nil
 }
@@ -576,30 +648,41 @@ func IsTerminal(f *os.File) bool {
 	return err == nil && !os.SameFile(fi, null)
 }
 
+// startUsage 是 start 的全部用法。
+const startUsage = "用法：agentq start [--accept-bypass]、agentq start --welcome [--paused] 或 agentq start --check"
+
 // CmdStart 一步打开后台：检查 → 权限 → 服务 → 取消暂停 → 立刻 tick。可重复运行；前一步不过就不做后一步。
+// --welcome 是一键脚本装完用的（装完即运行，--paused 只装）；--check 只读，派活技能先看后台能不能接活。
 func (a *Service) CmdStart(args []string, o StartOptions) error {
-	var acceptBypass, welcome, assumeYes bool
+	var acceptBypass, welcome, assumeYes, paused, check bool
 	for _, arg := range args {
 		switch arg {
 		case "--accept-bypass":
 			acceptBypass = true
 		case "--welcome":
 			welcome = true
-		case "--assume-yes":
+		case "--assume-yes": // 旧一键脚本传的；装完即运行之后不再问，留着不报错
 			assumeYes = true
+		case "--paused":
+			paused = true
+		case "--check":
+			check = true
 		default:
-			return fmt.Errorf("agentq start 不认识 %s；用法：agentq start [--accept-bypass] 或 agentq start --welcome [--assume-yes]", textfmt.OneLine(arg, 40))
+			return fmt.Errorf("agentq start 不认识 %s；%s", textfmt.OneLine(arg, 40), startUsage)
 		}
 	}
-	if assumeYes && !welcome || acceptBypass && welcome {
-		return errors.New("用法：agentq start [--accept-bypass] 或 agentq start --welcome [--assume-yes]")
+	if (paused || assumeYes) && !welcome || acceptBypass && (welcome || check) || welcome && check {
+		return errors.New(startUsage)
 	}
 	i := o.Installer
 	if i == nil {
 		i = &setup.Installer{Assets: a.Assets, Home: a.Home, Launchctl: a.Service.Launchctl, Systemctl: a.Service.Systemctl, Loginctl: a.Service.Loginctl}
 	}
-	if welcome {
-		return a.cmdWelcome(assumeYes, o, i)
+	switch {
+	case welcome:
+		return a.cmdWelcome(paused, o, i)
+	case check:
+		return a.cmdCheck(i)
 	}
 	if err := a.startChecks(i); err != nil {
 		return err
@@ -765,9 +848,8 @@ func (a *Service) ensureServices(i *setup.Installer) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("读安装记录失败，后台没开：%w", err)
 	}
-	running := func(label string) bool { return slices.Contains(r.Services, label) && i.Loaded(label) }
 	listen := a.wantListen()
-	if running(a.Service.ServiceLabel()) && running(a.Service.RoutineLabel(config.KindNight)) && running(a.Service.RoutineLabel(config.KindReview)) && (!listen || running(a.Service.ListenLabel())) {
+	if a.servicesRunning(i, r) && (!listen || slices.Contains(r.Services, a.Service.ListenLabel()) && i.Loaded(a.Service.ListenLabel())) {
 		return false, nil
 	}
 	var plan bytes.Buffer
@@ -804,11 +886,7 @@ func (a *Service) startFirstTick() error {
 		return fmt.Errorf("后台已打开，但等了 %s 还拿不到 %s，这次没立刻接活，下次定时 tick 会接", runner.CmdLockWait, a.LockPath())
 	}
 	lock.Close()
-	if err := a.Sched.Tick(""); err != nil {
-		return err
-	}
-	a.Sense.AfterTick()
-	return nil
+	return a.Sched.Tick("")
 }
 
 // StartReport 告诉用户接了哪几条、还排着哪几条、怎么看、怎么停。
@@ -845,7 +923,7 @@ func (a *Service) StartReport() {
 		fmt.Fprintln(a.Out, strings.Join(queued, "\n"))
 	}
 	if len(tasks)+len(queued) == 0 {
-		fmt.Fprintln(a.Out, "\n现在没有待做。到项目目录运行 agentq add \"要做的事\"，5 分钟内会接上。")
+		fmt.Fprintln(a.Out, "\n现在没有待做。"+IdleHint)
 	}
 	if limits := backend.Limits(a.DefaultBackend()); len(limits) > 0 {
 		fmt.Fprintln(a.Out, "\n后端 "+a.DefaultBackend().Name()+" 缺这些能力（agentq doctor 看全表）：\n  "+strings.Join(limits, "\n  "))

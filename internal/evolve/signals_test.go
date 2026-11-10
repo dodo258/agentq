@@ -49,7 +49,7 @@ func newSigRig(t *testing.T, edit func(c *config.Config)) *sigRig {
 	}
 	e := &env.Env{Home: home, Cfg: cfg, Now: func() time.Time { return r.now }, Out: &bytes.Buffer{}}
 	k := stack.New(e)
-	sg := &suggest.Service{Env: e, Backlog: k.Backlog, Gitx: k.Gitx, Notify: k.Notify, Runner: k.Runner}
+	sg := &suggest.Service{Env: e, Backlog: k.Backlog, Gitx: k.Gitx, Notify: k.Notify}
 	r.s = &Service{Env: e, Backlog: k.Backlog, Gate: k.Gate, Ledger: k.Ledger, Notify: k.Notify, Suggest: sg}
 	return r
 }
@@ -330,34 +330,6 @@ func TestCollectNoNewData(t *testing.T) {
 		t.Fatal("满一小时要收")
 	}
 	r.noCLI()
-}
-
-// 开关关掉：不收、不写；约束不进合同，也不再学。
-func TestEvolveSwitchesOff(t *testing.T) {
-	r := newSigRig(t, func(c *config.Config) { c.EvolveSignalsEnabled = false })
-	r.blocked("a1", "web", "fpa", "失败")
-	r.meta(&state.Job{ID: "a2", Project: "web", Fingerprint: "fpa", Gate: &state.GateRecord{State: state.GateMerged}})
-	r.s.CollectIfDue()
-	if r.collect() {
-		t.Fatal("关着不收")
-	}
-	if _, err := os.Stat(r.s.evolveDir()); err == nil {
-		t.Fatal("关着不写文件")
-	}
-
-	r = newSigRig(t, func(c *config.Config) { c.LearnedConstraintsEnabled = false })
-	r.blocked("a1", "web", "fpa", "失败")
-	r.meta(&state.Job{ID: "a2", Project: "web", Fingerprint: "fpa", Gate: &state.GateRecord{State: state.GateMerged}})
-	r.collect()
-	if _, err := os.Stat(filepath.Join(r.s.constraintsDir(), "web.json")); err == nil {
-		t.Fatal("约束关着不学")
-	}
-	if err := r.s.saveConstraints("web", []Constraint{{Project: "web", Key: "k", Text: "test 门：失败", Seen: 1, Last: r.now}}); err != nil {
-		t.Fatal(err)
-	}
-	if note := r.s.ConstraintsNote("web"); note != "" {
-		t.Fatalf("约束关着，合同一字不变：%q", note)
-	}
 }
 
 func TestSignalKey(t *testing.T) {

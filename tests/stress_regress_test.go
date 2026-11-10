@@ -19,7 +19,6 @@ import (
 
 	"agentq/internal/backend/claude"
 	"agentq/internal/backlog"
-	"agentq/internal/chat"
 	"agentq/internal/config"
 	"agentq/internal/env"
 	"agentq/internal/fsx"
@@ -604,8 +603,7 @@ func TestRegressPauseKeepsConfig(t *testing.T) {
   "projects_root": %q,
   "claude_path": %q,
   "note": "paused: true 也不算",
-  "tick_after_job":   false,
-  "patrol_enabled": false,
+  "patrol_enabled":   false,
   "notify_enabled": false
 }
 `, cfg["projects_root"], cfg["claude_path"])
@@ -668,63 +666,6 @@ func TestRegressDirtyBacklogReported(t *testing.T) {
 	out := e.mustRun("tick")
 	if !strings.Contains(out, "启动任务") || !strings.Contains(out, "beta") {
 		t.Errorf("别的项目应照常启动：%s", out)
-	}
-}
-
-// Router 动作至多一次：收尾走第二遍（上次存状态前被杀）时，做完的不重做，开始了没做完的不重做且说明状态不确定。
-func TestRegressRouterActionsAtMostOnce(t *testing.T) {
-	t.Parallel()
-	f := newFakeTG(t)
-	home := t.TempDir()
-	a := wireApp(&App{Env: &env.Env{Home: home, Now: time.Now, Out: &bytes.Buffer{}, Cfg: config.Default()}, Telegram: &telegram.Service{TelegramAPI: f.srv.URL}})
-	if err := os.MkdirAll(filepath.Join(home, ".agentq", "secrets"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(a.Telegram.TelegramEnvPath(), []byte("TELEGRAM_BOT_TOKEN="+fakeToken+"\nTELEGRAM_CHAT_ID=42\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	id := "1104-000000-router"
-	if err := os.MkdirAll(a.JobDir(id), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	result := `{"type":"result","is_error":false,"result":"","structured_output":{"reply":"好的","actions":[{"type":"inbox","text":"第一条 —— x"},{"type":"inbox","text":"第二条 —— x"},{"type":"inbox","text":"第三条 —— x"}]}}`
-	if err := os.WriteFile(filepath.Join(a.JobDir(id), "result.json"), []byte(result), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// 第一条做完了，第二条开始了没记上做完：进程在这时被杀
-	done := a.Chat.LoadRouterDone(id)
-	if err := a.Chat.MarkRouterAct(id, done, 0, chat.RouterActDone); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Chat.MarkRouterAct(id, done, 1, chat.RouterActStarted); err != nil {
-		t.Fatal(err)
-	}
-	j := &Job{ID: id, Kind: state.KindRouter, Project: chat.ChatJobName, Status: state.StatusDone}
-	a.Chat.FinishRouter(&State{}, j)
-	inbox, _ := os.ReadFile(a.Inbox.InboxPath())
-	if strings.Contains(string(inbox), "第一条") || strings.Contains(string(inbox), "第二条") {
-		t.Errorf("有记录的动作不该再做：%s", inbox)
-	}
-	if !strings.Contains(string(inbox), "第三条") {
-		t.Errorf("没有记录的动作要做：%s", inbox)
-	}
-	texts := f.texts()
-	if len(texts) != 1 || !strings.Contains(texts[0], "不确定做没做成") {
-		t.Errorf("回复要说明状态不确定：%v", texts)
-	}
-	// 再走一遍：第三条也不重做
-	before, _ := os.ReadFile(a.Inbox.InboxPath())
-	a.Chat.FinishRouter(&State{}, j)
-	if after, _ := os.ReadFile(a.Inbox.InboxPath()); string(after) != string(before) {
-		t.Errorf("重做了：%s", after)
-	}
-	// 记录写坏：全都不确定，一个都不做
-	if err := os.WriteFile(a.Chat.RouterDonePath(id), []byte("{坏"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	a.Chat.FinishRouter(&State{}, j)
-	if after, _ := os.ReadFile(a.Inbox.InboxPath()); string(after) != string(before) {
-		t.Errorf("记录坏了不该做：%s", after)
 	}
 }
 
@@ -1024,12 +965,6 @@ func TestRegressInvalidUTF8ItemStaysAlive(t *testing.T) {
 		testkit.MkProject(t, e.root, "alpha", "- [ ] 坏\xff标题 —— SLEEP=30\n")
 		assertAlive(t, e)
 	})
-	t.Run("任务箱", func(t *testing.T) {
-		t.Parallel()
-		e := newEnv(t, nil)
-		e.writeInbox("## 待做\n- [ ] 坏\xff标题 —— SLEEP=30\n")
-		assertAlive(t, e)
-	})
 }
 
 // tick 读了配置之后可能等很久（等锁、杀不理 SIGTERM 的进程组），这期间用户 pause 了，它不能再接活（种子 802 第 28 轮：pause 之后 19 秒还启动了 3 个）。
@@ -1043,6 +978,7 @@ func TestRegressPauseDuringTickStartsNothing(t *testing.T) {
 	}
 	t.Setenv("HOME", e.home)
 	t.Setenv("AGENTQ_FAKE_LOG", e.fakeLg)
+	t.Setenv(config.TestTuningEnv, e.tuning)
 	old := runner.JobExecutable
 	runner.JobExecutable = func() (string, error) { return agentqBin, nil }
 	t.Cleanup(func() { runner.JobExecutable = old })

@@ -2,11 +2,12 @@
 # agentq 一键安装和升级，新老用户同一条：
 #   curl -fsSL https://github.com/<owner>/agentq/releases/latest/download/install.sh | sh
 #   带参数：... | sh -s -- --mirror https://镜像前缀/
-# 这个脚本只做三件事：取程序并校验、交给程序自己的 setup 安装、把终端交给 agentq start --welcome。
-# 备份、冲突检查、保留配置在 setup 里；要不要启动、算不算同意、官方 CLI 没装没登录怎么办都在 --welcome 里。不用 sudo，拒绝 root。
+# 这个脚本只做三件事：取程序并校验、交给程序自己的 setup 安装、交给 agentq start --welcome 把后台开起来。
+# 备份、冲突检查、保留配置在 setup 里；装完即运行（安装本身就是同意，只告知不问）、官方 CLI 没装没登录怎么办都在 --welcome 里。不用 sudo，拒绝 root。
 #
 # 脚本自己的参数（不传给 setup）：
-#   --yes                明确同意启动，不再问（AGENTQ_ASSUME_YES=1 同义）
+#   --paused             只安装，后台先不跑（AGENTQ_PAUSED=1 同义）；已有安装升级时不管这个参数，保留原来的开关
+#   --yes                旧参数，装完本来就直接运行，留着不报错
 #   --proxy <地址>       下载走代理：http://、https://、socks5://、socks5h://（AGENTQ_PROXY 同义）
 #   --mirror <前缀>      GitHub 下载镜像，程序从 <前缀><github 地址> 取（AGENTQ_MIRROR 同义）。校验文件和源码仍从原地址取，镜像改过的文件会被拒绝
 #   --version <版本>     要装的版本，默认 latest；main 走源码（AGENTQ_VERSION 同义）
@@ -25,13 +26,13 @@ die() {
 
 usage() {
 	say 'agentq 安装脚本。用法：sh install.sh [参数]'
-	say '  --yes              明确同意启动，不再问'
+	say '  --paused           只安装，后台先不跑（装完默认直接运行）'
 	say '  --proxy <地址>     下载走代理（http、https、socks5、socks5h）'
 	say '  --mirror <前缀>    GitHub 下载镜像；校验文件和源码仍从原地址取，镜像改过的文件会被拒绝'
 	say '  --version <版本>   要装的版本，默认 latest；main 走源码'
 	say '  --uninstall        卸载，数据保留'
 	say '交给 setup 的常用参数：--backend <名字>（新安装用哪个后端，默认 claude；已有配置不改）、--extras（加装可选 Waza 技能）、--plan（只看计划不安装）、--scope skills（只装技能）、--backend-path <路径>（--claude 同义）'
-	say '环境变量：AGENTQ_ASSUME_YES、AGENTQ_PROXY、AGENTQ_MIRROR、AGENTQ_VERSION、AGENTQ_RELEASE_BASE（下载地址）'
+	say '环境变量：AGENTQ_PAUSED、AGENTQ_PROXY、AGENTQ_MIRROR、AGENTQ_VERSION、AGENTQ_RELEASE_BASE（下载地址）'
 }
 
 # 只有终端才转圈、才上色。输出被捕获时不打动画：一屏过时的「下载中」只会添乱。
@@ -335,29 +336,22 @@ print_path_hint() {
 	esac
 }
 
-# 新安装的最后一步：要不要启动由 --welcome 决定，这里只找终端。
-# CI 里可能开着终端，但输出要留在日志里，所以不重定向。
+# 新安装的最后一步：装完即运行，不问。终端只在 CLI 要登录时用得上（打开浏览器登录）；CI 里不碰终端。
 hand_over() {
 	installed=$HOME/.local/bin/agentq
-	if [ "$assume_yes" = 1 ]; then
-		set -- --assume-yes
+	if [ "$paused" = 1 ]; then
+		set -- --paused
 	else
 		set --
 	fi
-	tty_ok=0
-	if [ -z "${CI:-}${NONINTERACTIVE:-}" ] && (: </dev/tty >/dev/tty) 2>/dev/null; then
-		tty_ok=1
-	fi
 	rc=0
-	if [ "$tty_ok" = 0 ]; then
-		"$installed" start --welcome "$@" </dev/null || rc=$?
-	elif [ "$assume_yes" = 1 ]; then
+	if [ -z "${CI:-}${NONINTERACTIVE:-}" ] && (: </dev/tty) 2>/dev/null; then
 		"$installed" start --welcome "$@" </dev/tty || rc=$?
 	else
-		"$installed" start --welcome "$@" </dev/tty >/dev/tty || rc=$?
+		"$installed" start --welcome "$@" </dev/null || rc=$?
 	fi
 	[ "$rc" = 0 ] && return 0
-	say 'agentq 已经装好，后台没有开。原因见上面，解决后运行 agentq start。' >&2
+	say 'agentq 已经装好，后台还没开起来，原因见上面。弄好后在 Claude Code 或 Codex 里直接说要做什么，后台会自己开起来；也可以运行 agentq start。' >&2
 	exit "$rc"
 }
 
@@ -375,7 +369,7 @@ finish() {
 	if [ "$upgrading" = 1 ]; then
 		ok "已升级：${old_version:-旧版本} -> ${new_version}。配置、任务和已选的服务都保留。"
 		say '检查一遍：agentq doctor'
-		[ -f "$HOME/.agentq/consent.json" ] || say '还没开后台的话：agentq start'
+		[ -f "$HOME/.agentq/consent.json" ] || say '后台还没开过（安装时选了先不跑），升级不替你打开。要开：agentq start'
 		# 已经加过 PATH 那一行的，新开的终端就有了。
 		[ -f "$HOME/.local/share/agentq/shell-path.json" ] || print_path_hint
 		return 0
@@ -443,7 +437,7 @@ main() {
 	trap 'spin_stop' EXIT
 
 	# 脚本自己的参数在这里吃掉，其余的留在 "$@" 里交给 setup。
-	assume_yes=0
+	paused=0
 	uninstall=0
 	proxy=${AGENTQ_PROXY:-}
 	mirror=${AGENTQ_MIRROR:-}
@@ -454,7 +448,8 @@ main() {
 		shift
 		n=$((n - 1))
 		case $arg in
-			--yes | -yes) assume_yes=1 ;;
+			--yes | -yes) ;;
+			--paused) paused=1 ;;
 			--uninstall) uninstall=1 ;;
 			--proxy=*) proxy=${arg#--proxy=} ;;
 			--mirror=*) mirror=${arg#--mirror=} ;;
@@ -472,7 +467,7 @@ main() {
 			*) set -- "$@" "$arg" ;;
 		esac
 	done
-	[ "${AGENTQ_ASSUME_YES:-}" != 1 ] || assume_yes=1
+	[ "${AGENTQ_PAUSED:-}" != 1 ] || paused=1
 	parse_args "$@"
 	# 不用 ${HOME:?}：macOS 的 sh（bash 3.2）这种致命错误碰上 EXIT trap 退出码是 0。
 	[ -n "${HOME:-}" ] || die '没有设置 HOME，不知道装到哪里。什么都没有改。'

@@ -1,12 +1,10 @@
 package onboard
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,31 +17,18 @@ import (
 	"agentq/internal/state"
 )
 
-// IdleHint 是启动后没有待做时唯一要说的话（后端是 Claude 时）。别的后端见 idleHint。
-const IdleHint = "在项目目录打开 Claude Code，说一句要做什么就行。比如：把这个项目的 README 补全。"
+// IdleHint 是启动后没有待做时唯一要说的话。
+const IdleHint = "打开 Claude Code 或 Codex，在项目目录里说一句要做什么就行，不用敲 agentq 命令。比如：给这个项目加一个 hello 命令。"
 
-func (a *Service) idleHint() string {
-	if name := a.DefaultBackend().Name(); name != backend.Default {
-		return "在项目目录运行 " + name + "，说一句要做什么就行。比如：把这个项目的 README 补全。"
-	}
-	return IdleHint
-}
-
-// consentBody 是同意文字。改它就要加 setup.ConsentTextVersion。
-const consentBody = `agentq 装好了。
-· 你交代的任务由官方 CLI 的独立进程完成，它们能读写这个用户的所有文件（包括本地密钥）、运行命令。
-· 任务内容会发给你所用的模型服务，用你自己的账号额度。agentq 本身不收集数据。
+// noticeBody 是装完告诉用户的话：安装就是同意，只告知不等回答。改它就要加 setup.ConsentTextVersion。
+const noticeBody = `agentq 装好了，后台直接开着：在 Claude Code 或 Codex 里说要做什么，它会写成待做交给后台，做完通知你。
+· 后台任务由官方 CLI 的独立进程完成，能读写这个用户的所有文件（包括本地密钥）、运行命令，用你自己的模型账号额度。agentq 本身不收集数据。
 · 没有待做时什么都不做，不消耗额度。
-· 暂停：agentq pause　卸载：agentq remove --yes
+· 暂停：agentq pause　卸载：agentq remove --yes　下次想先不跑：安装时加 --paused
 `
 
-const consentPrompt = "按回车同意并启动，输入 n 只安装不启动："
-
-// 同意的方式，写进 consent.json。
-const (
-	consentEnter     = "enter"
-	consentAssumeYes = "assume-yes"
-)
+// consentInstall 是写进 consent.json 的方式：装完即运行，安装本身就是同意。
+const consentInstall = "install"
 
 // engineState 是官方 CLI 现在的情况。别的毛病（版本太旧等）由 startChecks 报。
 type engineState int
@@ -93,47 +78,38 @@ func (a *Service) cliHelp() backend.CLIHelp {
 	return backend.CLIHelp{}
 }
 
-// cmdWelcome 是一键脚本把终端交过来之后的那一步。只有明确同意才启动：回车、--assume-yes、AGENTQ_ASSUME_YES=1。
-// 自动化环境和没有终端都只装不启动，退出 0：Homebrew 这类工具在这里默认继续，但它们改的是配置文件，这里授予的是代码执行权。
-func (a *Service) cmdWelcome(assumeYes bool, o StartOptions, i *setup.Installer) error {
+// cmdWelcome 是一键脚本装完之后的那一步：装完即运行，不问。安装本身就是同意，记下方式 install；告诉用户能做什么、怎么暂停和卸载。
+// paused 是用户显式要的「先不跑」（--paused）：只装，不记同意、不开后台。
+// 装之前就有、写着暂停的配置是用户的开关，不打开。CLI 弄不好时同意和权限已经记下，之后派活技能会自己把后台拉起来。
+func (a *Service) cmdWelcome(paused bool, o StartOptions, i *setup.Installer) error {
 	getenv := o.Getenv
 	if getenv == nil {
 		getenv = os.Getenv
 	}
 	engine, _ := a.probeEngine()
-	method := ""
-	switch {
-	case assumeYes || getenv("AGENTQ_ASSUME_YES") == "1":
-		method = consentAssumeYes
-	case getenv("CI") != "" || getenv("NONINTERACTIVE") != "":
-		a.installOnly("这是自动化环境（CI 或 NONINTERACTIVE），只安装，没有启动。", engine, getenv)
+	if paused {
+		fmt.Fprintln(a.Out, "按 --paused 只安装，后台没开。")
+		a.printCLISteps(engine)
+		fmt.Fprintln(a.Out, "要开的时候运行这一条，或者在 Claude Code、Codex 里说「开后台」：")
+		fmt.Fprintln(a.Out, "  agentq start")
+		a.pathHint(getenv)
 		return nil
-	case !o.Interactive:
-		a.installOnly("这里没有终端，没法问你，只安装，没有启动。", engine, getenv)
+	}
+	if a.Cfg.Paused && !a.freshInstall(i) {
+		fmt.Fprintln(a.Out, "这台机器原来的配置是暂停的，保留你的开关，后台没开。要开：agentq start，或者在 Claude Code、Codex 里说「开后台」。")
+		a.pathHint(getenv)
 		return nil
-	default:
-		fmt.Fprint(a.Out, a.consentText(engine, getenv)+"\n")
-		ok, err := askConsent(o.In, a.Out)
-		if err != nil {
-			return fmt.Errorf("读回答失败，没有启动：%w", err)
-		}
-		if !ok {
-			a.installOnly("好，只安装，没有启动。", engine, getenv)
-			return nil
-		}
-		method = consentEnter
 	}
-	if err := a.prepareEngine(context.Background(), engine, o); err != nil {
-		return err
-	}
-	a.ensurePath(getenv)
-	if err := a.startChecks(i); err != nil {
-		return err
-	}
+	fmt.Fprint(a.Out, a.noticeText(engine, getenv))
 	first := a.envFirstTime()
-	openNotify := a.notifyOffByInstall(i)
-	if err := a.recordConsent(method); err != nil {
+	openNotify := a.freshInstall(i) && !a.Cfg.NotifyEnabled
+	if err := a.recordConsent(consentInstall); err != nil {
 		return err
+	}
+	if a.Cfg.PermissionMode != a.fullPermission() {
+		if err := a.setFullPermission(); err != nil {
+			return err
+		}
 	}
 	if first {
 		a.autoEnableEnv()
@@ -141,10 +117,12 @@ func (a *Service) cmdWelcome(assumeYes bool, o StartOptions, i *setup.Installer)
 	if openNotify {
 		a.enableNotify()
 	}
-	if a.Cfg.PermissionMode != a.fullPermission() {
-		if err := a.setFullPermission(); err != nil {
-			return err
-		}
+	a.ensurePath(getenv)
+	if err := a.prepareEngine(context.Background(), engine, o); err != nil {
+		return err
+	}
+	if err := a.startChecks(i); err != nil {
+		return err
 	}
 	if _, err := a.ensureServices(i); err != nil {
 		return err
@@ -156,15 +134,13 @@ func (a *Service) cmdWelcome(assumeYes bool, o StartOptions, i *setup.Installer)
 		a.StartReport()
 		return nil
 	}
-	fmt.Fprintf(a.Out, "%s 后台已启动，每 5 分钟看一次待做。\n%s\n", checkMark(getenv), a.idleHint())
+	fmt.Fprintf(a.Out, "%s 后台已启动，每 5 分钟看一次待做。\n%s\n", checkMark(getenv), IdleHint)
 	return nil
 }
 
-// notifyOffByInstall：第一次同意，推送开关的「关」是安装时默认写下的（配置是这次安装新建的）。升级前就有的配置里的 false 是用户的选择，不动；读不了就当是用户的。
-func (a *Service) notifyOffByInstall(i *setup.Installer) bool {
-	if a.Cfg.NotifyEnabled {
-		return false
-	}
+// freshInstall：还没同意过，配置是这次安装新建的。这时配置里的「暂停」「推送关」是安装写下的默认，不是用户的选择；
+// 升级前就有的配置里的值是用户的，不动。读不了就当是用户的。
+func (a *Service) freshInstall(i *setup.Installer) bool {
 	c, err := setup.ReadConsent(a.Home)
 	if err != nil || c != nil {
 		return false
@@ -203,57 +179,40 @@ func (a *Service) startQuietly() error {
 	return err
 }
 
-// consentText 是固定的同意文字，加上这次还要多做的事。多做的事不改固定文字的版本。
-func (a *Service) consentText(engine engineState, getenv func(string) string) string {
+// noticeText 是装完告诉用户的固定那段，加上这次还要多做的事。多做的事不改固定文字的版本。通用工程规则装没装由 autoEnableEnv 接着说。
+func (a *Service) noticeText(engine engineState, getenv func(string) string) string {
 	var b strings.Builder
-	b.WriteString(consentBody)
+	b.WriteString(noticeBody)
 	help := a.cliHelp()
 	if engine == engineMissing {
 		if s, ok := a.cliSetup(); ok && s.DesktopInstalled(a.Home) {
 			fmt.Fprintf(&b, "· 检测到 %s。后台任务要独立的命令行程序，桌面端不能代替。\n", help.Desktop)
 		}
-		fmt.Fprintf(&b, "· 还要安装官方 %s。按回车会运行官方命令：%s\n", help.Name, help.Install)
+		fmt.Fprintf(&b, "· 还没有官方 %s，有终端时现在运行官方命令装上：%s\n", help.Name, help.Install)
 	}
 	if engine == engineMissing || engine == engineLoggedOut {
-		fmt.Fprintf(&b, "· %s 要登录。按回车后会打开浏览器（%s）；没登录不开后台。\n", help.Name, help.Login)
+		fmt.Fprintf(&b, "· %s 要登录（%s），会打开浏览器；登录前后台不接活。\n", help.Name, help.Login)
 	}
 	if !onPath(a.binDir(), getenv("PATH")) {
 		if rc := setup.RCForPath(a.Home, getenv("SHELL"), getenv("ZDOTDIR")); rc != "" {
-			fmt.Fprintf(&b, "· 会往 %s 加带标记的一行，把 ~/.local/bin 放进 PATH。改前备份，卸载时删掉。\n", a.tilde(rc))
+			fmt.Fprintf(&b, "· 往 %s 加带标记的一行，把 ~/.local/bin 放进 PATH。改前备份，卸载时删掉。\n", a.tilde(rc))
 		}
 	}
-	if line := a.envConsentLine(); line != "" {
-		b.WriteString("· " + line + "\n")
+	if a.envConsentLine() == envKeptLine { // 要装的那种由 autoEnableEnv 装完再说
+		b.WriteString("· " + envKeptLine + "\n")
 	}
 	return b.String()
 }
 
-// askConsent 只有空行算同意：n、其他输入、EOF 都不算，Ctrl-C 直接结束进程。提问前清掉终端里攒下的输入，等下载时多按的回车不能算回答。
-func askConsent(in io.Reader, out io.Writer) (bool, error) {
-	if f, ok := in.(*os.File); ok {
-		flushTerminalInput(f)
-	}
-	fmt.Fprint(out, consentPrompt)
-	line, err := bufio.NewReader(in).ReadString('\n')
-	if errors.Is(err, io.EOF) {
-		fmt.Fprintln(out)
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return line == "\n" || line == "\r\n", nil
-}
-
-// prepareEngine 同意之后把 CLI 弄好：没有就运行官方命令，没登录就登录。没有终端时不装不登录，只给命令。
+// prepareEngine 把 CLI 弄好：有终端时没有就运行官方命令、没登录就登录（登录要在浏览器里点）。没有终端只给命令：登录离不开终端，也不在 CI 这类地方悄悄联网装别的程序。
+// 弄不好时返回错误，后台不开；同意和权限已经记下，用户弄好 CLI 后在聊天里说需求，派活技能会自己把后台拉起来。
 func (a *Service) prepareEngine(ctx context.Context, engine engineState, o StartOptions) error {
 	s, canSetUp := a.cliSetup()
 	help := a.cliHelp()
-	if engine == engineMissing || engine == engineLoggedOut {
-		if !o.Interactive {
-			a.printCLISteps(engine)
-			return errors.New("这里没有终端，没有替你装 CLI 或登录，后台没开")
-		}
+	after := "弄好后在 Claude Code 或 Codex 里直接说要做什么，后台会自己开起来；也可以运行 agentq start"
+	if (engine == engineMissing || engine == engineLoggedOut) && !o.Interactive {
+		a.printCLISteps(engine)
+		return fmt.Errorf("这里没有终端，没有替你装 %s 或登录，后台没开。%s", help.Name, after)
 	}
 	if engine == engineMissing {
 		fmt.Fprintf(a.Out, "运行官方安装命令：%s\n", help.Install)
@@ -265,11 +224,11 @@ func (a *Service) prepareEngine(ctx context.Context, engine engineState, o Start
 		}
 		if err != nil {
 			fmt.Fprintf(a.Out, "%v\n", err)
-			fmt.Fprintf(a.Out, "%s 没装上，什么都没改，后台没开。网络不通可以用代理或换网络重试，也可以换一种官方方式：\n", help.Name)
+			fmt.Fprintf(a.Out, "%s 没装上，后台没开。网络不通可以用代理或换网络重试，也可以换一种官方方式：\n", help.Name)
 			for _, alt := range help.Alternatives {
 				fmt.Fprintf(a.Out, "  %s\n", alt)
 			}
-			fmt.Fprintf(a.Out, "装好后运行：\n  %s\n  agentq start\n", help.Login)
+			fmt.Fprintf(a.Out, "装好后登录：\n  %s\n%s。\n", help.Login, after)
 			return fmt.Errorf("%s 没装上", help.Name)
 		}
 	}
@@ -279,7 +238,7 @@ func (a *Service) prepareEngine(ctx context.Context, engine engineState, o Start
 			fmt.Fprintf(a.Out, "%v\n", err)
 		}
 		if engine, _ = a.probeEngine(); engine != engineReady {
-			return fmt.Errorf("%s 还没登录，后台没开。登录后运行 agentq start：\n  %s\n  agentq start", help.Name, help.Login)
+			return fmt.Errorf("%s 还没登录，后台没开。登录：\n  %s\n%s", help.Name, help.Login, after)
 		}
 	}
 	if engine == engineReady {
@@ -308,6 +267,10 @@ func (a *Service) ensurePath(getenv func(string) string) {
 	if onPath(a.binDir(), getenv("PATH")) {
 		return
 	}
+	if getenv("SHELL") == "" { // 不知道用的哪个 shell（服务、CI 里常见），只给手动的那一行
+		a.pathHint(getenv)
+		return
+	}
 	change, err := setup.AddPathLine(a.Home, getenv("SHELL"), getenv("ZDOTDIR"), a.Now())
 	switch {
 	case err != nil:
@@ -331,15 +294,6 @@ func (a *Service) recordConsent(method string) error {
 		return nil
 	}
 	return setup.WriteConsent(a.Home, setup.Consent{TextVersion: setup.ConsentTextVersion, Time: a.Now().UTC().Format(time.RFC3339), Method: method})
-}
-
-// installOnly 说明为什么没启动、之后怎么启动。
-func (a *Service) installOnly(why string, engine engineState, getenv func(string) string) {
-	fmt.Fprintln(a.Out, why)
-	a.printCLISteps(engine)
-	fmt.Fprintln(a.Out, "准备好了运行这一条（会讲清权限，由你确认）：")
-	fmt.Fprintln(a.Out, "  agentq start")
-	a.pathHint(getenv)
 }
 
 // printCLISteps 给 CLI 还差的那几条官方命令。

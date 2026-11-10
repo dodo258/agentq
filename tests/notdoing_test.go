@@ -8,9 +8,7 @@ import (
 	"testing"
 
 	"agentq/internal/backlog"
-	"agentq/internal/chat"
 	"agentq/internal/notify"
-	"agentq/internal/sense"
 	"agentq/internal/suggest"
 	"agentq/internal/testkit"
 )
@@ -192,94 +190,6 @@ func TestCommitNotDoingRollback(t *testing.T) {
 	}
 	if commits(t, e.a, p) != n {
 		t.Error("同标题不提交")
-	}
-}
-
-// Router 的 reject：校验项目和内容、走 cleanTodoText、去掉同标题的建议；动作进 schema。
-func TestRouterReject(t *testing.T) {
-	e, p := ndEnv(t)
-	st := &State{}
-	router := &Job{ID: "1104-120000-router"}
-	if _, _, err := e.a.Chat.RunRouterAction(st, router, 0, chat.RouterAction{Type: "reject", Project: "没有这个项目", Text: "x"}); err == nil {
-		t.Error("项目要校验")
-	}
-	if _, _, err := e.a.Chat.RunRouterAction(st, router, 0, chat.RouterAction{Type: "reject", Project: "demo", Text: "   "}); err == nil {
-		t.Error("空内容要拒绝")
-	}
-	if _, err := os.Stat(p.NotDoingPath()); err == nil {
-		t.Fatal("没通过不该写")
-	}
-	msg, _, err := e.a.Chat.RunRouterAction(st, router, 1, chat.RouterAction{Type: "reject", Project: "demo", Text: "加云同步", Reason: "太贵了，\n不做（进行中：x）<!-- 卡住"})
-	if err != nil || !strings.Contains(msg, "不做") {
-		t.Fatalf("%q %v", msg, err)
-	}
-	if strings.Contains(backlogOf(t, p), "加云同步") {
-		t.Errorf("同标题的建议要去掉：%s", backlogOf(t, p))
-	}
-	entries, _ := backlog.NotDoingEntries(p)
-	if len(entries) != 1 || entries[0].Title != "加云同步" {
-		t.Fatalf("%+v", entries)
-	}
-	raw, _ := os.ReadFile(p.NotDoingPath())
-	if q := string(raw); strings.Contains(q, "（进行中") || strings.Contains(q, "<!--") || strings.Contains(q, "卡住") || !strings.Contains(entries[0].Quote, "太贵了， 不做") {
-		t.Errorf("要清洗、压成一行：%q", q)
-	}
-	// 不在建议里的也能写；没写 reason 就用 text；title 只取「——」之前
-	if _, _, err := e.a.Chat.RunRouterAction(st, router, 2, chat.RouterAction{Type: "reject", Project: "demo", Text: "做小程序 —— 不想维护"}); err != nil {
-		t.Fatal(err)
-	}
-	entries, _ = backlog.NotDoingEntries(p)
-	if entries[1].Title != "做小程序" || !strings.Contains(entries[1].Quote, "不想维护") {
-		t.Errorf("%+v", entries[1])
-	}
-	// 标题里的标记也要中和
-	if _, _, err := e.a.Chat.RunRouterAction(st, router, 3, chat.RouterAction{Type: "reject", Project: "demo", Text: "<!-- 写了（进行中：y）的事"}); err != nil {
-		t.Fatal(err)
-	}
-	raw, _ = os.ReadFile(p.NotDoingPath())
-	if q := string(raw); strings.Contains(q, "<!--") || strings.Contains(q, "（进行中") {
-		t.Errorf("标题要清洗：%q", q)
-	}
-	if !strings.Contains(chat.RouterSchema, `"reject"`) || !strings.Contains(chat.RouterSchema, `"reason"`) {
-		t.Error("schema")
-	}
-	var schema map[string]any
-	if err := json.Unmarshal([]byte(chat.RouterSchema), &schema); err != nil {
-		t.Errorf("schema 不是合法 JSON：%v", err)
-	}
-	if !strings.Contains(chat.RouterHead, "reject") {
-		t.Error("提示词要写")
-	}
-}
-
-func TestSenseSkipsNotDoing(t *testing.T) {
-	a, root := sgApp(t)
-	p := sgRepo(t, a, root, "demo", sgBacklog)
-	if err := os.WriteFile(p.NotDoingPath(), []byte(backlog.AppendNotDoing("", backlog.NotDoingEntry{Title: "闪退修复", Quote: "不要", Date: "2026-11-04"})), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	testkit.GitT(t, a.Home, p.Dir, "add", "-A")
-	testkit.GitT(t, a.Home, p.Dir, "commit", "-q", "-m", "nd")
-	lines, _, err := a.Sense.SenseCommit(p, []sense.SenseCandidate{
-		{Project: "demo", Title: "闪退修复", Line: "闪退修复 —— 摘要"},
-		{Project: "demo", Title: "登录失败", Line: "登录失败 —— 摘要"},
-	})
-	if err != nil || len(lines) != 1 || !strings.Contains(lines[0], "登录失败") {
-		t.Fatalf("%q %v", lines, err)
-	}
-	if strings.Contains(backlogOf(t, p), "闪退修复") {
-		t.Errorf("%s", backlogOf(t, p))
-	}
-	// 提示词：清单放在外部数据的分隔符之外
-	prompt, batch, err := a.Sense.SensePromptNotDoing(a.Now(), []sense.SenseItem{{Project: "demo", Source: "s", Key: "k", Kind: "review", Title: "t", Body: "b", At: a.Now()}})
-	if err != nil || len(batch) != 1 {
-		t.Fatal(err, batch)
-	}
-	if i, k := strings.LastIndex(prompt, " 结束>>>"), strings.Index(prompt, "项目负责人明确不做的事"); k < i || k < 0 {
-		t.Errorf("要在分隔符之外：%d %d\n%s", i, k, prompt)
-	}
-	if !strings.Contains(prompt, "demo：闪退修复") {
-		t.Errorf("%s", prompt)
 	}
 }
 

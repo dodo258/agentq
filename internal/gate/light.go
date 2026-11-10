@@ -73,7 +73,7 @@ func changedLines(diff string) int {
 	return n
 }
 
-// reviewModel：审查、界面审查用的模型。轻量时换 light_review_model（空就照 model）。强度不跟着降，一律 reviewEffort。
+// reviewModel：审查、界面审查用的模型。轻量时换 Config.LightReviewModel（空就照 model）。强度不跟着降，一律 reviewEffort。
 func reviewModel(model, light string, c Candidate) string {
 	if c.Light && light != "" {
 		return light

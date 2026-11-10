@@ -8,16 +8,11 @@ import (
 	_ "agentq/internal/backend/opencode"
 	"agentq/internal/chat"
 	"agentq/internal/discuss"
-	"agentq/internal/inbox"
-	"agentq/internal/release"
 	"agentq/internal/runner"
-	"agentq/internal/sense"
-	"agentq/internal/suggest"
 )
 
 // Assets 是编译进二进制的东西：go:embed 不能写 ..，所以放根目录，由 main 传进来。
 type Assets struct {
-	TriageSkill string            // feedback-triage 技能全文，进感知任务的提示词
 	RoutineText map[string]string // 夜班、复盘的说明文件，键是任务种类
 	Install     fs.FS             // skills、templates、support、依赖锁定文件
 	Evals       fs.FS             // 评测集，根下有 evals/
@@ -33,8 +28,6 @@ func Wire(a *App, assets Assets) *App {
 	a.Backlog.Gitx = a.Gitx
 	a.Telegram = orNew(a.Telegram)
 	a.Telegram.Env = a.Env
-	a.ASC = orNew(a.ASC)
-	a.ASC.Env = a.Env
 	a.Quality = orNew(a.Quality)
 	a.Quality.Env = a.Env
 	a.Quality.Backlog = a.Backlog
@@ -82,44 +75,18 @@ func Wire(a *App, assets Assets) *App {
 	a.Newproj.Ledger = a.Ledger
 	a.Newproj.Notify = a.Notify
 	a.Newproj.Runner = a.Runner
-	a.Inbox = orNew(a.Inbox)
-	a.Inbox.Env = a.Env
-	a.Inbox.Ledger = a.Ledger
-	a.Inbox.Notify = a.Notify
-	a.Inbox.Runner = a.Runner
 	a.Suggest = orNew(a.Suggest)
 	a.Suggest.Env = a.Env
 	a.Suggest.Backlog = a.Backlog
 	a.Suggest.Gitx = a.Gitx
 	a.Suggest.Notify = a.Notify
-	a.Suggest.Runner = a.Runner
-	a.Release = orNew(a.Release)
-	a.Release.Env = a.Env
-	a.Release.ASC = a.ASC
-	a.Release.Backlog = a.Backlog
-	a.Release.Ledger = a.Ledger
-	a.Release.Notify = a.Notify
-	a.Release.Runner = a.Runner
-	a.Release.Telegram = a.Telegram
-	a.Sense = orNew(a.Sense)
-	a.Sense.Env = a.Env
-	a.Sense.ASC = a.ASC
-	a.Sense.Backlog = a.Backlog
-	a.Sense.Gitx = a.Gitx
-	a.Sense.Ledger = a.Ledger
-	a.Sense.Notify = a.Notify
-	a.Sense.Release = a.Release
-	a.Sense.Runner = a.Runner
-	a.Sense.Suggest = a.Suggest
 	a.Routine = orNew(a.Routine)
 	a.Routine.Env = a.Env
 	a.Routine.Backlog = a.Backlog
 	a.Routine.Gitx = a.Gitx
-	a.Routine.Inbox = a.Inbox
 	a.Routine.Ledger = a.Ledger
 	a.Routine.Notify = a.Notify
 	a.Routine.Runner = a.Runner
-	a.Routine.Sense = a.Sense
 	a.Routine.Service = a.Service
 	a.Patrol = orNew(a.Patrol)
 	a.Patrol.Env = a.Env
@@ -135,12 +102,9 @@ func Wire(a *App, assets Assets) *App {
 	a.Chat.Backlog = a.Backlog
 	a.Chat.Discuss = a.Discuss
 	a.Chat.Gate = a.Gate
-	a.Chat.Inbox = a.Inbox
 	a.Chat.Ledger = a.Ledger
-	a.Chat.Newproj = a.Newproj
 	a.Chat.Notify = a.Notify
 	a.Chat.Orphan = a.Orphan
-	a.Chat.Release = a.Release
 	a.Chat.Runner = a.Runner
 	a.Chat.Service = a.Service
 	a.Chat.Suggest = a.Suggest
@@ -163,28 +127,23 @@ func Wire(a *App, assets Assets) *App {
 	a.Sched.Discuss = a.Discuss
 	a.Sched.Evolve = a.Evolve
 	a.Sched.Gate = a.Gate
-	a.Sched.Inbox = a.Inbox
 	a.Sched.Ledger = a.Ledger
 	a.Sched.Newproj = a.Newproj
 	a.Sched.Notify = a.Notify
 	a.Sched.Orphan = a.Orphan
 	a.Sched.Patrol = a.Patrol
-	a.Sched.Release = a.Release
 	a.Sched.Routine = a.Routine
 	a.Sched.Runner = a.Runner
-	a.Sched.Suggest = a.Suggest
 	a.Sched.Telegram = a.Telegram
 	a.Onboard = orNew(a.Onboard)
 	a.Onboard.Env = a.Env
 	a.Onboard.Backlog = a.Backlog
 	a.Onboard.Gitx = a.Gitx
 	a.Onboard.Sched = a.Sched
-	a.Onboard.Sense = a.Sense
 	a.Onboard.Service = a.Service
 	a.Onboard.Telegram = a.Telegram
 	a.Onboard.Assets = assets.Install
 	a.Notify.MorningGates = a.Gate.MorningLines
-	a.Sense.TriageSkill = assets.TriageSkill
 	a.Routine.RoutineText = assets.RoutineText
 	a.Notify.MorningIssues = a.Patrol.MorningIssues
 	a.Runner.Hooks = a.wiredHooks()
@@ -202,35 +161,20 @@ func orNew[T any](p *T) *T {
 // wiredHooks 把任务生命周期的钩子接到各功能。
 func (a *App) wiredHooks() runner.Hooks {
 	return runner.Hooks{
-		ChatFilesDir:      a.Chat.ChatFilesDir,
-		OutboxDir:         a.Inbox.OutboxDir,
-		FollowupRequest:   chat.FollowupRequest,
-		RouterRequest:     chat.RouterRequest,
-		InboxRequest:      inbox.InboxRequest,
-		SuggestRequest:    suggest.SuggestRequest,
-		SenseRequest:      sense.SenseRequest,
-		DiscussRequest:    discuss.Request,
-		ReleaseRequest:    release.ReleaseRequest,
-		WriteSenseRunFile: a.Sense.WriteSenseRunFile,
-		ConstraintsNote:   a.Evolve.ConstraintsNote,
+		ChatFilesDir:    a.Chat.ChatFilesDir,
+		FollowupRequest: chat.FollowupRequest,
+		DiscussRequest:  discuss.Request,
+		ConstraintsNote: a.Evolve.ConstraintsNote,
 
 		MissingReport:  a.Routine.MissingReport,
 		CheckNewResult: a.Newproj.CheckNewResult,
-		InboxFinished:  inbox.InboxFinished,
-		InboxResult:    a.Inbox.InboxResult,
-		SuggestResult:  a.Suggest.SuggestResult,
-		SenseResult:    a.Sense.SenseResult,
 
-		NewDirs:           a.Newproj.NewDirs,
-		NewDirsNote:       a.Newproj.NewDirsNote,
-		ReleaseHeld:       a.Newproj.ReleaseHeld,
-		FinishRouter:      a.Chat.FinishRouter,
-		FinishInbox:       a.Inbox.FinishInbox,
-		RequeueThread:     a.Chat.RequeueThread,
-		ReplyChat:         a.Chat.ReplyChat,
-		NoticeSuggest:     a.Suggest.NoticeSuggest,
-		FinishReleasePrep: a.Release.FinishReleasePrep,
-		NoticeNew:         a.Newproj.NoticeNew,
-		FinishDiscuss:     a.Discuss.FinishJob,
+		NewDirs:       a.Newproj.NewDirs,
+		NewDirsNote:   a.Newproj.NewDirsNote,
+		ReleaseHeld:   a.Newproj.ReleaseHeld,
+		RequeueThread: a.Chat.RequeueThread,
+		ReplyChat:     a.Chat.ReplyChat,
+		NoticeNew:     a.Newproj.NoticeNew,
+		FinishDiscuss: a.Discuss.FinishJob,
 	}
 }

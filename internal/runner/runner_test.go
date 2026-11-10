@@ -14,42 +14,27 @@ import (
 
 func TestTaskModel(t *testing.T) {
 	fixed := config.Config{Model: "big", LowRiskModel: "small"}
-	auto := config.Config{Model: "big", LowRiskModel: "small", ModelPolicy: config.ModelPolicyAuto}
-	autoNoLow := config.Config{Model: "big", ModelPolicy: config.ModelPolicyAuto}
-	follow := config.Config{ModelPolicy: config.ModelPolicyAuto}
 	cases := []struct {
-		name        string
-		cfg         config.Config
-		kind, item  string
-		light, want string
+		name       string
+		cfg        config.Config
+		kind, item string
+		want       string
 	}{
-		{"fixed 普通", fixed, "", "加导出", "", "big"},
-		{"fixed 低风险", fixed, "", "加测试（低风险） —— x", "", "small"},
-		{"fixed 没配 low_risk 不换", config.Config{Model: "big"}, "", "加测试（低风险）", "light", "big"},
-		{"fixed 不看后端的轻模型", config.Config{Model: "big"}, "", "文档：改 README", "light", "big"},
-		{"fixed 文档前缀不算", fixed, "", "文档：改 README", "", "big"},
-		{"fixed 重写不降级，低风险标记也压不过", fixed, "", "重写调度（低风险）", "", "big"},
-		{"fixed 留空", config.Config{}, "", "加导出", "light", ""},
-		{"auto 普通不降级", auto, "", "加导出", "light", "big"},
-		{"auto 低风险用 low_risk", auto, "", "加测试（低风险）", "light", "small"},
-		{"auto 没配 low_risk 用后端的", autoNoLow, "", "加测试（低风险）", "light", "light"},
-		{"auto 后端也没有就不换", autoNoLow, "", "加测试（低风险）", "", "big"},
-		{"auto 文档前缀", autoNoLow, "", "文档：改 README —— 补一节", "light", "light"},
-		{"auto docs 前缀", autoNoLow, "", "docs: fix typo", "light", "light"},
-		{"auto 重写不降级", auto, "", "重写调度模块（低风险）", "light", "big"},
-		{"auto 英文重构不降级", auto, "", "（低风险）Refactor scheduler", "light", "big"},
-		{"auto 审查不降级", auto, "", "文档：审查 README", "light", "big"},
-		{"auto 正文提到重写不算", auto, "", "加测试（低风险） —— 不是重写", "light", "small"},
-		{"auto 标题中间提到文档不算", autoNoLow, "", "改文档生成器核心", "light", "big"},
-		{"auto 夜班不降级", auto, config.KindNight, "加测试（低风险）", "light", "big"},
-		{"auto 复盘不降级", auto, config.KindReview, "（低风险）", "light", "big"},
-		{"auto 对话不降级", auto, state.KindChat, "（低风险）", "light", "big"},
-		{"auto 留空时普通活跟随 CLI", follow, "", "加导出", "light", ""},
-		{"auto 留空时轻活用后端的", follow, "", "加测试（低风险）", "light", "light"},
+		{"普通", fixed, "", "加导出", "big"},
+		{"低风险", fixed, "", "加测试（低风险） —— x", "small"},
+		{"没有 low_risk 不换", config.Config{Model: "big"}, "", "加测试（低风险）", "big"},
+		{"文档前缀不算", fixed, "", "文档：改 README", "big"},
+		{"重写不降级，低风险标记也压不过", fixed, "", "重写调度（低风险）", "big"},
+		{"英文重构不降级", fixed, "", "（低风险）Refactor scheduler", "big"},
+		{"审查不降级", fixed, "", "审查 README（低风险）", "big"},
+		{"正文提到重写不算", fixed, "", "加测试（低风险） —— 不是重写", "small"},
+		{"夜班不降级", fixed, config.KindNight, "加测试（低风险）", "big"},
+		{"对话不降级", fixed, state.KindChat, "（低风险）", "big"},
+		{"留空跟随 CLI", config.Config{}, "", "加导出", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got, _ := TaskModel(c.cfg, c.kind, c.item, c.light); got != c.want {
+			if got, _ := TaskModel(c.cfg, c.kind, c.item); got != c.want {
 				t.Fatalf("%q，想要 %q", got, c.want)
 			}
 		})
@@ -60,8 +45,6 @@ func TestTaskModel(t *testing.T) {
 func TestTaskModelEffort(t *testing.T) {
 	cfg := config.Config{Model: "opus", Effort: "high", HeavyEffort: "xhigh", LowRiskModel: "sonnet", LowRiskEffort: "medium",
 		ReviewModel: "sonnet", ReviewEffort: "high", PatrolModel: "sonnet"}
-	auto := cfg
-	auto.ModelPolicy = config.ModelPolicyAuto
 	bare := config.Config{Model: "opus", Effort: "high"}
 	for _, c := range []struct {
 		name       string
@@ -74,12 +57,10 @@ func TestTaskModelEffort(t *testing.T) {
 		{"英文重构用 xhigh", cfg, "", "Refactor scheduler", "opus", "xhigh"},
 		{"迁移", cfg, "", "迁移配置格式", "opus", "xhigh"},
 		{"低风险", cfg, "", "加测试（低风险）", "sonnet", "medium"},
-		{"auto 重活", auto, "", "重写调度（低风险）", "opus", "xhigh"},
-		{"fixed 重活压过低风险", cfg, "", "重构解析（低风险）", "opus", "xhigh"},
+		{"重活压过低风险", cfg, "", "重构解析（低风险）", "opus", "xhigh"},
 		{"标题提到审查不算长任务", cfg, "", "修审查门超时", "opus", "high"},
 		{"难撤回用 xhigh", cfg, "", "改表结构（难撤回）", "opus", "xhigh"},
 		{"跟随 CLI 时重活也不单传强度", config.Config{HeavyEffort: "xhigh"}, "", "重写调度", "", ""},
-		{"auto 文档", auto, "", "文档：改 README", "sonnet", "medium"},
 		{"复盘", cfg, config.KindReview, "", "sonnet", "high"},
 		{"巡逻分析", cfg, state.KindPatrol, "", "sonnet", "medium"},
 		{"夜班照主模型", cfg, config.KindNight, "重写调度", "opus", "high"},
@@ -88,7 +69,7 @@ func TestTaskModelEffort(t *testing.T) {
 		{"没配的复盘照主模型", bare, config.KindReview, "", "opus", "high"},
 		{"没配的巡逻照主模型", bare, state.KindPatrol, "", "opus", "high"},
 	} {
-		if m, e := TaskModel(c.cfg, c.kind, c.item, ""); m != c.model || e != c.eff {
+		if m, e := TaskModel(c.cfg, c.kind, c.item); m != c.model || e != c.eff {
 			t.Errorf("%s：%s %s，想要 %s %s", c.name, m, e, c.model, c.eff)
 		}
 	}
@@ -239,7 +220,8 @@ func TestBuildPromptAndArgs(t *testing.T) {
 	cfg := config.Default()
 	p := BuildPrompt("/p/alpha", "条目 —— 验收")
 	if !strings.Contains(p, "把 /p/alpha 的 docs/BACKLOG.md「待做」里的这一条做到分支可合并：条目 —— 验收。") ||
-		!strings.HasPrefix(p, "你在无人值守模式下工作") || !strings.Contains(p, "~/.claude/skills/agent-task/SKILL.md") {
+		!strings.HasPrefix(p, "你在无人值守模式下工作") || !strings.Contains(p, "~/.claude/skills/agent-task/SKILL.md") ||
+		!strings.Contains(p, "最后一段用条目原文的语言写") { // 没写语言时汇报会跑成英文（11-10 实际发生）
 		t.Errorf("prompt 不对：%s", p)
 	}
 	argv := func(resume, session, title string) []string {

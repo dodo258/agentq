@@ -1,0 +1,17 @@
+{
+  "domain": "docs",
+  "kind": "task",
+  "request": "README.md 补一节「用法」：写清 count.sh 的 -l 和 -w 各做什么，各给一条能直接复制运行的例子；只改文档，不改 count.sh",
+  "expect": {
+    "merged": true,
+    "item": [
+      "done"
+    ],
+    "unchanged": [
+      "count.sh"
+    ],
+    "verify_exit": 0,
+    "max_rounds": 2,
+    "human": false
+  }
+}

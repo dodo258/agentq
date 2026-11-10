@@ -1,44 +1,14 @@
 package tests
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"agentq/internal/state"
 	"agentq/internal/testkit"
 )
-
-// 主动感知的输出在 sense/runs/ 下，也要算。
-func TestStatsSenseOutput(t *testing.T) {
-	a, _ := newTestApp(t)
-	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.Local)
-	a.Now = func() time.Time { return now }
-	ended := now.Add(-time.Minute)
-	b, _ := json.Marshal(Job{ID: "s1", Kind: state.KindSense, Status: state.StatusDone, Project: "demo", StartedAt: now.Add(-time.Hour), EndedAt: &ended})
-	if err := os.MkdirAll(a.JobDir("s1"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(a.JobDir("s1"), "meta.json"), b, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Sense.PrepareSenseRun("s1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(a.Ledger.JobOutput("s1", "result.json"), []byte(`{"total_cost_usd":0.5,"modelUsage":{"m":{"inputTokens":7,"costUSD":0.5}}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	res, err := a.Stats.ComputeStats(7)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := res.ByKind["主动感知"].Usage.CostUSD; got < 0.5-1e-9 || got > 0.5+1e-9 {
-		t.Errorf("%+v", res.ByKind["主动感知"])
-	}
-}
 
 // 真二进制：只读（状态和任务记录一个字节都不变），status 输出不变。
 func TestIntegrationStats(t *testing.T) {

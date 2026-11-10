@@ -26,8 +26,6 @@ func SortJobsByEnd(jobs []*Job) {
 	sort.Slice(jobs, func(i, k int) bool { return jobs[i].EndedAt.After(*jobs[k].EndedAt) })
 }
 
-const KindInbox = "inbox"
-
 const KindNew = "new"
 
 // NewReport 是结果最后一段写的四项；Path 核对后换成真实路径。Commit 是引擎合并后填的合并提交。
@@ -104,12 +102,6 @@ func (st *State) HeldProject(name string) bool {
 
 const KindPatrol = "patrol"
 
-const KindRelease = "release"
-
-const KindRouter = "router"
-
-const KindQuick = "quick"
-
 func HasRunning(st *State, kind string) bool {
 	for _, j := range st.Running() {
 		if j.Kind == kind {
@@ -128,8 +120,6 @@ type RoutineMark struct {
 	// Issues：仓库（owner/name）→ 最新 issue 的更新时间，没有 issue 是 ghNoIssue。
 	Issues map[string]string `json:"issues,omitempty"`
 }
-
-const KindSense = "sense"
 
 // KindDiscuss：开工前生成大方向问题的一次性任务（见 internal/discuss）。不占名额，只调一次模型。
 const KindDiscuss = "discuss"
@@ -187,11 +177,8 @@ type Job struct {
 	StallNoted bool `json:"stall_noted,omitempty"`
 	// ProgressNoted：checkProgress 已经报过的信号（见 internal/runner/progress.go），同一信号不重报。
 	ProgressNoted []string `json:"progress_noted,omitempty"`
-	// Kind 非空表示不是 BACKLOG 里的待做：不核验中断、不续跑。任务箱（inbox）和 new 占并发名额，其余不占，见 takesSlot。
+	// Kind 非空表示不是 BACKLOG 里的待做：不核验中断、不续跑。new 占并发名额，其余不占，见 takesSlot。
 	Kind string `json:"kind,omitempty"`
-	// Output：任务箱任务（Kind=inbox）的产出文件路径；InboxSynced：结果已写回 inbox.md，没写回去的下次 tick 再写。
-	Output      string `json:"output,omitempty"`
-	InboxSynced bool   `json:"inbox_synced,omitempty"`
 	// ProjectsBefore：new 任务启动时 projects_root 下已有的名字。之后才出现的目录才可能是它建的（见 internal/newproj/newproj.go）。
 	ProjectsBefore []string `json:"projects_before,omitempty"`
 	// NewReport：new 任务核对通过的结尾四项。有它的任务是新项目第一版（Kind 已经改回空），过成品门；接手的任务也带着。
@@ -222,13 +209,8 @@ type Job struct {
 	// StuckBranch、StuckWorktree：放下时这一条的分支和 worktree（Handoff 的任务是接手的来源分支）。标记去掉后分支名就只有这里有了。
 	StuckBranch   string `json:"stuck_branch,omitempty"`
 	StuckWorktree string `json:"stuck_worktree,omitempty"`
-	// 闲时找活任务（Kind=suggest，见 internal/suggest/suggest.go）：SuggestProjects 是启动时交给模型看的项目（结果里的 project 只能是它们）；
-	// Manual 是用户亲手启动的（agentq suggest；待做条目是 agentq run 或 Telegram「做」，续跑沿用）：暂停时 tick 也接着续跑这一条；Suggest 是核对并写进 BACKLOG 之后的结果。
-	SuggestProjects []string `json:"suggest_projects,omitempty"`
-	Manual          bool     `json:"manual,omitempty"`
-	// SuggestSnaps：启动时各项目的样子；输出合格、处理完之后才存成“上次生成时的样子”（见 applySuggestions）。
-	SuggestSnaps map[string]SuggestSnap `json:"suggest_snaps,omitempty"`
-	Suggest      *SuggestResult         `json:"suggest,omitempty"`
+	// Manual 是用户亲手启动的（agentq run 或 Telegram「做」，续跑沿用）：暂停时 tick 也接着续跑这一条。
+	Manual bool `json:"manual,omitempty"`
 	// Usage 是结束时从 result.json 读到的用量（token、费用估算），结果文件里没有就为空。
 	Usage *backend.JobUsage `json:"usage,omitempty"`
 	// Verify：升级前的「合并后核验」留下的记录，只读。新任务不写，见 MergeVerify。
@@ -461,12 +443,12 @@ func (st *State) Prune(now time.Time) {
 	}
 }
 
-// TakesSlot：占并发名额、算「在做的活」的任务：BACKLOG 待做、任务箱、new 和发版准备。夜班、复盘、巡逻分析、对话、闲时找活、主动感知不算。
+// TakesSlot：占并发名额、算「在做的活」的任务：BACKLOG 待做和 new。夜班、复盘、巡逻分析、对话、商量大方向不算。
 func TakesSlot(kind string) bool {
-	return kind == "" || kind == KindInbox || kind == KindNew || kind == KindRelease
+	return kind == "" || kind == KindNew
 }
 
-// Tasks 返回运行中占名额的任务（待做、任务箱和 new，不含夜班、复盘）。
+// Tasks 返回运行中占名额的任务（待做和 new，不含夜班、复盘）。
 func (st *State) Tasks() []*Job {
 	var out []*Job
 	for _, j := range st.Running() {
@@ -514,7 +496,7 @@ func (st *State) PendingResumes() []*Job {
 // HoldKey：ItemHold 的键。不同项目里一样文字的条目指纹相同，要连项目一起记。
 func HoldKey(project, fp string) string { return project + "|" + fp }
 
-// itemHeld：这一条在等待期内。老状态文件的键只有指纹，照样认；不知道项目（测试、任务箱）时哪个项目的都算。
+// itemHeld：这一条在等待期内。老状态文件的键只有指纹，照样认；不知道项目（测试）时哪个项目的都算。
 func (st *State) itemHeld(project, fp string, now time.Time) bool {
 	if until, ok := st.ItemHold[fp]; ok && now.Before(until) {
 		return true
@@ -531,7 +513,7 @@ func (st *State) itemHeld(project, fp string, now time.Time) bool {
 	return false
 }
 
-// SameItem：任务 j 做的是 project 里指纹为 fp 的条目。任何一边没写项目就只比指纹（任务箱的指纹带前缀，不会撞）。
+// SameItem：任务 j 做的是 project 里指纹为 fp 的条目。任何一边没写项目就只比指纹。
 func SameItem(j *Job, project, fp string) bool {
 	return j.Fingerprint == fp && (project == "" || j.Project == "" || j.Project == project)
 }
@@ -584,43 +566,11 @@ func retryAt(st *State, project, fp string, retryAfter time.Duration) (at time.T
 	return last.EndedAt.Add(retryWait(st, last, retryAfter)), last, stuckPending
 }
 
-const KindSuggest = "suggest"
-
-// SuggestSnap 是上次生成时一个项目的样子：git HEAD 和「以后再说」一节的内容摘要。
-type SuggestSnap struct {
-	Head  string `json:"head"`
-	Later string `json:"later"`
-}
-
-// SuggestResult 是 Job.Suggest：核对并写进 BACKLOG 之后的结果，存在任务记录里。
-type SuggestResult struct {
-	Candidates int      `json:"candidates"`
-	Todo       []string `json:"todo,omitempty"`     // 进「待做」的，「项目：标题」
-	Proposed   []string `json:"proposed,omitempty"` // 进「建议」的，「编号　项目　标题」
-	Skipped    []string `json:"skipped,omitempty"`
-	Failed     []string `json:"failed,omitempty"`
-	// NewFailed：Failed 里这次该推送的（同一项目同样的原因之前推过就不在里面）。
-	NewFailed []string `json:"new_failed,omitempty"`
-}
-
-func (r SuggestResult) Written() int { return len(r.Todo) + len(r.Proposed) }
-
-func (r SuggestResult) Summary() string {
-	s := fmt.Sprintf("收到 %d 条候选，写进「待做」%d 条（低风险）、「建议」%d 条", r.Candidates, len(r.Todo), len(r.Proposed))
-	if len(r.Skipped) > 0 {
-		s += fmt.Sprintf("；跳过 %d 条（%s）", len(r.Skipped), textfmt.OneLine(strings.Join(r.Skipped, "；"), 200))
-	}
-	if len(r.Failed) > 0 {
-		s += "；没写进去：" + textfmt.OneLine(strings.Join(r.Failed, "；"), 200)
-	}
-	return s
-}
-
 const KindFollowup = "followup"
 
 // IsChatKind：回答要发给用户的几种任务。
 func IsChatKind(kind string) bool {
-	return kind == KindChat || kind == KindFollowup || kind == KindRouter || kind == KindQuick
+	return kind == KindChat || kind == KindFollowup
 }
 
 func StatusLabel(s string) string {

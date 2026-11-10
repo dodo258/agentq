@@ -11,7 +11,6 @@ import (
 	"agentq/internal/config"
 	"agentq/internal/routine"
 	"agentq/internal/state"
-	"agentq/internal/suggest"
 	"agentq/internal/testkit"
 )
 
@@ -213,9 +212,6 @@ func TestIntegrationNightRunsWhenBusy(t *testing.T) {
 		"等用户决定带等条件": {"的「等用户决定」有条目", func(t *testing.T, e *testEnv, dir string) {
 			appendBacklog(t, dir, "\n## 等用户决定\n\n- [ ] 选哪个（等条件：前面合并）\n")
 		}},
-		"任务箱有条目": {"任务箱有条目", func(t *testing.T, e *testEnv, dir string) {
-			os.WriteFile(filepath.Join(e.home, ".agentq", "inbox.md"), []byte("## 待做\n- [ ] 调研\n"), 0o600)
-		}},
 		"HEAD 变了": {"的 HEAD 变了", func(t *testing.T, e *testEnv, dir string) {
 			commitFile(t, e, dir, "code.go", "package x\n")
 		}},
@@ -333,10 +329,10 @@ func TestIntegrationReviewIdle(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(e.home, "fake-gh-calls")); !strings.Contains(string(b), "issue list --repo o/demo") {
 		t.Errorf("复盘也要查 issue：%s", b)
 	}
-	// 闲时找活结束不算：不然复盘的提交触发找活、找活又触发复盘，天天都跳不过
+	// 商量大方向结束不算：它不改代码
 	e.editState(func(st *State) {
 		end := day2.Add(2 * time.Hour)
-		st.Jobs = append(st.Jobs, &Job{ID: "x-suggest", Kind: state.KindSuggest, Project: suggest.SuggestJobName, Status: state.StatusDone, StartedAt: end, EndedAt: &end})
+		st.Jobs = append(st.Jobs, &Job{ID: "x-discuss", Kind: state.KindDiscuss, Project: "demo", Status: state.StatusDone, StartedAt: end, EndedAt: &end})
 	})
 	// 复盘只认这几样：待做有条目不算（那是夜班的事）
 	writeTodo(t, dir, "- [ ] 甲（卡住：x）\n")

@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"regexp"
-	"sort"
 	"strings"
 
 	"agentq/internal/backlog"
@@ -14,14 +13,12 @@ import (
 	"agentq/internal/textfmt"
 )
 
-// 「不做」清单：用户说不做的事写进项目 docs/NOT-DOING.md（标题、原话、日期）。闲时找活和主动感知按标题永久判重（「以前提过」只留 30 天，这里不过期），
-// 提示词也带上这份清单；agent-task 开工前看它。入口：用户回「不做 N」（代码处理，不起模型）和 Router 的 reject 动作。
+// 「不做」清单：用户说不做的事写进项目 docs/NOT-DOING.md（标题、原话、日期）。自我进化的提案按标题永久判重（「以前提过」只留 30 天，这里不过期）；
+// agent-task 开工前看它。入口：用户回「不做 N」（代码处理，不起模型）。
 // 内容是用户的话，但写入前也走 cleanTodoText，免得拼出 BACKLOG 的标记。
 const (
-	NotDoingRel       = "docs/NOT-DOING.md"
-	NotDoingTextMax   = 300
-	notDoingPromptMax = 40   // 提示词里最多列多少条（留最新的）
-	notDoingPromptLen = 2000 // 提示词里这份清单的总字数上限
+	NotDoingRel     = "docs/NOT-DOING.md"
+	NotDoingTextMax = 300
 )
 
 // NotDoingKeys 用来判重（标题，和 titleKey 同样的归一化）。读不了只记日志，当没有：判重是省用户的事，不能挡住别的。
@@ -35,43 +32,6 @@ func (a *Service) NotDoingKeys(p backlog.Project) map[string]bool {
 		keys[backlog.TitleKey(e.Title)] = true
 	}
 	return keys
-}
-
-// NotDoingBlock 拼提示词里的这份清单。总量有上限，超了留最新的（文件按时间追加，同一天保持文件里的先后）。没有条目返回空。
-func (a *Service) NotDoingBlock(head string, names []string) string {
-	type row struct {
-		date, line string
-	}
-	var rows []row
-	for _, n := range names {
-		entries, err := backlog.NotDoingEntries(backlog.Project{Name: n, Dir: a.ProjectDir(n)})
-		if err != nil {
-			a.Logf("不做清单：%s 的 %s 读不了，提示词里不带：%v", n, NotDoingRel, err)
-			continue
-		}
-		for _, e := range entries {
-			rows = append(rows, row{e.Date, "- " + textfmt.OneLine(n, 100) + "：" + backlog.CleanTodoText(e.Title, 60)})
-		}
-	}
-	sort.SliceStable(rows, func(i, k int) bool { return rows[i].date < rows[k].date })
-	var kept []string
-	used := 0
-	for i := len(rows) - 1; i >= 0 && len(kept) < notDoingPromptMax; i-- {
-		used += len([]rune(rows[i].line))
-		if used > notDoingPromptLen {
-			break
-		}
-		kept = append(kept, rows[i].line)
-	}
-	if len(kept) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString(head + "\n")
-	for i := len(kept) - 1; i >= 0; i-- {
-		b.WriteString(kept[i] + "\n")
-	}
-	return b.String()
 }
 
 // CommitNotDoing 拿着 <项目>-main 锁，把一条写进 docs/NOT-DOING.md（同标题已有就不重复写），同时按 editBacklog 改 BACKLOG，一起提交这两个文件。
@@ -204,7 +164,7 @@ func (a *Service) RejectSuggestions(nums []int, said string) string {
 		})
 	}, func(n int, e SuggestEntry) {
 		a.retireSuggestion(n) // 编号作废；标题在 Past 里留 30 天，不做清单里一直留着
-		a.Logf("闲时找活：用户不做建议 %d，%s 的「%s」已写进不做清单", n, e.Project, textfmt.TruncRunes(e.Title, 30))
+		a.Logf("建议：用户不做建议 %d，%s 的「%s」已写进不做清单", n, e.Project, textfmt.TruncRunes(e.Title, 30))
 	})
 	return a.suggestReply("已写进「不做」清单，以后不再提", done, gone, failed)
 }

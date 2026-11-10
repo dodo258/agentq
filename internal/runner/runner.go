@@ -238,39 +238,24 @@ func (a *Service) finishStopped(st *state.State, j *state.Job, how string) (stri
 // 不是按 Kind 查表的多态：哪种任务调哪个、先调谁，判断还写在调用的地方（start、finishFromResult、finish）。
 type Hooks struct {
 	// 启动：各种任务自己的参数和文件。
-	ChatFilesDir      func(id string) string
-	OutboxDir         func() string
-	FollowupRequest   func(cfg config.Config, prompt, project, title, session, filesDir string) backend.Request
-	RouterRequest     func(cfg config.Config, home, prompt, session string) backend.Request
-	InboxRequest      func(cfg config.Config, prompt, project, title, resume, session, outbox string) backend.Request
-	SuggestRequest    func(cfg config.Config, prompt, session, dir string) backend.Request
-	SenseRequest      func(cfg config.Config, prompt, session string) backend.Request
-	DiscussRequest    func(cfg config.Config, prompt, project, session string) backend.Request
-	ReleaseRequest    func(cfg config.Config, base backend.Request) backend.Request
-	WriteSenseRunFile func(id, name string, data []byte) error
+	ChatFilesDir    func(id string) string
+	FollowupRequest func(cfg config.Config, prompt, project, title, session, filesDir string) backend.Request
+	DiscussRequest  func(cfg config.Config, prompt, project, session string) backend.Request
 	// ConstraintsNote：这个项目学到的约束（门拦过、确认过的事），接在新任务合同末尾。没接或返回空时提示词一字不变。
 	ConstraintsNote func(project string) string
 
 	// 定结果：各种任务自己怎么算做完了。
 	MissingReport  func(j *state.Job) string
 	CheckNewResult func(j *state.Job, res backend.Result, last string) (string, string)
-	InboxFinished  func(j *state.Job, res backend.Result) bool
-	InboxResult    func(j *state.Job, res backend.Result, status, summary string) (string, string)
-	SuggestResult  func(j *state.Job, res backend.Result, status, summary string) (string, string)
-	SenseResult    func(j *state.Job, res backend.Result, status, summary string) (string, string)
 
 	// 收尾：结束后各种任务自己要做的事。
-	NewDirs           func(st *state.State, j *state.Job) []string
-	NewDirsNote       func(st *state.State, j *state.Job, status string) string
-	ReleaseHeld       func(st *state.State, name string)
-	FinishRouter      func(st *state.State, j *state.Job)
-	FinishInbox       func(st *state.State, j *state.Job)
-	RequeueThread     func(j *state.Job) bool
-	ReplyChat         func(j *state.Job)
-	NoticeSuggest     func(j *state.Job)
-	FinishReleasePrep func(j *state.Job)
-	NoticeNew         func(j *state.Job)
-	FinishDiscuss     func(st *state.State, j *state.Job)
+	NewDirs       func(st *state.State, j *state.Job) []string
+	NewDirsNote   func(st *state.State, j *state.Job, status string) string
+	ReleaseHeld   func(st *state.State, name string)
+	RequeueThread func(j *state.Job) bool
+	ReplyChat     func(j *state.Job)
+	NoticeNew     func(j *state.Job)
+	FinishDiscuss func(st *state.State, j *state.Job)
 }
 
 // JobOnItem：任务做的是这一条。标题也比：agent 改过条目正文时指纹会变。
@@ -294,7 +279,7 @@ const patrolAnalyzeTimeout = 30 * time.Minute
 // JobTimeout：夜班、复盘用各自的超时（一跑就是几个小时），巡逻分析、Telegram 对话各有固定超时，待做任务用 timeout。
 func (a *Service) JobTimeout(j *state.Job) time.Duration {
 	switch j.Kind {
-	case state.KindRouter, state.KindSuggest, state.KindSense, state.KindDiscuss: // 这几种靠回合上限收住，后端没有就用短超时
+	case state.KindDiscuss: // 靠回合上限收住，后端没有就用短超时
 		if !a.BackendFor(j.Backend).Caps().MaxTurns {
 			return noTurnsTimeout
 		}
@@ -306,28 +291,18 @@ func (a *Service) JobTimeout(j *state.Job) time.Duration {
 		return a.Cfg.ReviewTimeout.Duration
 	case state.KindPatrol:
 		return patrolAnalyzeTimeout
-	case state.KindChat, state.KindFollowup, state.KindRouter, state.KindQuick:
+	case state.KindChat, state.KindFollowup:
 		return chatTimeout
-	case state.KindSuggest:
-		return suggestTimeout
-	case state.KindSense:
-		return senseTimeout
 	case state.KindDiscuss:
 		return noTurnsTimeout
 	}
 	return a.Cfg.Timeout.Duration
 }
 
-const senseTimeout = 15 * time.Minute
-
 // noTurnsTimeout：后端不能限回合时，靠回合收住的短任务的超时。时间不等于回合，只防失控。
 const noTurnsTimeout = 10 * time.Minute
 
-const senseJobPlaceholder = "（判断任务的提示词带外部原文，不放这里。Router 不看，要看去 ~/.agentq/sense/runs/）"
-
-const suggestTimeout = 30 * time.Minute
-
-// CheckStalls：运行中的任务会话记录超过 stall_after 没增长，就记日志、在当天汇总写一行「疑似卡死」，
+// CheckStalls：运行中的任务会话记录超过 Config.StallAfter 没增长，就记日志、在当天汇总写一行「疑似卡死」，
 // 同一次卡住只报一次（记录又长起来后清掉标记）。不杀：杀由 timeout 管，用户看到了可以自己 stop。
 func (a *Service) CheckStalls(st *state.State) {
 	for _, j := range st.Running() {
@@ -365,12 +340,12 @@ func (a *Service) IdleFor(j *state.Job) (time.Duration, bool) {
 	return a.Now().Sub(t), true
 }
 
-// EnforceTimeouts 杀掉运行超过超时（待做任务 timeout，夜班、复盘各自的 night_timeout、review_timeout）的任务进程组。
+// EnforceTimeouts 杀掉运行超过超时（待做任务 timeout，夜班、复盘各自的 NightTimeout、ReviewTimeout）的任务进程组。
 func (a *Service) EnforceTimeouts(st *state.State) int {
 	n := 0
 	for _, j := range st.Running() {
 		if j.Status != state.StatusRunning {
-			continue // 同 reap：可能已被超时收尾的 Router 的 stop 动作停了
+			continue // 同 reap
 		}
 		if j.PID <= 0 { // 还在启动，reap 管它
 			continue
@@ -404,7 +379,7 @@ func (a *Service) EnforceTimeouts(st *state.State) int {
 }
 
 // ProjectSlot：还能不能在 project 起一个做 item（条目原文）的任务。先看全局和单项目名额（state.Capacity）；
-// 同项目已有任务在跑时还要范围不重叠（backlog.ParallelBlock）。没有条目的（发版准备这类）传空串，当没写范围。
+// 同项目已有任务在跑时还要范围不重叠（backlog.ParallelBlock）。没有条目的传空串，当没写范围。
 func ProjectSlot(st *state.State, cfg config.Config, project, item string) (bool, string) {
 	if ok, why := state.Capacity(st, cfg, project); !ok {
 		return false, why
@@ -427,7 +402,7 @@ func ScopeBlocked(st *state.State, cfg config.Config, project, item string) stri
 	return ""
 }
 
-// RunningItems：这个项目里占名额、在跑的任务记的条目原文。没有条目的（任务箱、新项目）是空串，当没写范围。
+// RunningItems：这个项目里占名额、在跑的任务记的条目原文。没有条目的（新项目）是空串，当没写范围。
 func RunningItems(st *state.State, project string) []string {
 	var out []string
 	for _, j := range st.Tasks() {

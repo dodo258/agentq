@@ -63,21 +63,11 @@ const (
 	ProfileNoTools                 // 没有工具（输入是外部原文的任务）
 )
 
-// DenyPolicy 是一组由 CLI 强制的拒绝规则，按用途命名，具体规则写法在各后端。
-type DenyPolicy int
-
-const (
-	DenyNone        DenyPolicy = iota
-	DenySecrets                // 不读 .env、secrets 和主动感知的原始数据
-	DenyStoreSubmit            // 不碰 App Store 提交审核的接口
-)
-
 // Must 是必须真生效的要求：做不到 Build 就返回错误，任务不启动。不写进 Must 的要求做不到只产生 Degradation。
 type Must uint
 
 const (
 	MustProfile       Must = 1 << iota // Profile 由 CLI 强制
-	MustDeny                           // Deny 由 CLI 强制
 	MustSchema                         // Schema 由 CLI 强制
 	MustNoExternalMCP                  // 不接用户配的 MCP
 	MustReview                         // 引擎能起独立审查进程（Schema、ReviewProfile）
@@ -99,7 +89,6 @@ type Request struct {
 	Permission    string
 	Profile       Profile
 	NoExternalMCP bool
-	Deny          DenyPolicy
 	// Schema 是结构化输出要满足的 JSON Schema。
 	Schema string
 	// MaxTurns、BudgetUSD 为 0 表示不限。
@@ -254,11 +243,6 @@ type SkillHome interface {
 // ResumeHint 是可选能力：用户想自己接着看这个会话时运行的命令，agentq logs 里说。没有就只写会话 id。
 type ResumeHint interface {
 	ResumeCommand(session string) string
-}
-
-// LightModeler 是可选能力：这个后端里适合做低风险活的模型。model_policy=auto 又没配 low_risk_model 时才用；没有这个能力就不降级。
-type LightModeler interface {
-	LightModel() string
 }
 
 // CLIHelp 是给用户看的名字和官方命令。

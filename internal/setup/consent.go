@@ -10,8 +10,8 @@ import (
 	"agentq/internal/fsx"
 )
 
-// ConsentTextVersion 是 agentq start --welcome 同意文字的版本。文字改了就加一：不重新问，只在 doctor 里说明。
-const ConsentTextVersion = 1
+// ConsentTextVersion 是 agentq start --welcome 装完告知那段话的版本（第 2 版起安装即同意，只告知不问）。文字改了就加一：不重新问，只在 doctor 里说明。
+const ConsentTextVersion = 2
 
 // Consent 是 ~/.agentq/consent.json：在什么时候、以什么方式同意了哪一版文字。怎么问、算不算同意在 onboard，这里只管读写，因为 doctor 也要读。
 type Consent struct {

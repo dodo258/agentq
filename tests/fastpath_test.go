@@ -198,13 +198,12 @@ func TestFastOnlyOwnerAndFresh(t *testing.T) {
 }
 
 // 集成：真二进制、常驻 listen、假 Telegram。暂停、恢复、额度、在跑什么、停任务都不起模型（假 claude 只被 /usage 和跑着的任务调用），
-// 回得快，Router 打开也一样；别的话照常交给模型。
+// 回得快；别的话照常交给模型。
 func TestIntegrationListenFastPath(t *testing.T) {
 	t.Parallel()
-	for _, router := range []bool{false, true} {
-		t.Run(fmt.Sprintf("router=%v", router), func(t *testing.T) {
-			t.Parallel()
-			e, tg := threadEnv(t, map[string]any{"router_enabled": router, "paused": false, "tick_after_job": false})
+	{
+		{
+			e, tg := threadEnv(t, map[string]any{"paused": false, "tick_after_job": false})
 			testkit.MkProject(t, e.root, "demo", "- [ ] 甲 —— SLEEP=60\n")
 			os.WriteFile(filepath.Join(e.home, "fake-usage.json"), []byte(`{"type":"result","is_error":false,"result":"Current session: 33% used"}`), 0o644)
 			e.mustRun("tick")
@@ -219,7 +218,7 @@ func TestIntegrationListenFastPath(t *testing.T) {
 					envs = append(envs, kv)
 				}
 			}
-			cmd.Env = append(append(envs, "HOME="+e.home, "AGENTQ_FAKE_LOG="+e.fakeLg), e.extra...)
+			cmd.Env = append(append(envs, "HOME="+e.home, "AGENTQ_FAKE_LOG="+e.fakeLg, config.TestTuningEnv+"="+e.tuning), e.extra...)
 			cmd.Stdout, cmd.Stderr = &logBuf, &logBuf
 			if err := cmd.Start(); err != nil {
 				t.Fatal(err)
@@ -274,7 +273,7 @@ func TestIntegrationListenFastPath(t *testing.T) {
 			if out := logBuf.String(); strings.Contains(out, "启动对话任务") {
 				t.Errorf("不该起模型：%s", out)
 			}
-			if n := len(chatJobs(e)) + len(routerJobs(e)); n != 0 {
+			if n := len(chatJobs(e)); n != 0 {
 				t.Errorf("不该有对话任务：%d", n)
 			}
 			for _, s := range tg.texts() {
@@ -283,16 +282,15 @@ func TestIntegrationListenFastPath(t *testing.T) {
 				}
 			}
 			// 别的话照常交给模型，能力不减
-			e.routerResult(routerOK("📊 答复"))
-			tg.msg(8, ownerChat, 108, "ROUTERFILE 暂停一下行不行", "")
-			waitFor(t, 20*time.Second, "交给模型", func() bool { return len(chatJobs(e))+len(routerJobs(e)) == 1 })
+			tg.msg(8, ownerChat, 108, "暂停一下行不行", "")
+			waitFor(t, 20*time.Second, "交给模型", func() bool { return len(chatJobs(e)) == 1 })
 			if acks := tg.acks(); len(acks) != 1 {
 				t.Errorf("要回收到：%q", acks)
 			}
-			for _, j := range append(chatJobs(e), routerJobs(e)...) {
+			for _, j := range chatJobs(e) {
 				waitExit(t, j.PID, 15*time.Second)
 			}
-		})
+		}
 	}
 }
 

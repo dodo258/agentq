@@ -4,6 +4,47 @@
 
 ## 未发布
 
+### 评测题补到 21 道
+
+- `agentq eval list` 从 8 题加到 21 题，领域多了 engine、routine、docs，每个领域至少 2 题。新题把 11-09～11-11 真实使用里修过的 9 类问题各做成一道能复现的题（暂停时门退回接不上、停掉的条目静默等、开关当天打开巡逻误报、旧远程让无事跳过失效、被排除项目亲手派的活不续跑、首版设计被否返工、任务汇报语言跟条目、`agentq add` 不在桌面/文档/下载本身建仓库、`retention_days` 配 0 不删记录），在修复前的那一代上都会判成没过；另补前端、文档、安装各一道。
+- 评测门（`agentq eval judge`）因此能拦下这 9 类问题的回归。
+
+### 做减法：删掉用不上的功能、配置项和命令
+
+按 30 天的真实使用（任务记录、日志、推送记录、配置和信号）删减：一次都没运行过的功能删掉，从没改过默认值的配置项写死，做同一件事的两套留一套。
+
+- 删掉的功能和命令：主动感知（`agentq sense`，读 App Store 评价、TestFlight 反馈、GitHub issue）、发版助手（`agentq release`，Telegram 回「发」提交审核）、Router（Telegram 新消息现在一律交给对话任务，快捷命令照旧）、闲时找活（`agentq suggest`）、任务箱（`agentq inbox`、`~/.agentq/outbox/`）。「## 建议」一节、回「做 N」「不做 N」和 `docs/NOT-DOING.md` 还在，自我进化的提案写在这里。
+- `agentq quality` 并进 `agentq stats`：stats 最后带上最近 7 天的一次满意率、返工率和每条的依据。
+- 删掉的配置键：`suggest_enabled` `suggest_model` `suggest_budget_usd` `sense_enabled` `sense_model` `sense_budget_usd` `release_assist_enabled` `release_budget_usd` `router_enabled` `router_model` `verify_after_merge` `model_policy`。
+- 写死、不再读的配置键（值和原来的默认一样）：`tick_after_job`（开）、`breaker_streak` 3、`breaker_quick` 3m、`breaker_cooldown` 30m、`breaker_max` 4h、`stall_after` 45m、`night_timeout` 6h、`review_timeout` 4h、`night_budget_usd` 10、`review_budget_usd` 15、`patrol_budget_usd` 2、`job_budget_usd` 150、`progress_autostop`（开）、`verify_timeout` 30m、`discuss_wait` 2h、`evolve_signals_enabled`（开）、`learned_constraints_enabled`（开）；按活分配的 `discuss_model` `review_model` `review_effort` `patrol_model` `followup_model` `heavy_effort` `low_risk_model` `low_risk_effort` `light_review_model` 写死成原来的默认分配（`model` 跟随 CLI 或别家后端时照旧全部跟随主模型）。
+- `patrol_analyze` 并进 `patrol_enabled`：开着巡逻，有新异常时就起一次只读分析（每天最多 3 次）。
+- 配置项从 66 个减到 26 个，命令从 39 个减到 34 个。
+
+老用户要改什么：
+
+- 不用改配置文件：上面这些键写着也不报错，只是不起作用；agentq 下次整份保存配置时会去掉。改过其中某个值的，现在按上面写死的值走。
+- 开过 `sense_enabled`、`release_assist_enabled`、`router_enabled`、`suggest_enabled` 的，这些功能不再运行；`~/.agentq/` 里的 `sense/`、`release.json`、`router/`、`inbox.md`、`outbox/` 不再读写，确认不要后可以自己删。
+- 只开巡逻、关着 `patrol_analyze` 的，升级后巡逻有新异常会起分析（花少量额度）；不要的话关掉 `patrol_enabled`。
+- 脚本里调 `agentq quality` 的改成 `agentq stats`；调 `agentq inbox`、`suggest`、`sense`、`release` 的会报「不认识的命令」。
+
+### 装好就能用：装完即运行，开口说
+
+- 一键安装（`install.sh`、`scripts/bootstrap.sh`）装完直接是运行状态：服务加载、不暂停、权限放开，不再按回车同意，不用 `agentq start`。安装本身就是同意，结束时如实说一句后台任务能读写本机文件、运行命令、用你自己的模型额度，并给暂停、卸载命令；`consent.json` 记方式 `install`。想先不跑加 `--paused`（`AGENTQ_PAUSED=1`）。旧的 `--yes` 还认，没有作用。
+- 升级保留你原来的开关：暂停着的不打开；装之前就有、写着暂停的老配置也不打开。
+- 没有终端时 CLI 没装或没登录：不装不登录，给命令；弄好后在聊天里说需求，后台自己开起来。
+- 派活技能也装到 Codex（本机用着 Codex 时装到 `~/.agents/skills`）。在 Claude Code 或 Codex 里说开发需求不用说「派活」：加功能、修 bug、改界面，哪怕很小，都写成待做交后台；只是问问、改错字改文案这类零碎改动、说「直接改/我看着」的当场做；看进度、验收、停也在聊天里说。
+- 没接入的目录自己接入：`agentq add` 在不是 Git 仓库的目录里先 `git init`，现有文件做初始提交（自动写的 `.gitignore` 挡住 `.env`、密钥和依赖目录）；家目录、`projects_root`，以及桌面、文档、下载、临时目录本身不建（里面的子目录照常）。家目录、桌面这类不像项目的地方，技能先问一句项目名和位置。
+- 新命令 `agentq start --check`（只读）：后台能不能接活。服务没加载时技能自己 `agentq start` 拉起。
+
+### 任务汇报用条目的语言
+
+- 后台任务结束时的汇报和条目原文用同一种语言，中文条目不会再收到英文汇报。
+
+### 自我进化：收得到真实使用里的问题
+
+- `agentq evolve signals` 多五类信号，都只读本机已有的数据、不调模型：你亲手 `agentq stop` 的任务（`user-stop`）；门卡片或 `gate` 命令上你退回、放弃的任务（`user-decide`，读门的审计日志）；BACKLOG 里出现「验收 <标题> 的意见」（`rework`，按条目范围、原条目范围和合并提交改了的文件归到前端、后端、设计、文档，看不出时按意见的文字，再看不出记「未分类」）；巡逻报过、当天又自己消失的问题（`patrol-gone`，疑似误报）；还在「待做」的条目被 retry_after 挡住满 6 小时（`retry-wait`，暂停时不算）。
+- 这几类都算 agentq 自己的问题，同类两次以上和原有信号一样写提案。没有这几类数据时信号文件不变。
+
 ### 自我进化：评测门
 
 - agentq 改自己源码的任务过门时多一道评测门：用合并态构建候选，由运行中这一代用自己的题跑 `agentq eval judge`（`--fake` 加程序题，不调模型），和基线比，任一题或任一领域变差就退回，理由写清哪题哪领域和耗时。候选改评测题不影响结果。没有基线只记录不挡，提示先 `agentq eval run --fake` 再 `agentq eval baseline`。别的项目不跑这道门。
@@ -41,6 +82,7 @@
 
 ### 质量门
 
+- 门停住等你看时，在分支上补了提交（带着交付单）再 `agentq gate rerun`：命令回复和 `agentq gate report` 马上写新提交，再审次数按新提交重新算。以前要等门跑完才改成新提交，补了提交后再审还可能被旧提交的次数上限拒掉。
 - 小改动走轻量流程：改错的代价是「局部」、不算测试和记录文件最多 3 个文件 60 行、不是 rewrite、没改指令文件和门脚本时，审查和界面审查换便宜一档的 `light_review_model`（默认别名 sonnet，新模型出来自动跟上；新配置为空即照 `model`；不能设成 haiku），强度照旧 medium；测试、补丁、烟测这些确定性的门照跑。`agentq gate report` 多一行「流程：轻量/完整（理由）」。
 - 审查和界面审查读到条目依据的方案：条目写了 `.md` 路径就读那份，只写「按方案第几节」的读 `docs/specs/` 下最新三份；照方案做的设计不再被提意见。界面审查也带上开工前定的大方向。
 - 按改错了多难撤回放行。动了迁移、`*.sql`、部署目录，新增行有 `DROP TABLE`、`DELETE FROM` 这类语句，或条目标了 `（难撤回）`：门照跑，过了也不自动合并，卡片「等你拍板」，`agentq gate pass` 才合。改了依赖清单、接口定义、删了文件、改动很大：补丁、测试、烟测门这次 `warn` 当 `error`，测试门关着就等你定。项目可在 `.agentq/risk.json` 加规则（读默认分支上的；写坏了修好之前一律等你拍板）。`agentq gate report` 多一行「改错的代价」。

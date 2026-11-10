@@ -12,9 +12,7 @@ import (
 	"agentq/internal/chat"
 	"agentq/internal/config"
 	"agentq/internal/state"
-	"agentq/internal/suggest"
 	"agentq/internal/testkit"
-	"agentq/internal/textfmt"
 )
 
 const excludeBacklog = "# 待办\n\n## 待做\n\n- [ ] 碰不得的活 —— 细节\n\n## 等用户决定\n\n- [ ] 要不要改 —— 选哪个\n\n## 已完成\n"
@@ -33,7 +31,7 @@ func excludeEnv(t *testing.T, cfg map[string]any) (*testEnv, bl.Project, bl.Proj
 
 // tick 不接被排除项目的活，别的项目照常；进行中标记也不碰。
 func TestExcludeTickLeavesProjectAlone(t *testing.T) {
-	e, secret, _ := excludeEnv(t, map[string]any{"suggest_enabled": false})
+	e, secret, _ := excludeEnv(t, nil)
 	stale := strings.Replace(excludeBacklog, "- [ ] 碰不得的活 —— 细节", "- [ ] 碰不得的活 —— 细节（进行中：agent/x 2020-01-01 10:00）", 1)
 	testkit.WriteInstall(t, secret.BacklogPath(), stale, 0o644)
 	testkit.GitT(t, e.home, secret.Dir, "commit", "-q", "-am", "claim")
@@ -56,7 +54,7 @@ func TestExcludeTickLeavesProjectAlone(t *testing.T) {
 
 // agentq run 明确指定时仍可跑，提示一句；tick 之后不接着续跑它。
 func TestExcludeExplicitRun(t *testing.T) {
-	e, secret, _ := excludeEnv(t, map[string]any{"suggest_enabled": false, "paused": true})
+	e, secret, _ := excludeEnv(t, map[string]any{"paused": true})
 	testkit.WriteInstall(t, secret.BacklogPath(), strings.Replace(excludeBacklog, "碰不得的活 —— 细节", "碰不得的活 INTERRUPT", 1), 0o644)
 	testkit.GitT(t, e.home, secret.Dir, "commit", "-q", "-am", "x")
 	out := e.mustRun("run", "secret")
@@ -80,7 +78,7 @@ func TestExcludeExplicitRun(t *testing.T) {
 
 // 被排除的项目：tick 自己起的任务（排除前起的）中断了不自动续跑，摘要写清怎么接；agentq run 能接上。
 func TestExcludeAutoJobNotResumed(t *testing.T) {
-	e, secret, _ := excludeEnv(t, map[string]any{"suggest_enabled": false, "paused": true})
+	e, secret, _ := excludeEnv(t, map[string]any{"paused": true})
 	testkit.WriteInstall(t, secret.BacklogPath(), strings.Replace(excludeBacklog, "碰不得的活 —— 细节", "碰不得的活 INTERRUPT", 1), 0o644)
 	testkit.GitT(t, e.home, secret.Dir, "commit", "-q", "-am", "x")
 	e.mustRun("run", "secret")
@@ -111,61 +109,17 @@ func TestExcludeAutoJobNotResumed(t *testing.T) {
 
 // status 列出被排除的项目，不把它算进待做。
 func TestExcludeStatus(t *testing.T) {
-	e, _, _ := excludeEnv(t, map[string]any{"suggest_enabled": false, "paused": true})
+	e, _, _ := excludeEnv(t, map[string]any{"paused": true})
 	out := e.mustRun("status")
 	testkit.AssertContains(t, out, "exclude_projects", "secret", "open：")
 	if strings.Contains(out, "secret：") {
 		t.Fatalf("不该算进待做：\n%s", out)
 	}
 	// 没配时不多一行
-	e2, _ := sgEnv(t, map[string]any{"suggest_enabled": false, "paused": true})
+	e2, _ := sgEnv(t, map[string]any{"paused": true})
 	e2.sgProject("open", excludeBacklog)
 	if out := e2.mustRun("status"); strings.Contains(out, "exclude_projects") {
 		t.Fatalf("没配不该提：\n%s", out)
-	}
-}
-
-// 闲时找活：提示词里没有它，模型硬写也写不进去；点名看它时拒绝。
-func TestExcludeSuggest(t *testing.T) {
-	e, secret, open := excludeEnv(t, nil)
-	testkit.WriteInstall(t, open.BacklogPath(), "# 待办\n\n## 待做\n\n## 已完成\n", 0o644)
-	testkit.GitT(t, e.home, open.Dir, "commit", "-q", "-am", "empty")
-	before := testkit.ReadFile(t, secret.BacklogPath())
-	e.suggestOut(suggest.SuggestItem{Project: "secret", Title: "硬写进去", Why: "因为", Benefit: "好", Risk: "无", Kind: "test"},
-		suggest.SuggestItem{Project: "open", Title: "正常写进去", Why: "因为", Benefit: "好", Risk: "无", Kind: "test"})
-	e.mustRun("suggest")
-	e.waitShells()
-	e.mustRun("tick")
-	testkit.AssertBytes(t, secret.BacklogPath(), before)
-	testkit.AssertContains(t, testkit.ReadFile(t, open.BacklogPath()), "正常写进去")
-	logs, _ := filepath.Glob(filepath.Join(e.fakeLg, "*.txt"))
-	if len(logs) == 0 {
-		t.Fatal("假 claude 没被拉起")
-	}
-	for _, f := range logs {
-		if b := testkit.ReadFile(t, f); strings.Contains(b, "ARG[-p]") && strings.Contains(b, "碰不得的活") {
-			t.Fatalf("提示词里不该有被排除项目的内容：%s", textfmt.TruncRunes(b, 400))
-		}
-	}
-	out, code := e.run("suggest", "secret")
-	if code == 0 {
-		t.Fatalf("点名看被排除的项目应拒绝：\n%s", out)
-	}
-	testkit.AssertContains(t, out, "secret")
-}
-
-// 主动感知：不读被排除项目对应的 App，不往里写建议。对照：不排除时能读到。
-func TestExcludeSense(t *testing.T) {
-	run := func(exclude []string) string {
-		s := newSenseEnv(t, map[string]any{"exclude_projects": exclude})
-		s.alpha()
-		return s.mustRun("sense", "--dry-run")
-	}
-	if got := run(nil); !strings.Contains(got, "alpha") {
-		t.Fatalf("对照：不排除时该读到 alpha：\n%s", got)
-	}
-	if got := run([]string{"alpha"}); strings.Contains(got, "alpha") {
-		t.Fatalf("排除后不该读：\n%s", got)
 	}
 }
 
@@ -182,17 +136,17 @@ func excludeUnitApp(t *testing.T) (*App, *bytes.Buffer) {
 	return a, out
 }
 
-// 决定项、Router、接入和加待做：被排除的项目不进自动流程；明确写的 add 和 init 照做并提示。
+// 决定项、按钮定的项目、接入和加待做：被排除的项目不进自动流程；明确写的 add 和 init 照做并提示。
 func TestExcludeDecisionsRouterAndHints(t *testing.T) {
 	a, out := excludeUnitApp(t)
 	decs, fails := a.Notify.Decisions()
 	if len(fails) != 0 || len(decs) != 1 || decs[0].Project != "open" {
 		t.Fatalf("决定项只该有 open：%+v %v", decs, fails)
 	}
-	if _, err := a.Chat.RouterProject("secret"); err == nil || !strings.Contains(err.Error(), "exclude_projects") {
-		t.Fatalf("Router 不该动它：%v", err)
+	if _, err := a.Chat.ActiveProject("secret"); err == nil || !strings.Contains(err.Error(), "exclude_projects") {
+		t.Fatalf("按钮不该动它：%v", err)
 	}
-	if _, err := a.Chat.RouterProject("open"); err != nil {
+	if _, err := a.Chat.ActiveProject("open"); err != nil {
 		t.Fatal(err)
 	}
 	projects, err := a.Backlog.ActiveProjects()
@@ -264,21 +218,9 @@ func TestExcludeJobBookkeepingLeavesBacklog(t *testing.T) {
 	}
 }
 
-// Router 发文件的路径校验是代码：被排除项目里的文件不发。
-func TestExcludeSendFileRefused(t *testing.T) {
-	a, _ := excludeUnitApp(t)
-	secret := filepath.Join(a.ProjectsRoot(), "secret", "README.md")
-	if _, err := a.Chat.CheckSendFile(secret); err == nil || !strings.Contains(err.Error(), "exclude_projects") {
-		t.Fatalf("应拒绝：%v", err)
-	}
-	if _, err := a.Chat.CheckSendFile(filepath.Join(a.ProjectsRoot(), "open", "README.md")); err != nil {
-		t.Fatalf("别的项目能发：%v", err)
-	}
-}
-
 // 真流程：明确跑的任务中断后，tick 和巡逻都不往被排除项目提交，等着的续跑也放掉并说明。
 func TestExcludeInterruptedRunEndToEnd(t *testing.T) {
-	e, secret, _ := excludeEnv(t, map[string]any{"suggest_enabled": false, "paused": true})
+	e, secret, _ := excludeEnv(t, map[string]any{"paused": true})
 	testkit.WriteInstall(t, secret.BacklogPath(), strings.Replace(excludeBacklog, "碰不得的活 —— 细节", "碰不得的活 INTERRUPT", 1), 0o644)
 	testkit.GitT(t, e.home, secret.Dir, "commit", "-q", "-am", "x")
 	e.mustRun("run", "secret")
@@ -309,9 +251,9 @@ func TestExcludeInterruptedRunEndToEnd(t *testing.T) {
 	}
 }
 
-// 模型做的事靠提示词写明跳过：夜班、复盘、对话、Router、小事都要写；SECURITY 和配置参考写明这是软约束。
+// 模型做的事靠提示词写明跳过：夜班、复盘、对话都要写；SECURITY 和配置参考写明这是软约束。
 func TestExcludeProjectsPromptsAndDocs(t *testing.T) {
-	for name, text := range map[string]string{"夜班": nightPrompt, "复盘": reviewPrompt, "对话": chat.ChatPromptHead, "Router": chat.RouterHead, "小事": chat.QuickPromptHead} {
+	for name, text := range map[string]string{"夜班": nightPrompt, "复盘": reviewPrompt, "对话": chat.ChatPromptHead} {
 		if !strings.Contains(text, "exclude_projects") {
 			t.Errorf("%s 的提示词没写跳过 exclude_projects", name)
 		}

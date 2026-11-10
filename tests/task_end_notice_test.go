@@ -215,7 +215,7 @@ func TestNoticeEndedTable(t *testing.T) {
 // 别的 Kind 有自己的通知或者不算「任务做完」，这里不多发。
 func TestNoticeEndedOtherKinds(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{state.KindInbox, state.KindChat, state.KindQuick, state.KindRouter, state.KindFollowup, state.KindPatrol, state.KindSuggest, state.KindSense, state.KindRelease, state.KindNew, config.KindNight, config.KindReview} {
+	for _, kind := range []string{state.KindChat, state.KindFollowup, state.KindPatrol, state.KindDiscuss, state.KindNew, config.KindNight, config.KindReview} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			a, dir := noticeApp(t, "- [ ] 甲\n", "")

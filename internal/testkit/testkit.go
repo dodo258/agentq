@@ -245,17 +245,6 @@ func ReadBytes(t *testing.T, path string) []byte {
 	return b
 }
 
-// ClaudeDeny 是这组拒绝规则在 Claude 后端上的写法。
-func ClaudeDeny(d backend.DenyPolicy) string {
-	switch d {
-	case backend.DenySecrets:
-		return claude.RouterDeny
-	case backend.DenyStoreSubmit:
-		return claude.ReleaseDeny
-	}
-	return ""
-}
-
 // ClaudeArgv 是这个启动意图在 Claude 后端上的参数。import testkit 也把 Claude 后端注册好了。
 func ClaudeArgv(t *testing.T, req backend.Request) []string {
 	t.Helper()

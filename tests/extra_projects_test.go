@@ -144,23 +144,111 @@ func TestAddNestedRepoUnderRoot(t *testing.T) {
 	}
 }
 
-// 拒绝的情况：什么都不登记、不生成。
-func TestAddOutsideRootRefuses(t *testing.T) {
-	t.Run("不是 Git 仓库", func(t *testing.T) {
-		a, _, _, _ := onboardApp(t)
-		dir := filepath.Join(a.Home, "plain")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+// gitIdentity 给临时 HOME 配全局 git 身份，替用户建仓库的初始提交要用。
+func gitIdentity(t *testing.T, home string) {
+	t.Helper()
+	testkit.WriteInstall(t, filepath.Join(home, ".gitconfig"), "[user]\n\tname = t\n\temail = t@t\n", 0o644)
+}
+
+// 不是 Git 仓库的目录：add 就地 git init，现有文件做初始提交（.gitignore 挡住密钥），再接入、登记、加条目，不问用户。
+func TestAddInitsPlainDirectory(t *testing.T) {
+	t.Run("projects_root 外有文件的目录", func(t *testing.T) {
+		a, _, _, out := onboardApp(t)
+		gitIdentity(t, a.Home)
+		home, err := filepath.EvalSymlinks(a.Home)
+		if err != nil {
 			t.Fatal(err)
 		}
+		dir := filepath.Join(home, "code", "hello")
+		testkit.WriteInstall(t, filepath.Join(dir, "main.py"), "print('hi')\n", 0o644)
+		testkit.WriteInstall(t, filepath.Join(dir, ".env"), "SECRET=1\n", 0o600)
+		t.Chdir(dir)
+		if err := a.Onboard.CmdAdd([]string{"给这个项目加一个 hello 命令"}); err != nil {
+			t.Fatal(err)
+		}
+		testkit.AssertContains(t, out.String(), "还不是 Git 仓库，已经 git init", "已接入 hello", "已登记到 extra_projects", "已加到 hello")
+		files := onboardGit(t, a.Home, dir, "ls-files")
+		testkit.AssertContains(t, files, "main.py", ".gitignore", "docs/BACKLOG.md")
+		if strings.Contains(files, ".env") {
+			t.Fatalf(".env 不该提交：\n%s", files)
+		}
+		if br := onboardGit(t, a.Home, dir, "symbolic-ref", "--short", "HEAD"); br != "main" {
+			t.Fatalf("分支 %s", br)
+		}
+		if got := extraInFile(t, a); !slices.Equal(got, []string{dir}) {
+			t.Fatalf("%v", got)
+		}
+		testkit.AssertContains(t, testkit.ReadFile(t, filepath.Join(dir, "docs", "BACKLOG.md")), "- [ ] 给这个项目加一个 hello 命令")
+	})
+	t.Run("projects_root 下的空目录，自己有 .gitignore", func(t *testing.T) {
+		a, _, _, _ := onboardApp(t)
+		gitIdentity(t, a.Home)
+		root, err := filepath.EvalSymlinks(a.ProjectsRoot())
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(root, "new-app")
+		testkit.WriteInstall(t, filepath.Join(dir, ".gitignore"), "mine/\n", 0o644)
+		t.Chdir(dir)
+		if err := a.Onboard.CmdAdd([]string{"做个新东西"}); err != nil {
+			t.Fatal(err)
+		}
+		testkit.AssertBytes(t, filepath.Join(dir, ".gitignore"), "mine/\n")
+		if len(extraInFile(t, a)) != 0 {
+			t.Fatal("projects_root 下的不用登记")
+		}
+		testkit.AssertContains(t, testkit.ReadFile(t, filepath.Join(dir, "docs", "BACKLOG.md")), "- [ ] 做个新东西")
+	})
+}
+
+// 拒绝的情况：什么都不登记、不生成。
+func TestAddOutsideRootRefuses(t *testing.T) {
+	t.Run("家目录、projects_root 不是仓库", func(t *testing.T) {
+		a, _, _, _ := onboardApp(t)
+		gitIdentity(t, a.Home)
+		for _, dir := range []string{a.Home, a.ProjectsRoot()} {
+			real, err := filepath.EvalSymlinks(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(real)
+			err = a.Onboard.CmdAdd([]string{"x"})
+			if err == nil {
+				t.Fatalf("%s 应拒绝", dir)
+			}
+			if exists(filepath.Join(real, ".git")) || exists(filepath.Join(real, "docs")) || len(extraInFile(t, a)) != 0 {
+				t.Fatalf("%s 不该动任何东西", dir)
+			}
+		}
+	})
+	t.Run("坏的 .git", func(t *testing.T) {
+		a, _, _, _ := onboardApp(t)
+		gitIdentity(t, a.Home)
+		dir := filepath.Join(a.Home, "broken")
+		testkit.WriteInstall(t, filepath.Join(dir, ".git", "junk"), "x", 0o644)
 		t.Chdir(dir)
 		err := a.Onboard.CmdAdd([]string{"x"})
 		if err == nil {
 			t.Fatal("应拒绝")
 		}
-		testkit.AssertContains(t, err.Error(), "不是 Git 仓库", "init -b main")
-		if exists(filepath.Join(dir, ".git")) || exists(filepath.Join(dir, "docs")) || len(extraInFile(t, a)) != 0 {
-			t.Fatal("不该动任何东西")
+		testkit.AssertContains(t, err.Error(), "认不出这个仓库")
+		testkit.AssertBytes(t, filepath.Join(dir, ".git", "junk"), "x")
+	})
+	t.Run("没配 git 身份", func(t *testing.T) {
+		a, _, _, _ := onboardApp(t)
+		dir := filepath.Join(a.Home, "plain")
+		testkit.WriteInstall(t, filepath.Join(dir, "main.py"), "print(1)\n", 0o644)
+		testkit.WriteInstall(t, filepath.Join(a.Home, ".gitconfig"), "[user]\n\tuseConfigOnly = true\n", 0o644) // 不让 git 自己猜身份
+		t.Chdir(dir)
+		err := a.Onboard.CmdAdd([]string{"x"})
+		if err == nil {
+			t.Fatal("应失败")
 		}
+		testkit.AssertContains(t, err.Error(), "user.name", "已撤掉")
+		if exists(filepath.Join(dir, ".git")) || exists(filepath.Join(dir, ".gitignore")) || len(extraInFile(t, a)) != 0 {
+			t.Fatal("建的仓库要撤掉")
+		}
+		testkit.AssertBytes(t, filepath.Join(dir, "main.py"), "print(1)\n")
 	})
 	t.Run("家目录是仓库", func(t *testing.T) {
 		a, _, _, _ := onboardApp(t)
@@ -427,7 +515,7 @@ func TestInitWritesVerifyScript(t *testing.T) {
 
 // 真二进制：项目目录外的仓库，add 之后 tick 接得上任务，任务在那个目录里跑；再 add 一条不重复登记。
 func TestExtraProjectRunsThroughTick(t *testing.T) {
-	e, _ := sgEnv(t, map[string]any{"suggest_enabled": false})
+	e, _ := sgEnv(t, nil)
 	dir := filepath.Join(e.home, "code", "far-app")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -473,7 +561,7 @@ func TestCustomRootMissingWithExtra(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, _ := sgEnv(t, map[string]any{"suggest_enabled": false, "projects_root": filepath.Join(t.TempDir(), "mounted"), "extra_projects": []string{real}})
+	e, _ := sgEnv(t, map[string]any{"projects_root": filepath.Join(t.TempDir(), "mounted"), "extra_projects": []string{real}})
 	testkit.GitT(t, e.home, real, "init", "-q", "-b", "main")
 	testkit.WriteInstall(t, filepath.Join(real, "docs", "BACKLOG.md"), "# 待办\n\n## 待做\n\n- [ ] 外面的活 SLEEP=1\n\n## 已完成\n", 0o644)
 	testkit.GitT(t, e.home, real, "add", "-A")
@@ -502,10 +590,10 @@ func TestAllProjectsPartial(t *testing.T) {
 	if err == nil || len(all) != 1 || all[0].Dir != far {
 		t.Fatalf("%+v %v", all, err)
 	}
-	if p, err := a.Chat.RouterProject("far"); err != nil || p.Dir != far {
+	if p, err := a.Chat.ActiveProject("far"); err != nil || p.Dir != far {
 		t.Fatalf("%+v %v", p, err)
 	}
-	if _, err := a.Chat.RouterProject("在根目录里的"); err == nil {
+	if _, err := a.Chat.ActiveProject("在根目录里的"); err == nil {
 		t.Fatal("看不到的要报错")
 	}
 	a.Cfg.ProjectsRoot = "~/projects"
@@ -529,13 +617,13 @@ func TestProjectsCommand(t *testing.T) {
 		}
 		dirs = append(dirs, d)
 	}
-	e, _ := sgEnv(t, map[string]any{"suggest_enabled": false, "extra_projects": dirs, "exclude_projects": []string{"secret"}})
+	e, _ := sgEnv(t, map[string]any{"extra_projects": dirs, "exclude_projects": []string{"secret"}})
 	inRoot := e.sgProject("in-root", "# 待办\n\n## 待做\n\n## 已完成\n")
 	want := "far-app\t" + far + "\nin-root\t" + inRoot.Dir + "\nsecret\t" + secret + "\texclude_projects\n"
 	if got := e.mustRun("projects"); got != want {
 		t.Fatalf("%q\n想要 %q", got, want)
 	}
-	e2, _ := sgEnv(t, map[string]any{"suggest_enabled": false, "extra_projects": []string{far}, "projects_root": filepath.Join(t.TempDir(), "mounted")})
+	e2, _ := sgEnv(t, map[string]any{"extra_projects": []string{far}, "projects_root": filepath.Join(t.TempDir(), "mounted")})
 	out, code := e2.run("projects")
 	if code != 1 {
 		t.Fatalf("%d\n%s", code, out)
@@ -557,7 +645,7 @@ func TestSkillsFindExtraProjects(t *testing.T) {
 
 // 没有 ~/projects：tick 不往日志写扫描失败，当作没有活；配了别的目录丢了还是报。
 func TestTickQuietWithoutDefaultProjectsRoot(t *testing.T) {
-	e, _ := sgEnv(t, map[string]any{"suggest_enabled": false, "projects_root": "~/projects"})
+	e, _ := sgEnv(t, map[string]any{"projects_root": "~/projects"})
 	if err := os.RemoveAll(filepath.Join(e.home, "projects")); err != nil {
 		t.Fatal(err)
 	}
@@ -570,7 +658,7 @@ func TestTickQuietWithoutDefaultProjectsRoot(t *testing.T) {
 		t.Fatalf("status 不该说扫描失败：\n%s", status)
 	}
 	// 自己配的目录不见了：还是要说
-	e2, _ := sgEnv(t, map[string]any{"suggest_enabled": false, "projects_root": filepath.Join(t.TempDir(), "mounted")})
+	e2, _ := sgEnv(t, map[string]any{"projects_root": filepath.Join(t.TempDir(), "mounted")})
 	if out := e2.mustRun("tick"); !strings.Contains(out, "扫描项目目录失败") {
 		t.Fatalf("配的目录丢了要说：\n%s", out)
 	}

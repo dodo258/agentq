@@ -20,16 +20,18 @@ func TestStartArgvFollowsCLI(t *testing.T) {
 			}
 		}
 	})
-	t.Run("auto 轻活", func(t *testing.T) {
-		cfg := map[string]any{"model": "", "effort": "", "model_policy": "auto"}
+	t.Run("跟随 CLI 时低风险也不传模型", func(t *testing.T) {
+		cfg := map[string]any{"model": "", "effort": ""}
 		got, _ := goldenStart(t, cfg, &Job{Project: "demo", Item: "补测试（低风险）", Title: "补测试"}, "", nil)
-		testkit.AssertContains(t, got, "--model", "sonnet")
+		if strings.Contains(got, "--model") {
+			t.Fatalf("不该有 --model：\n%s", got)
+		}
 	})
-	t.Run("auto 重写不降级", func(t *testing.T) {
-		cfg := map[string]any{"model": "opus", "effort": "", "model_policy": "auto", "low_risk_model": "cheap"}
+	t.Run("重写不降级", func(t *testing.T) {
+		cfg := map[string]any{"model": "opus", "effort": ""}
 		got, _ := goldenStart(t, cfg, &Job{Project: "demo", Item: "重写调度（低风险）", Title: "重写调度"}, "", nil)
 		testkit.AssertContains(t, got, "opus")
-		if strings.Contains(got, "cheap") {
+		if strings.Contains(got, "sonnet") {
 			t.Fatalf("重写类不降级：\n%s", got)
 		}
 	})
@@ -47,7 +49,7 @@ func TestFreshConfigHasNoModelNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := testkit.ReadFile(t, path)
-	testkit.AssertContains(t, text, `"model": ""`, `"effort": ""`, `"router_model": ""`, `"suggest_model": ""`, `"sense_model": ""`, `"light_review_model": ""`)
+	testkit.AssertContains(t, text, `"model": ""`, `"effort": ""`)
 	for _, name := range []string{"opus", "sonnet"} {
 		if strings.Contains(text, name) {
 			t.Fatalf("写死了 %s：\n%s", name, text)

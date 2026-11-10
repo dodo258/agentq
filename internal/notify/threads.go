@@ -18,9 +18,6 @@ const ThreadJob = "job" // 只点名一个任务的提醒、只读追问的回�
 
 const ThreadDecide = "decide" // 只含一条的「要你定」
 
-// ThreadRelease：发版提示。回复它只由 releaseIntercept 处理，到不了 routeReply，不会接到任何有权限的会话上。
-const ThreadRelease = "release"
-
 // ThreadDiscuss：商量大方向的卡片。回复它就是回答，不起模型。Fingerprint 放商量的编号。
 const ThreadDiscuss = "discuss"
 

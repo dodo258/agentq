@@ -64,7 +64,7 @@ func lostShellEnv(t *testing.T) (*App, string) {
 	testkit.MkProject(t, root, "beta", "- [ ] 乙 —— 做事\n")
 	a.Cfg.ClaudePath, a.Cfg.ProjectsRoot = fakeClaudePath, root
 	a.Cfg.MaxParallel, a.Cfg.PerProject = 1, 1
-	a.Cfg.PatrolEnabled, a.Cfg.NotifyEnabled, a.Cfg.VerifyAfterMerge = false, false, false
+	a.Cfg.PatrolEnabled, a.Cfg.NotifyEnabled = false, false
 	if err := os.MkdirAll(a.DataDir(), 0o700); err != nil {
 		t.Fatal(err)
 	}

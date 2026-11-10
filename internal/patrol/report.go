@@ -33,7 +33,7 @@ func (a *Service) notifyPatrol(r *PatrolReport) {
 	a.Notify.Notify(list...)
 }
 
-// patrolAnalyze：有新异常、patrol_analyze 开着、今天还没满 patrolAnalyzeMax 次、能接活（没暂停、不在冷却/熔断、额度没到 90%）、
+// patrolAnalyze：有新异常、patrol_enabled 开着、今天还没满 patrolAnalyzeMax 次、能接活（没暂停、不在冷却/熔断、额度没到 90%）、
 // 上一次分析也没在跑时，启动一次 claude -p 只读分析新异常的原因。结果由那个任务结束时写进汇总。
 func (a *Service) patrolAnalyze(st *state.State, ps *PatrolState, r *PatrolReport) {
 	var issues []PatrolIssue
@@ -53,8 +53,8 @@ func (a *Service) patrolAnalyze(st *state.State, ps *PatrolState, r *PatrolRepor
 	no := func(why string) { r.Analysis = "没启动 " + a.HeadlessWord(a.Cfg.Backend) + " 分析：" + why }
 	lvl, _, _ := backend.UsageLevel(st.Usage, now, a.Cfg.UsagePolicy())
 	switch {
-	case !a.Cfg.PatrolAnalyze:
-		no("patrol_analyze=false")
+	case !a.Cfg.PatrolEnabled:
+		no("patrol_enabled=false")
 		return
 	case ps.AnalysisCount >= patrolAnalyzeMax:
 		no(fmt.Sprintf("今天已经分析过 %d 次（每天最多 %d 次）", ps.AnalysisCount, patrolAnalyzeMax))

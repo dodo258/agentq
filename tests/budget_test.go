@@ -20,7 +20,6 @@ import (
 	"agentq/internal/proc"
 	"agentq/internal/runner"
 	"agentq/internal/state"
-	"agentq/internal/suggest"
 	"agentq/internal/testkit"
 )
 
@@ -31,7 +30,7 @@ func TestBudgetArgs(t *testing.T) {
 		}
 	}
 	a := wireApp(&App{Env: &env.Env{Cfg: config.Default()}})
-	for kind, want := range map[string]float64{"": 150, state.KindNew: 150, config.KindNight: 10, config.KindReview: 15, state.KindPatrol: 2, state.KindChat: 0, state.KindQuick: 0, state.KindFollowup: 0, state.KindRouter: 0} {
+	for kind, want := range map[string]float64{"": 150, state.KindNew: 150, config.KindNight: 10, config.KindReview: 15, state.KindPatrol: 2, state.KindChat: 0, state.KindFollowup: 0, state.KindDiscuss: 0} {
 		if got := a.Runner.JobBudget(kind); got != want {
 			t.Errorf("%q：%v", kind, got)
 		}
@@ -410,30 +409,6 @@ func TestIntegrationRunawayAutoStop(t *testing.T) {
 	waitExit(t, jobs[len(jobs)-1].PID, 10*time.Second)
 }
 
-// 开关关掉：和原来一样只报不停，文字也不变。
-func TestIntegrationRunawayAutostopOff(t *testing.T) {
-	t.Parallel()
-	e, tg, dir, _, j, noon := runawayEnv(t, map[string]any{"progress_autostop": false}, "- [ ] 甲 —— CLAIMFIRST SLEEP=120\n")
-	out := e.tickAt(noon, 31*time.Minute)
-	got := e.jobByTitle("甲")
-	if got.Status != state.StatusRunning || got.AutoStop != "" || !runner.Noted(got, backend.SigRunaway) {
-		t.Fatalf("%+v", got)
-	}
-	if !strings.Contains(out, "不自动杀，运行满 1000h 才终止，要停就 agentq stop "+j.ID) {
-		t.Errorf("文字不变：\n%s", out)
-	}
-	if syscall.Kill(j.PID, 0) != nil {
-		t.Error("不该杀")
-	}
-	if strings.Contains(e.backlogOf(dir), "卡住") {
-		t.Error("不该标卡住")
-	}
-	if got := strings.Join(tg.texts(), "\n"); !strings.Contains(got, "子代理失控") || !strings.Contains(got, "要停就 agentq stop") {
-		t.Errorf("照报：%s", got)
-	}
-	e.mustRun("stop", j.ID)
-}
-
 // 开关开着：其他信号（无改动）仍只报不停。
 func TestIntegrationOtherSignalsOnlyReport(t *testing.T) {
 	t.Parallel()
@@ -490,30 +465,6 @@ func TestIntegrationRunawayStuckRetry(t *testing.T) {
 	}
 }
 
-// 任务箱任务失控：inbox.md 标卡住，推「放下了」。不写项目 BACKLOG。
-func TestIntegrationRunawayInbox(t *testing.T) {
-	t.Parallel()
-	e, tg := threadEnv(t, map[string]any{"paused": false, "timeout": "1000h"})
-	e.atNoon()
-	e.writeInbox("## 待做\n- [ ] 甲 —— SLEEP=120\n")
-	e.mustRun("tick")
-	j := inboxJobs(e)[0]
-	writeRunawayLogs(t, e, j)
-	y, m, d := time.Now().Date()
-	e.tickAt(time.Date(y, m, d, 12, 0, 0, 0, time.Local), 31*time.Minute)
-	got := inboxJobs(e)[0]
-	if got.Status != state.StatusInterrupted || got.AutoStop != backend.SigRunaway {
-		t.Fatalf("%+v", got)
-	}
-	inbox := e.readInbox()
-	if !strings.Contains(inbox, "（卡住：任务 "+j.ID+" 子代理失控，自动停了") || strings.Contains(inbox, "（进行中") {
-		t.Errorf("\n%s", inbox)
-	}
-	if !strings.Contains(strings.Join(tg.texts(), "\n"), "放下了") {
-		t.Errorf("%q", tg.texts())
-	}
-}
-
 // new 任务失控：多出的目录和用户停掉时一样不自动做，推一条；不算用户停的（用户停的不推）。
 func TestIntegrationRunawayNew(t *testing.T) {
 	t.Parallel()
@@ -563,15 +514,15 @@ func modelOf(t *testing.T, e *testEnv, j *Job) string {
 	return m
 }
 
-// 配了 low_risk_model：带固定标记的用它；正文提到的不算；别的不变。没配：标记不起作用，参数和原来一样。
+// 带（低风险）固定标记的待做用写死的 sonnet；正文提到的不算；夜班不看标记。model 跟随 CLI 时都不传模型。
 func TestIntegrationLowRiskModel(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, map[string]any{"low_risk_model": "haiku", "max_parallel": 3})
+	e := newEnv(t, map[string]any{"max_parallel": 3})
 	testkit.MkProject(t, e.root, "a", "- [ ] 补测试（低风险） —— x\n")
 	testkit.MkProject(t, e.root, "b", "- [ ] 改解析 —— 支持（低风险）标记\n")
 	e.mustRun("tick")
 	e.mustRun("night")
-	if got := modelOf(t, e, e.jobByTitle("补测试（低风险）")); got != "haiku" {
+	if got := modelOf(t, e, e.jobByTitle("补测试（低风险）")); got != "sonnet" {
 		t.Errorf("带标记：%s", got)
 	}
 	if got := modelOf(t, e, e.jobByTitle("改解析")); got != "opus" {
@@ -580,31 +531,16 @@ func TestIntegrationLowRiskModel(t *testing.T) {
 	if got := modelOf(t, e, e.routineJob(config.KindNight)); got != "opus" {
 		t.Errorf("夜班不看标记：%s", got)
 	}
-
-	def := newEnv(t, nil)
-	testkit.MkProject(t, def.root, "a", "- [ ] 补测试（低风险） —— x\n")
-	def.mustRun("tick")
-	if got := modelOf(t, def, def.jobByTitle("补测试（低风险）")); got != "sonnet" {
-		t.Errorf("没写这个键用默认的 sonnet：%s", got)
-	}
-
-	off := newEnv(t, map[string]any{"low_risk_model": ""})
-	testkit.MkProject(t, off.root, "a", "- [ ] 补测试（低风险） —— x\n")
-	off.mustRun("tick")
-	j := off.jobByTitle("补测试（低风险）")
-	if got := modelOf(t, off, j); got != "opus" {
-		t.Errorf("写成空照 model：%s", got)
-	}
 }
 
 // 续跑和接手沿用同样判断。
 func TestIntegrationLowRiskResumeAndTakeover(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, map[string]any{"low_risk_model": "haiku"})
+	e := newEnv(t, nil)
 	orphanRepo(t, e, "demo", "- [ ] （低风险）补测试 —— TASKOVERBUDGET\n")
 	e.mustRun("tick")
 	first := e.state().Jobs[0]
-	if got := modelOf(t, e, first); got != "haiku" {
+	if got := modelOf(t, e, first); got != "sonnet" {
 		t.Errorf("首次：%s", got)
 	}
 	e.mustRun("tick")
@@ -612,12 +548,12 @@ func TestIntegrationLowRiskResumeAndTakeover(t *testing.T) {
 	if second.ResumeOf != first.ID {
 		t.Fatalf("%+v", second)
 	}
-	if got := modelOf(t, e, second); got != "haiku" {
+	if got := modelOf(t, e, second); got != "sonnet" {
 		t.Errorf("续跑：%s", got)
 	}
 
 	// 接手：条目上有进行中标记，标题去掉标记后判断
-	t2 := newEnv(t, map[string]any{"low_risk_model": "haiku"})
+	t2 := newEnv(t, nil)
 	d2 := orphanRepo(t, t2, "demo", "- [ ] （低风险）补测试 —— ORPHANDONE"+oldMarker("agent/x")+"\n")
 	gitBranch(t, t2, d2, "agent/x")
 	t2.tickAt(time.Now().Add(72*time.Hour), 0)
@@ -625,11 +561,11 @@ func TestIntegrationLowRiskResumeAndTakeover(t *testing.T) {
 	if !j.Takeover {
 		t.Fatalf("%+v", j)
 	}
-	if got := modelOf(t, t2, j); got != "haiku" {
+	if got := modelOf(t, t2, j); got != "sonnet" {
 		t.Errorf("接手：%s", got)
 	}
 	// 接手没标记的：不用便宜模型
-	t3 := newEnv(t, map[string]any{"low_risk_model": "haiku"})
+	t3 := newEnv(t, nil)
 	d3 := orphanRepo(t, t3, "demo", "- [ ] 补测试 —— ORPHANDONE 提到（低风险）这个词"+oldMarker("agent/x")+"\n")
 	gitBranch(t, t3, d3, "agent/x")
 	t3.tickAt(time.Now().Add(72*time.Hour), 0)
@@ -855,7 +791,7 @@ func TestStuckResumable(t *testing.T) {
 		"不是 agentq 放下的": func(j *Job) { j.AutoStop = "" },
 		"别的会话":          func(j *Job) { j.SessionID = "x" },
 		"别的条目":          func(j *Job) { j.Fingerprint = "x" },
-		"不是待做":          func(j *Job) { j.Kind = state.KindInbox },
+		"不是待做":          func(j *Job) { j.Kind = state.KindNew },
 		"任务记录不在":        func(j *Job) { j.ID = "t2" },
 	} {
 		j := job()
@@ -1117,23 +1053,4 @@ func TestIntegrationHandoffRunawayKeepsBranch(t *testing.T) {
 	next := e.state().Jobs[2]
 	handoffPrompt(t, e, next, wt)
 	e.mustRun("stop", next.ID)
-}
-
-// 闲时找活撞预算：走它自己的收尾（一条都不写，不接着做），不算「放下的任务」，也不推撞预算的提醒。
-func TestSuggestBudgetKeepsOwnHandling(t *testing.T) {
-	a, _ := newTestApp(t)
-	a.Cfg.NotifyEnabled = false
-	now := time.Now()
-	j := &Job{ID: "1104-120000-闲时找活", Kind: state.KindSuggest, Project: suggest.SuggestJobName, Title: "闲时找活", Status: state.StatusRunning, StartedAt: now, PID: 1}
-	if err := os.MkdirAll(a.JobDir(j.ID), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(a.JobDir(j.ID), "result.json"), []byte(`{"type":"result","subtype":"error_max_budget_usd","is_error":true,"result":"","session_id":"s"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	st := &State{Jobs: []*Job{j}}
-	a.Runner.FinishFromResult(st, j)
-	if j.BudgetHit || j.ResumePending || j.Status != state.StatusFailed || !strings.Contains(j.Summary, "撞到回合或预算上限，没有写任何建议") {
-		t.Errorf("%+v", j)
-	}
 }

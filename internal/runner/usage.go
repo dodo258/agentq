@@ -117,7 +117,7 @@ var ErrModelWindow = errors.New("不启动")
 // userStarted：你亲手发起的任务。
 func userStarted(j *state.Job) bool {
 	switch j.Kind {
-	case state.KindChat, state.KindRouter, state.KindQuick, state.KindFollowup, state.KindNew:
+	case state.KindChat, state.KindFollowup, state.KindNew:
 		return true
 	}
 	return j.Manual || j.FromThread

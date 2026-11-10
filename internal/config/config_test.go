@@ -13,36 +13,6 @@ import (
 	"agentq/internal/fsx"
 )
 
-func TestBudgetConfig(t *testing.T) {
-	cfg := Default()
-	if cfg.NightBudgetUSD != 10 || cfg.ReviewBudgetUSD != 15 || cfg.PatrolBudgetUSD != 2 || cfg.JobBudgetUSD != 150 || !cfg.ProgressAutostop || cfg.LowRiskModel != "sonnet" {
-		t.Errorf("默认值：%+v", cfg)
-	}
-	path := filepath.Join(t.TempDir(), "config.json")
-	// 老配置没有这些键：沿用默认值
-	os.WriteFile(path, []byte(`{"max_parallel": 3}`), 0o644)
-	got, err := Load(path)
-	if err != nil || got.JobBudgetUSD != 150 || got.NightBudgetUSD != 10 || !got.ProgressAutostop || got.LowRiskModel != "sonnet" {
-		t.Errorf("%v %+v", err, got)
-	}
-	os.WriteFile(path, []byte(`{"job_budget_usd": 0, "night_budget_usd": 7.5, "progress_autostop": false, "low_risk_model": "haiku"}`), 0o644)
-	got, err = Load(path)
-	if err != nil || got.JobBudgetUSD != 0 || got.NightBudgetUSD != 7.5 || got.ProgressAutostop || got.LowRiskModel != "haiku" {
-		t.Errorf("%v %+v", err, got)
-	}
-	os.WriteFile(path, []byte(`{"job_budget_usd": -1}`), 0o644)
-	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "不能是负数") {
-		t.Errorf("负数应报错：%v", err)
-	}
-	// 新配置写全这些键（setup 就是把这份写出去）
-	b, _ := json.Marshal(Default())
-	for _, key := range []string{`"night_budget_usd":10`, `"review_budget_usd":15`, `"patrol_budget_usd":2`, `"job_budget_usd":150`, `"progress_autostop":true`, `"low_risk_model":"sonnet"`} {
-		if !strings.Contains(string(b), key) {
-			t.Errorf("缺 %s：%s", key, b)
-		}
-	}
-}
-
 // 配置校验：空名字、带路径的拒绝；不存在的项目不算错（可能以后才有）。
 func TestExcludeConfigValidate(t *testing.T) {
 	for _, bad := range []string{"", " ", "a/b", "..", "."} {
@@ -66,29 +36,6 @@ func TestExcludeConfigValidate(t *testing.T) {
 	b, err := os.ReadFile(p)
 	if err != nil || strings.Contains(string(b), "exclude_projects") {
 		t.Fatalf("%v %s", err, b)
-	}
-}
-
-func TestSenseConfig(t *testing.T) {
-	d := Default()
-	if d.SenseEnabled || d.SenseModel != "sonnet" || d.SenseBudgetUSD != 1 {
-		t.Fatalf("默认值：%+v", d)
-	}
-	path := filepath.Join(t.TempDir(), "config.json")
-	for name, cfg := range map[string]string{
-		"预算 0":   `{"sense_budget_usd":0}`,
-		"预算负数":   `{"sense_budget_usd":-1}`,
-		"预算太大":   `{"sense_budget_usd":5000}`,
-		"模型像个选项": `{"sense_enabled":true,"sense_model":"--tools"}`,
-	} {
-		os.WriteFile(path, []byte(cfg), 0o644)
-		if _, err := Load(path); err == nil {
-			t.Errorf("%s：应报错", name)
-		}
-	}
-	os.WriteFile(path, []byte(`{"launchd_label":"io.agentq.agentq"}`), 0o644)
-	if c, err := Load(path); err != nil || c.SenseEnabled {
-		t.Errorf("老配置兼容：%+v %v", c, err)
 	}
 }
 
@@ -156,164 +103,6 @@ func TestRegressPauseDetectsHandEdit(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(path); string(b) != `{坏了` {
 		t.Fatalf("坏文件不该动：%s", b)
-	}
-}
-
-func TestSuggestConfig(t *testing.T) {
-	c := Default()
-	if c.SuggestEnabled || c.SuggestModel != "sonnet" || c.SuggestBudgetUSD != 1 {
-		t.Errorf("默认值：%+v", c)
-	}
-	if err := c.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	c.SuggestBudgetUSD = 0
-	if c.Validate() == nil {
-		t.Error("预算 0 应拒绝")
-	}
-	c.SuggestBudgetUSD = 1
-	c.SuggestEnabled, c.SuggestModel = true, ""
-	if err := c.Validate(); err != nil {
-		t.Errorf("模型留空是跟随 CLI：%v", err)
-	}
-	c.SuggestModel = "--help"
-	if c.Validate() == nil {
-		t.Error("模型不能以 - 开头")
-	}
-	// 旧配置文件没有这些键：沿用默认值，关着
-	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"max_parallel":3}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got, err := Load(path)
-	if err != nil || got.SuggestEnabled || got.SuggestModel != "sonnet" || got.SuggestBudgetUSD != 1 {
-		t.Errorf("旧配置：%+v %v", got, err)
-	}
-}
-
-// 模型和强度：新配置留空并写进文件，读回来还是空；老配置缺键和写了的都照旧。
-func TestModelDefaults(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	fresh, err := Load(path) // 文件不存在时写一份
-	if err != nil {
-		t.Fatal(err)
-	}
-	reload, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, c := range map[string]Config{"新建": fresh, "读回来": reload} {
-		if c.Model != "" || c.Effort != "" || c.RouterModel != "" || c.SuggestModel != "" || c.SenseModel != "" || c.LightReviewModel != "" {
-			t.Errorf("%s：不该有模型名：%+v", name, c)
-		}
-		if c.ModelPolicy != "" {
-			t.Errorf("%s：默认 fixed，不写这个键：%q", name, c.ModelPolicy)
-		}
-	}
-	for name, raw := range map[string][2]string{
-		"老配置缺键": {`{}`, "opus"},
-		"写了就照用": {`{"model":"sonnet","effort":"low"}`, "sonnet"},
-	} {
-		if err := os.WriteFile(path, []byte(raw[0]), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		c, err := Load(path)
-		if err != nil || c.Model != raw[1] || c.Effort == "" {
-			t.Errorf("%s：%+v %v", name, c, err)
-		}
-	}
-	// 默认后端不是 Claude、又没写的：轻量审查的模型不能把 sonnet 传给别家；老 Claude 配置缺键照默认
-	if err := os.WriteFile(path, []byte(`{"backend":"codex"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if c, err := Load(path); err != nil || c.LightReviewModel != "" || c.UsageStopSessionPct != 70 || c.UsageStopWeekPct != 90 {
-		t.Errorf("codex 缺键：%+v %v", c, err)
-	}
-	if err := os.WriteFile(path, []byte(`{}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if c, err := Load(path); err != nil || c.LightReviewModel != "sonnet" {
-		t.Errorf("Claude 缺键：%+v %v", c, err)
-	}
-	// 按活分配：Claude 缺键照官方定位给别名；Codex 默认后端、新配置都留空，照 model
-	if c, err := Load(path); err != nil || c.RouterModel != "haiku" || c.DiscussModel != "sonnet" || c.ReviewModel != "sonnet" || c.ReviewEffort != "high" ||
-		c.PatrolModel != "sonnet" || c.FollowupModel != "sonnet" || c.HeavyEffort != "xhigh" || c.LowRiskModel != "sonnet" || c.LowRiskEffort != "medium" {
-		t.Errorf("Claude 缺键的分配：%+v %v", c, err)
-	}
-	if err := os.WriteFile(path, []byte(`{"backend":"codex"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if c, err := Load(path); err != nil || c.RouterModel+c.DiscussModel+c.ReviewModel+c.ReviewEffort+c.PatrolModel+c.FollowupModel+c.HeavyEffort+c.LowRiskModel+c.LowRiskEffort != "" {
-		t.Errorf("codex 缺键要全空：%+v %v", c, err)
-	}
-	// 安装器以前建的配置明写了 "model": ""（跟随 CLI），没有新键：升级后按活分配的别名也不传，跟着 CLI 走；明写了的照用
-	if err := os.WriteFile(path, []byte(`{"model":"","effort":"","router_model":"","low_risk_model":""}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if c, err := Load(path); err != nil || c.LightReviewModel+c.DiscussModel+c.ReviewModel+c.ReviewEffort+c.PatrolModel+c.FollowupModel+c.HeavyEffort+c.LowRiskEffort != "" {
-		t.Errorf("跟随 CLI 的老配置不该被塞别名：%+v %v", c, err)
-	}
-	if err := os.WriteFile(path, []byte(`{"model":"","review_model":"sonnet"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if c, err := Load(path); err != nil || c.ReviewModel != "sonnet" || c.PatrolModel != "" {
-		t.Errorf("跟随 CLI 时明写的照用：%+v %v", c, err)
-	}
-	if err := os.WriteFile(path, []byte(`{"model":"opus"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if c, err := Load(path); err != nil || c.PatrolModel != "sonnet" || c.HeavyEffort != "xhigh" {
-		t.Errorf("写了模型的照默认分配：%+v %v", c, err)
-	}
-	if f := Default().Fresh(); f.RouterModel+f.DiscussModel+f.ReviewModel+f.ReviewEffort+f.PatrolModel+f.FollowupModel+f.HeavyEffort+f.LowRiskModel+f.LowRiskEffort != "" {
-		t.Errorf("新配置跟随 CLI：%+v", f)
-	}
-	if m, e := (Config{Model: "opus", Effort: "high"}).Role("", "medium"); m != "opus" || e != "high" {
-		t.Errorf("没配专用模型照 model、effort：%s %s", m, e)
-	}
-	if got := (Config{Model: "claude-opus-5-5", RouterModel: "haiku", ReviewModel: "claude-sonnet-4-5-20250929"}).PinnedModels(); len(got) != 2 {
-		t.Errorf("钉了版本号的要找出来，别名不算：%v", got)
-	}
-	for _, bad := range []string{`{"usage_stop_session_pct":0}`, `{"usage_stop_week_pct":98}`, `{"light_review_model":"--x"}`, `{"light_review_model":"haiku"}`, `{"light_review_model":"claude-Haiku-4"}`, `{"heavy_effort":"--x"}`, `{"followup_model":"-m"}`} {
-		if err := os.WriteFile(path, []byte(bad), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := Load(path); err == nil {
-			t.Errorf("%s 应报错", bad)
-		}
-	}
-	if err := os.WriteFile(path, []byte(`{"model_policy":"auto"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if c, err := Load(path); err != nil || c.ModelPolicy != ModelPolicyAuto {
-		t.Errorf("%+v %v", c, err)
-	}
-	if err := os.WriteFile(path, []byte(`{"model_policy":"cheap"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Load(path); err == nil {
-		t.Error("不认识的 model_policy 应报错")
-	}
-	for name, raw := range map[string]string{
-		"Router 留空": `{"router_enabled":true,"router_model":""}`,
-		"找活留空":      `{"suggest_enabled":true,"suggest_model":""}`,
-		"感知留空":      `{"sense_enabled":true,"sense_model":""}`,
-	} {
-		if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := Load(path); err != nil {
-			t.Errorf("%s 是跟随 CLI，不算错：%v", name, err)
-		}
-	}
-	if err := os.WriteFile(path, []byte(`{"router_enabled":true,"router_model":"--tools"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Load(path); err == nil {
-		t.Error("router_model 不能像个选项")
-	}
-	if ModelLabel("") == "" || ModelLabel("x") != "x" {
-		t.Error(ModelLabel(""))
 	}
 }
 
@@ -396,7 +185,7 @@ func TestConfigDefaultsAndPartialFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 旧配置文件没有 tick_after_job：沿用默认的开；没有 per_project：用新默认 2；没有夜班、复盘的键：默认关，超时 6h/4h
+	// 没有 per_project：用新默认 2；没有夜班、复盘的键：默认关，超时写死 6h/4h
 	if cfg.MaxParallel != 3 || cfg.Timeout.Duration != 30*time.Minute || !cfg.Paused || cfg.PerProject != 2 || !cfg.TickAfterJob {
 		t.Errorf("部分配置应覆盖对应键、其余用默认：%+v", cfg)
 	}
@@ -410,5 +199,122 @@ func TestConfigDefaultsAndPartialFile(t *testing.T) {
 	os.WriteFile(path, []byte(`{"timeout": 5}`), 0o644)
 	if _, err := Load(path); err == nil {
 		t.Error("时长写成数字应报错")
+	}
+}
+
+// 写死的键：老配置里写着也不起作用，新配置不写出来。
+func TestHardwiredKeysIgnored(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	old := `{"job_budget_usd": 0, "night_budget_usd": 7.5, "progress_autostop": false, "low_risk_model": "haiku", "breaker_streak": 100,
+		"tick_after_job": false, "patrol_analyze": false, "router_enabled": true, "model_policy": "auto"}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("老配置里写着删掉的键要照样读：%v", err)
+	}
+	d := Default()
+	if got.JobBudgetUSD != 150 || got.NightBudgetUSD != 10 || got.LowRiskModel != "sonnet" || got.BreakerStreak != d.BreakerStreak ||
+		!got.TickAfterJob || !got.PatrolEnabled {
+		t.Errorf("写死的值被配置文件改了：%+v", got)
+	}
+	b, _ := json.Marshal(d)
+	for _, key := range []string{"job_budget_usd", "breaker_streak", "tick_after_job", "low_risk_model", "stall_after", "discuss_wait", "verify_timeout"} {
+		if strings.Contains(string(b), `"`+key+`"`) {
+			t.Errorf("写死的键不该写进配置：%s", key)
+		}
+	}
+}
+
+// retention_days 照读：0（不删）和别的值都留着，负数报错。写死了会悄悄删掉老用户的记录。
+func TestRetentionDaysConfigurable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"retention_days": 0}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RetentionDays != 0 {
+		t.Errorf("retention_days=0（不删）要照读：%d", got.RetentionDays)
+	}
+	if err := os.WriteFile(path, []byte(`{"retention_days": -1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Error("负数应报错")
+	}
+	if d := Default(); d.RetentionDays != 90 {
+		t.Errorf("默认 90 天：%d", d.RetentionDays)
+	}
+}
+
+// 按活分配：默认后端是 Claude、model 非空时用写死的分配；model 跟随 CLI 或别家后端时全空，照 model、effort。
+func TestModelDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	fresh, err := Load(path) // 文件不存在时写一份
+	if err != nil {
+		t.Fatal(err)
+	}
+	reload, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles := func(c Config) string {
+		return c.DiscussModel + c.ReviewModel + c.ReviewEffort + c.PatrolModel + c.FollowupModel + c.HeavyEffort + c.LowRiskModel + c.LowRiskEffort + c.LightReviewModel
+	}
+	for name, c := range map[string]Config{"新建": fresh, "读回来": reload} {
+		if c.Model != "" || c.Effort != "" || roles(c) != "" {
+			t.Errorf("%s：不该有模型名：%+v", name, c)
+		}
+	}
+	for name, raw := range map[string][2]string{
+		"老配置缺键": {`{}`, "opus"},
+		"写了就照用": {`{"model":"sonnet","effort":"low"}`, "sonnet"},
+	} {
+		if err := os.WriteFile(path, []byte(raw[0]), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		c, err := Load(path)
+		if err != nil || c.Model != raw[1] || c.Effort == "" {
+			t.Errorf("%s：%+v %v", name, c, err)
+		}
+		if c.DiscussModel != "sonnet" || c.ReviewModel != "sonnet" || c.ReviewEffort != "high" || c.PatrolModel != "sonnet" || c.FollowupModel != "sonnet" ||
+			c.HeavyEffort != "xhigh" || c.LowRiskModel != "sonnet" || c.LowRiskEffort != "medium" || c.LightReviewModel != "sonnet" {
+			t.Errorf("%s：Claude 写了模型照写死的分配：%+v", name, c)
+		}
+	}
+	for _, raw := range []string{`{"backend":"codex"}`, `{"model":"","effort":""}`} {
+		if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if c, err := Load(path); err != nil || roles(c) != "" || c.UsageStopSessionPct != 70 || c.UsageStopWeekPct != 90 {
+			t.Errorf("%s：按活分配要全空：%+v %v", raw, c, err)
+		}
+	}
+	if f := Default().Fresh(); roles(f) != "" {
+		t.Errorf("新配置跟随 CLI：%+v", f)
+	}
+	if m, e := (Config{Model: "opus", Effort: "high"}).Role("", "medium"); m != "opus" || e != "high" {
+		t.Errorf("没配专用模型照 model、effort：%s %s", m, e)
+	}
+	if got := (Config{Model: "claude-opus-5-5"}).PinnedModels(); len(got) != 1 {
+		t.Errorf("钉了版本号的要找出来：%v", got)
+	}
+	if got := (Config{Model: "opus"}).PinnedModels(); len(got) != 0 {
+		t.Errorf("别名不算：%v", got)
+	}
+	for _, bad := range []string{`{"usage_stop_session_pct":0}`, `{"usage_stop_week_pct":98}`} {
+		if err := os.WriteFile(path, []byte(bad), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Errorf("%s 应报错", bad)
+		}
+	}
+	if ModelLabel("") == "" || ModelLabel("x") != "x" {
+		t.Error(ModelLabel(""))
 	}
 }

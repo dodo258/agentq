@@ -359,19 +359,6 @@ func TestAllowedUpdates(t *testing.T) {
 	}
 }
 
-// 对发版提示消息点假按钮提交不了（提示本身不带按钮见 TestReleaseFlow 那边的断言）。
-func TestReleaseOfferIgnoresButtons(t *testing.T) {
-	r := newRelEnv(t, nil)
-	r.seedOffered(777, nil)
-	r.tg.click(50, ownerChat, 777, "发")
-	r.tg.click(51, ownerChat, 777, "dc:000000000000:A")
-	r.mustRun("tick")
-	r.noWrites()
-	if a := r.tg.lastAnswer(); a != notify.CardExpired {
-		t.Errorf("%s", a)
-	}
-}
-
 // notify.json 写坏成 "cards":{"x":null} 也不能崩：点按钮照常回应。
 func TestCardNullInNotifyJSON(t *testing.T) {
 	e, p := cdEnv(t, "")

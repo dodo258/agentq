@@ -1,0 +1,8 @@
+body {
+  margin: 2rem;
+  font: 16px/1.6 -apple-system, "PingFang SC", sans-serif;
+  background: #ffffff;
+  color: #1a1a1a;
+}
+ul { list-style: none; padding: 0; }
+li { padding: 0.5rem 0; border-bottom: 1px solid #e5e5e5; }

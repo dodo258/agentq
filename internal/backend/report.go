@@ -29,7 +29,6 @@ func Rows(b Backend) []Row {
 		{"回合上限", c.MaxTurns, "短任务用短超时兜底"},
 		{"结构化输出", c.Schema, "追问靠提示词要 JSON 并校验，校验不过当没结果；其余要它的任务不启动"},
 		{"只读和无工具", c.ToolProfiles, "要它的任务不启动"},
-		{"拒绝规则", c.DenyRules, "要它的任务不启动"},
 		{"隔离 MCP", c.NoExternalMCP, "要它的任务不启动"},
 		{"用量", c.Usage, "status 和当天汇总写未知，合计注明几个任务没有用量"},
 		{"费用", c.Cost, "只有 token 没有金额，美元预算上限查不了"},
@@ -63,11 +62,7 @@ type Task struct {
 // Tasks 列出能被后端能力关掉的任务。
 var Tasks = []Task{
 	{"待做和 new（要合并）", MustMerge, "不接活"},
-	{"Router", MustRouter, "消息走 Fast Path 和对话任务"},
-	{"闲时找活", MustSuggest, "不跑"},
-	{"主动感知", MustSense, "不跑"},
 	{"大方向商量", MustDiscuss, "不问，按默认开工"},
-	{"发版准备", MustRelease, "不跑"},
 	{"追问", MustFollowup, "回退成普通对话任务"},
 	{"巡逻分析", MustPatrol, "巡逻照常报，不起分析"},
 	{"界面门的模型部分", MustImages, "判不了，不放行"},

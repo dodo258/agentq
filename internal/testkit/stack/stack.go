@@ -3,7 +3,6 @@
 package stack
 
 import (
-	"agentq/internal/asc"
 	_ "agentq/internal/backend/claude"
 	"agentq/internal/backlog"
 	"agentq/internal/env"
@@ -22,7 +21,6 @@ type Stack struct {
 	Gitx     *gitx.Service
 	Backlog  *backlog.Service
 	Telegram *telegram.Service
-	ASC      *asc.Service
 	Quality  *quality.Service
 	Ledger   *ledger.Service
 	Service  *service.Service
@@ -36,12 +34,11 @@ func New(e *env.Env) *Stack {
 	g := &gitx.Service{Env: e}
 	b := &backlog.Service{Env: e, Gitx: g}
 	tg := &telegram.Service{Env: e}
-	ac := &asc.Service{Env: e}
 	q := &quality.Service{Env: e, Backlog: b, Gitx: g}
 	l := &ledger.Service{Env: e, Quality: q}
 	sv := &service.Service{Env: e}
 	n := &notify.Service{Env: e, Backlog: b, Telegram: tg}
 	v := &gate.Service{Env: e, Backlog: b, Gitx: g, Ledger: l, Notify: n}
 	r := &runner.Service{Env: e, Backlog: b, Gitx: g, Ledger: l, Notify: n, Gate: v}
-	return &Stack{Gitx: g, Backlog: b, Telegram: tg, ASC: ac, Quality: q, Ledger: l, Service: sv, Notify: n, Gate: v, Runner: r}
+	return &Stack{Gitx: g, Backlog: b, Telegram: tg, Quality: q, Ledger: l, Service: sv, Notify: n, Gate: v, Runner: r}
 }

@@ -58,7 +58,7 @@ func TestForBackendDoesNotLeakDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, v := range map[string]string{"model": c.Model, "effort": c.Effort, "permission": c.PermissionMode, "router": c.RouterModel, "suggest": c.SuggestModel, "sense": c.SenseModel,
+	for name, v := range map[string]string{"model": c.Model, "effort": c.Effort, "permission": c.PermissionMode, "light_review": c.LightReviewModel,
 		"discuss": c.DiscussModel, "review": c.ReviewModel, "review_effort": c.ReviewEffort, "patrol": c.PatrolModel, "followup": c.FollowupModel,
 		"heavy": c.HeavyEffort, "low_risk": c.LowRiskModel, "low_risk_effort": c.LowRiskEffort} {
 		if v != "" {
@@ -74,14 +74,14 @@ func TestForBackendDoesNotLeakDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Model != "opus" || c.Effort != "high" || c.PermissionMode != "bypassPermissions" || c.RouterModel != "haiku" {
+	if c.Model != "opus" || c.Effort != "high" || c.PermissionMode != "bypassPermissions" || c.LightReviewModel != "sonnet" {
 		t.Errorf("老配置的默认值变了：%+v", c)
 	}
 	if got := c.ForBackend(""); got.Model != "opus" || got.Effort != "high" || got.PermissionMode != "bypassPermissions" {
 		t.Errorf("%+v", got)
 	}
 	// project_backends：默认后端的不串给项目的后端
-	if got := c.ForBackend("xxx"); got.Model != "" || got.Effort != "" || got.PermissionMode != "" || got.RouterModel != "" || got.LowRiskModel != "" ||
+	if got := c.ForBackend("xxx"); got.Model != "" || got.Effort != "" || got.PermissionMode != "" || got.LightReviewModel != "" || got.LowRiskModel != "" ||
 		got.DiscussModel+got.ReviewModel+got.ReviewEffort+got.PatrolModel+got.FollowupModel+got.HeavyEffort+got.LowRiskEffort != "" {
 		t.Errorf("Claude 的默认串给了别的后端：%+v", got)
 	}

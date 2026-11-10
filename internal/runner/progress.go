@@ -49,7 +49,7 @@ func Noted(j *state.Job, signal string) bool {
 }
 
 // CheckProgress：运行满 progressMinRun 的待做任务（夜班、复盘、巡逻分析、对话这些本来就可能长时间循环或等待，不看）
-// 命中信号就写日志、当天汇总和推送队列；同一信号不重报。除了 progress_autostop 打开时的「子代理失控」（见 autoStopRunaway），都只报不杀。
+// 命中信号就写日志、当天汇总和推送队列；同一信号不重报。除了「子代理失控」（见 autoStopRunaway），都只报不杀。
 func (a *Service) CheckProgress(st *state.State) {
 	now := a.Now()
 	for _, j := range st.Tasks() {
@@ -68,7 +68,7 @@ func (a *Service) CheckProgress(st *state.State) {
 		changed := false
 		for _, h := range hits {
 			// 进程已经结束的不用杀，这次照常报，下次 tick 按结果收尾
-			if h.Signal == backend.SigRunaway && a.Cfg.ProgressAutostop && a.JobLive(j) == proc.ProcOurs {
+			if h.Signal == backend.SigRunaway && a.JobLive(j) == proc.ProcOurs {
 				if !Noted(j, h.Signal) {
 					j.ProgressNoted = append(j.ProgressNoted, h.Signal)
 				}

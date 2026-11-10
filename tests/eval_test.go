@@ -103,11 +103,11 @@ func TestEvalFakeFullFlow(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("退出码 %d：\n%s", code, out)
 	}
-	if !strings.Contains(out, "要跑 8 题（程序题 2，模型题 6），后端：假 CLI，调模型：否") {
+	if !strings.Contains(out, "要跑 21 题（程序题 11，模型题 10），后端：假 CLI，调模型：否") {
 		t.Errorf("开跑前要说清跑几题、用哪个后端：\n%s", out)
 	}
 	run := lastRun(t, home)
-	if len(run.Scores) != 8 {
+	if len(run.Scores) != 21 {
 		t.Fatalf("%d 题：\n%s", len(run.Scores), out)
 	}
 	byID := map[string]evolve.Score{}
@@ -126,7 +126,7 @@ func TestEvalFakeFullFlow(t *testing.T) {
 	if s := byID["007-install-existing-skill"]; s.Mode != evolve.ModeProgram {
 		t.Errorf("程序题的跑法和 --fake 无关：%+v", s)
 	}
-	for _, domain := range []string{"backend", "frontend", "install", "process", "product"} {
+	for _, domain := range []string{"backend", "docs", "engine", "frontend", "install", "process", "product", "routine"} {
 		if !strings.Contains(out, "  "+domain) {
 			t.Errorf("汇总缺 %s：\n%s", domain, out)
 		}
@@ -142,7 +142,7 @@ func TestEvalFakeFullFlow(t *testing.T) {
 	if out, code := runEval(t, home, tmp, "compare"); code == 0 || !strings.Contains(out, "还没有基线") {
 		t.Errorf("没基线不能比：%d %s", code, out)
 	}
-	if out, code := runEval(t, home, tmp, "baseline"); code != 0 || !strings.Contains(out, "8 题") {
+	if out, code := runEval(t, home, tmp, "baseline"); code != 0 || !strings.Contains(out, "21 题") {
 		t.Fatalf("%d %s", code, out)
 	}
 	if out, code := runEval(t, home, tmp, "compare"); code != 0 || !strings.Contains(out, "没有变差") {

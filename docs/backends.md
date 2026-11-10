@@ -20,7 +20,7 @@ agentq 把活交给一个 CLI 去做。CLI 的差别都收在 `internal/backend.
 
 用户在 `~/.agentq/config.json` 写 `"backend": "mycli"` 就切过去了。写了不认识的名字不会回退到别的后端：任务不启动，`agentq status` 和 `agentq doctor` 说明原因。按项目换用 `"project_backends": {"项目目录名": "mycli"}`。
 
-每个后端自己的配置放 `"backends": {"mycli": {"path": "", "model": "", "effort": "", "permission": ""}}`。顶层的 `model`、`effort`、`permission_mode`、`router_model` 这些只归默认后端，别的后端看不到（`Config.ForBackend`）。默认后端不是 Claude 又没写这些键时它们是空的，不沿用 Claude 的 `opus`。空的不传，跟随 CLI 自己的设置。路径没配就按后端名在 PATH 里找。
+每个后端自己的配置放 `"backends": {"mycli": {"path": "", "model": "", "effort": "", "permission": ""}}`。顶层的 `model`、`effort`、`permission_mode` 只归默认后端，别的后端看不到（`Config.ForBackend`）。默认后端不是 Claude 又没写这些键时它们是空的，不沿用 Claude 的 `opus`。空的不传，跟随 CLI 自己的设置。路径没配就按后端名在 PATH 里找。
 
 ## 接口
 
@@ -70,7 +70,7 @@ agentq 把活交给一个 CLI 去做。CLI 的差别都收在 `internal/backend.
 
 `agentq doctor` 会打出当前后端的能力表和关掉的任务。规则：
 
-- **`Must` 做不到，任务不启动，如实说原因。** Router、闲时找活、主动感知、发版准备靠 CLI 强制的边界保证安全，换成靠提示词约束是真的变弱，所以不补。
+- **`Must` 做不到，任务不启动，如实说原因。** 追问、巡逻分析、大方向商量靠 CLI 强制的只读或无工具边界保证安全，换成靠提示词约束是真的变弱，所以不补。
 - **界面门的模型部分要 `Caps.ImageInput`。** 截图路径放在 `Request.Images`，也在 `AddDirs` 里。Claude 靠读文件看，Codex 在 `Build` 里转成 `--image=`（路径带逗号传不对，返回 `ErrUnsupported`）。做不到的后端界面门判不了，不放行，不起进程。
 - **合并前的独立审查是硬前提，由引擎起进程。** 审查门走 `Build`（`ProfileReview`、`Schema`、`Effort=medium`、候选 worktree 作 `Dir`），不靠 CLI 有子代理，结论只记在 `gate/reviews/<项目>/<tree>.json`（tree、提交、patch-id、任务、后端）。起不了（`Caps.ReviewProfile` 为假，或 `Caps.Schema`、`Caps.SchemaByPrompt` 都为假）的后端，待做和 `new` 不接活。`SchemaByPrompt` 是 CLI 不强制但最后一条消息取得到：提示词要 JSON，校验不过重试一次，再不行判不了，不放行。
 - **其余的降级，功能变弱但能跑。** 没有续跑走接手，没有美元上限靠超时，没有用量写未知。
@@ -91,7 +91,7 @@ agentq 把活交给一个 CLI 去做。CLI 的差别都收在 `internal/backend.
 | 额度查询 | 无（`app-server` 的接口标 experimental，没接） | 只在撞限后冷却 |
 | 撞限 | 只有文字（`turn.failed`、stderr），不扫模型正文 | 厂商改文案就认不出，落到普通失败和熔断 |
 | 认证 | `login status` 只看本地凭据（实测令牌坏了也说已登录），`Unverified`。401 由 `Parse` 认出 | 暂停到 `limit_cooldown`，删暂停记录提前恢复 |
-| 只读、无工具、拒绝规则 | 无。`read-only` 只禁写不限读 | Router、闲时找活、主动感知、发版准备不启动，大方向商量不问、按默认开工，追问回退普通对话（按原任务的后端判断，别的后端的任务照常追问），巡逻不分析 |
+| 只读、无工具 | 无。`read-only` 只禁写不限读 | 大方向商量不问、按默认开工，追问回退普通对话（按原任务的后端判断，别的后端的任务照常追问），巡逻不分析 |
 | 隔离 MCP | 没声明。`--ignore-user-config` 丢整份配置，不算隔离 | 同上 |
 | 工具调用记录 | 有，读 agentq 保存的事件流，时间误差最多一个 tick | 子代理在同一条事件流里，「子代理失控」看不到 |
 | 进程标记 | 命令行放不了：`-c` 写不认识的键每次多两条提示事件（实测）。靠 `AGENTQ_JOB`，原生程序读得到（实测） | 见「认进程」 |
@@ -119,7 +119,7 @@ agentq 把活交给一个 CLI 去做。CLI 的差别都收在 `internal/backend.
 | 撞限 | error 事件的 `statusCode=429` 算结构化，`retry-after` 头当重置时间；文字（rate limit、quota 这些）算文字。它自己会先重试，这段时间事件流没动静 | 模型来源多，认不出就落到普通失败和熔断 |
 | 认证 | 查不了：`auth list` 只列存下的凭据，配置里的和本地模型看不到，空的不等于没登录。`ProviderAuthError`、401 由 `Parse` 认出 | 照常启动，第一次失败暂停到 `limit_cooldown` |
 | 终态 | 没有单独的事件：最后的 `step_finish` 的 `reason` 不是 `tool-calls`、`unknown`（它自己的循环也这么判），或者 `error` 事件 | 官方记过丢最后的 `step_finish` 还退 0（#26855、#53207，后者 2026-10-30 关）：当没有终态，不算成功，条目还进行中就走中断续跑 |
-| 只读、无工具、拒绝规则、隔离 MCP | 没声明。agent 的 `permission` 是 CLI 强制的（`--agent`），`--auto` 下明确的 deny 还生效（官方），但没真实跑过，这些是安全边界，不靠文档开 | Router、闲时找活、主动感知、发版准备不启动，大方向商量不问，追问回退普通对话，巡逻不分析 |
+| 只读、无工具、隔离 MCP | 没声明。agent 的 `permission` 是 CLI 强制的（`--agent`），`--auto` 下明确的 deny 还生效（官方），但没真实跑过，这些是安全边界，不靠文档开 | 大方向商量不问，追问回退普通对话，巡逻不分析 |
 | 工具调用记录 | 有，事件自带毫秒时间戳。`run` 把子代理的事件滤掉了 | 「子代理失控」看不到 |
 | 进程标记 | 没放进命令行：npm 版是 node 外壳再起原生程序，`--title` 放得下，但原生程序改不改进程名没验证。靠 `AGENTQ_JOB` | 见「认进程」 |
 | 技能 | `~/.agents/skills`，和 Codex 共用一份（官方也读 `~/.config/opencode/skills`、`~/.claude/skills`） | |

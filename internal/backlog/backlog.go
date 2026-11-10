@@ -448,7 +448,7 @@ func ItemTitle(text string) string {
 	return strings.TrimSpace(t)
 }
 
-// lowRiskMark：固定标记，配了 low_risk_model 时这一条用便宜模型。只认三个位置：标题开头、标题结尾、条目行尾（闲时找活写在行尾，见 internal/suggest/suggest.go）。
+// lowRiskMark：固定标记，这一条用 Config.LowRiskModel。只认三个位置：标题开头、标题结尾、条目行尾。
 // 进行中标记不算在内。正文中间、标题中间顺带提到都不算（LESSONS：自由文本只认固定格式）。
 const lowRiskMark = SuggestLowRiskMark
 
@@ -505,22 +505,18 @@ func Direction(text string) string {
 
 var (
 	noDowngradeRe = regexp.MustCompile(`(?i)重写|重构|迁移|审查|审计|rewrite|refactor|migrat|review|audit`)
-	docsItemRe    = regexp.MustCompile(`(?i)^(文档|docs?)\s*[:：]`)
 )
 
-// NoDowngradeItem：标题提到重写、重构、迁移、审查这类活，model_policy=auto 时不降级。这里故意不要求固定格式（LESSONS 那条管的是判断状态）：多认了只是不省额度，不会做坏。
+// NoDowngradeItem：标题提到重写、重构、迁移、审查这类活，标了（低风险）也不降模型。这里故意不要求固定格式（LESSONS 那条管的是判断状态）：多认了只是不省额度，不会做坏。
 func NoDowngradeItem(text string) bool { return noDowngradeRe.MatchString(ItemTitle(text)) }
 
 // heavyRe：要用长任务强度的活（重写、重构、迁移）。比 noDowngradeRe 窄：标题里顺带提到「审查」「审计」的不算长任务。
 var heavyRe = regexp.MustCompile(`(?i)重写|重构|迁移|rewrite|refactor|migrat`)
 
-// HeavyItem：重写、重构、迁移，或标了（难撤回）的条目，用 heavy_effort。
+// HeavyItem：重写、重构、迁移，或标了（难撤回）的条目，用 Config.HeavyEffort。
 func HeavyItem(text string) bool {
 	return heavyRe.MatchString(ItemTitle(text)) || IrreversibleItem(text)
 }
-
-// LightItem：model_policy=auto 时可以用轻模型的活，只认固定格式：「（低风险）」标记，或标题以「文档：」「docs:」开头。多认了可能做坏，所以不用关键字。
-func LightItem(text string) bool { return LowRiskItem(text) || docsItemRe.MatchString(ItemTitle(text)) }
 
 type Project struct {
 	Name string
@@ -552,7 +548,7 @@ func (p Project) Items() ([]Item, error) {
 // Excluded：这个项目在 exclude_projects 里，自动流程不碰它。
 func (a *Service) Excluded(name string) bool { return slices.Contains(a.Cfg.ExcludeProjects, name) }
 
-// ActiveProjects 是自动流程看的项目：tick、巡逻、闲时找活、主动感知都走这里，排除 exclude_projects。明确点名的命令（run、add、init）另走。
+// ActiveProjects 是自动流程看的项目：tick、巡逻、自我进化的提案都走这里，排除 exclude_projects。明确点名的命令（run、add、init）另走。
 // 错误的意思和 AllProjects 一样：返回的不全。
 func (a *Service) ActiveProjects() ([]Project, error) {
 	projects, err := a.AllProjects()
@@ -614,7 +610,7 @@ func ScanProjects(root string) ([]Project, error) {
 	return out, nil
 }
 
-const notDoingHeader = "# 不做清单\n\n用户明确不做的事。闲时找活和主动感知按标题永久判重，任务开工前会看。\n"
+const notDoingHeader = "# 不做清单\n\n用户明确不做的事。自我进化的提案按标题永久判重，任务开工前会看。\n"
 
 type NotDoingEntry struct {
 	Title string

@@ -18,7 +18,7 @@ import (
 
 const budgetResumeNote = "\n\n这次不是等通知退出的：上一个进程撞到预算上限（失控兜底，不是你做错了）。不重做做过的，不铺开新的范围，尽快收口。"
 
-// JobBudget：各种任务的预算。任务箱在 inboxArgs 里传（参数顺序不变）；对话类任务不设预算，Router、追问有自己的小额度。
+// JobBudget：各种任务的预算。对话类任务不设预算。
 func (a *Service) JobBudget(kind string) float64 {
 	switch kind {
 	case "", state.KindNew:
@@ -95,7 +95,7 @@ func (a *Service) budgetTaskNext(st *state.State, j *state.Job) string {
 	return "；将自动用同一会话续跑一次"
 }
 
-// noticeBudget：撞预算推一条（new 由 noticeNew 推，任务箱由 finishInbox 推）。
+// noticeBudget：撞预算推一条（new 由 noticeNew 推）。
 func (a *Service) noticeBudget(j *state.Job, stuck bool) {
 	label := backend.BudgetLabel(a.JobBudget(j.Kind))
 	name := j.Project + "「" + textfmt.TruncRunes(j.Title, 30) + "」"
@@ -128,9 +128,6 @@ func (a *Service) CheckLiveBudget(st *state.State) {
 			continue
 		}
 		limit := a.JobBudget(j.Kind)
-		if j.Kind == state.KindInbox {
-			limit = a.Cfg.JobBudgetUSD
-		}
 		if limit <= 0 {
 			continue
 		}
@@ -143,19 +140,14 @@ func (a *Service) CheckLiveBudget(st *state.State) {
 			how = "SIGTERM 后 SIGKILL"
 		}
 		a.Logf("任务 %s 花到 $%.2f，超过预算 %s，已发 %s（后端 %s 没有硬上限）", j.ID, u.CostUSD, backend.BudgetLabel(limit), how, be.Name())
-		if j.Kind == state.KindInbox {
-			status, summary := a.Hooks.InboxResult(j, backend.Result{HaveTerminal: true, Stop: backend.StopMaxBudget}, state.StatusFailed, "")
-			a.Finish(st, j, status, summary)
-			continue
-		}
 		status, summary := a.budgetResult(st, j, "")
 		a.Finish(st, j, status, summary)
 	}
 }
 
 // autoStopRunaway：「子代理失控」命中时停掉任务（调用方拿着 tick.lock，进程在跑）。保留分支和 worktree，写卡住标记，通知用户。
-// 不是用户 stop：状态记中断、不用 statusKilled（孤儿逻辑、status、任务箱和 new 的收尾都把 statusKilled 当成用户的决定）；
-// 不计连环失败，巡逻不再报。new 没有 BACKLOG 条目可标，多出的目录和用户停掉时一样不自动做；任务箱标卡住（finishInbox）。
+// 不是用户 stop：状态记中断、不用 statusKilled（孤儿逻辑、status 和 new 的收尾都把 statusKilled 当成用户的决定）；
+// 不计连环失败，巡逻不再报。new 没有 BACKLOG 条目可标，多出的目录和用户停掉时一样不自动做。
 func (a *Service) autoStopRunaway(st *state.State, j *state.Job, h backend.ProgressHit) {
 	hard := proc.KillGroup(j.PID, proc.KillGrace)
 	how := "SIGTERM"
@@ -173,7 +165,7 @@ func (a *Service) autoStopRunaway(st *state.State, j *state.Job, h backend.Progr
 		j.HeldProjects = a.Hooks.NewDirs(st, j)
 	}
 	a.Finish(st, j, state.StatusInterrupted, why+"，已自动停止（"+how+"）；分支和 worktree 留着")
-	if j.Kind != "" { // 任务箱、new 在 finish 里推过
+	if j.Kind != "" { // new 在 finish 里推过
 		return
 	}
 	a.Notify.Notify(notify.Notice{Cat: "alert", Key: "progress:" + j.ID + ":" + h.Signal, JobID: j.ID,

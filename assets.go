@@ -17,9 +17,6 @@ var installAssets embed.FS
 //go:embed all:evals
 var evalAssets embed.FS
 
-//go:embed skills/feedback-triage/SKILL.md
-var feedbackTriageSkill string
-
 //go:embed prompts/night.md
 var nightPrompt string
 
@@ -31,5 +28,5 @@ var routineText = map[string]string{config.KindNight: nightPrompt, config.KindRe
 
 // builtinAssets 把上面这些交给组装层。
 func builtinAssets() app.Assets {
-	return app.Assets{TriageSkill: feedbackTriageSkill, RoutineText: routineText, Install: installAssets, Evals: evalAssets}
+	return app.Assets{RoutineText: routineText, Install: installAssets, Evals: evalAssets}
 }
