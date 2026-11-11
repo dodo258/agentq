@@ -882,6 +882,9 @@ func (i *Installer) Setup(o SetupOptions) error {
 		return e
 	}
 	if o.Backend != "" {
+		if backend.NotYet(o.Backend) {
+			return fmt.Errorf("%s; available: %v", backend.Unsupported(o.Backend), backend.Names())
+		}
 		if !backend.Known(o.Backend) {
 			return fmt.Errorf("unknown backend %q; available: %v", o.Backend, backend.Names())
 		}
@@ -1161,6 +1164,7 @@ func (i *Installer) Setup(o SetupOptions) error {
 		return e
 	}
 	fmt.Fprintf(i.Out, "Installed %s. Existing scheduler switches preserved. Tell %s what to build in any project folder; agentq status/run/logs are management commands.\n", o.Scope, cliName(cfg))
+	i.pruneGenerations(gen, old.Generation)
 	i.refreshEnvLayer()
 	if notes, e := i.Svc(cfg).Svc().Doctor(labels); e == nil {
 		for _, n := range notes {
@@ -1235,7 +1239,7 @@ func RunInstaller(assets fs.FS, cmd string, args []string, out, errout io.Writer
 		f.StringVar(&o.Scope, "scope", "full", "full or skills")
 		f.StringVar(&o.Claude, "claude", "", "independent CLI path")
 		f.StringVar(&o.Claude, "backend-path", "", "independent CLI path (same as --claude)")
-		f.StringVar(&o.Backend, "backend", "", "backend for a new install (claude by default); an existing configuration is not changed")
+		f.StringVar(&o.Backend, "backend", "", "backend for a new install: claude (default), codex or pi; an existing configuration is not changed")
 		f.BoolVar(&o.Plan, "plan", false, "prepare and print plan without activating")
 		f.BoolVar(&o.Services, "services", false, "install inert tick/night/review "+i.mgr().Words().Name+" services")
 		f.BoolVar(&o.Listen, "listen", false, "install the Telegram listener service (requires --services)")
@@ -1263,7 +1267,11 @@ func RunInstaller(assets fs.FS, cmd string, args []string, out, errout io.Writer
 	}
 	switch cmd {
 	case "setup":
-		e = i.Setup(o)
+		if e = i.Setup(o); e == nil && o.DeferEngine && !o.Plan {
+			if re := recordUpdateNet(home); re != nil { // 自动更新要用；记不下不算安装失败
+				i.notef("代理和镜像没记下，自动更新时不沿用：%v\n", re)
+			}
+		}
 	case "doctor":
 		e = i.Doctor()
 	case "restore":
@@ -1279,4 +1287,40 @@ func RunInstaller(assets fs.FS, cmd string, args []string, out, errout io.Writer
 		return 1
 	}
 	return 0
+}
+
+// keepGenerations：装完后 generations/ 下除了现在和上一代（previous.json 指的那一代），再留最近这么多代，其余删掉。
+// 每次升级都多一代（十几 MB），自己升级以后不清会越堆越多。还在跑的旧程序删了也不影响（文件已经打开）。
+const keepGenerations = 3
+
+// pruneGenerations 只删 generations/ 下安装引擎自己建的 gen-* 目录；删不掉只提示，不算安装失败。
+func (i *Installer) pruneGenerations(keep ...string) {
+	dir := filepath.Join(i.Share(), "generations")
+	entries, e := os.ReadDir(dir)
+	if e != nil {
+		return
+	}
+	type gen struct {
+		path string
+		mod  time.Time
+	}
+	var gens []gen
+	for _, d := range entries {
+		p := filepath.Join(dir, d.Name())
+		if !d.IsDir() || !strings.HasPrefix(d.Name(), "gen-") || slices.Contains(keep, p) {
+			continue
+		}
+		if fi, e := d.Info(); e == nil {
+			gens = append(gens, gen{p, fi.ModTime()})
+		}
+	}
+	sort.Slice(gens, func(a, b int) bool { return gens[a].mod.After(gens[b].mod) })
+	for n, g := range gens {
+		if n < keepGenerations {
+			continue
+		}
+		if e := os.RemoveAll(g.path); e != nil {
+			i.notef("Old generation not removed: %s: %v\n", g.path, e)
+		}
+	}
 }

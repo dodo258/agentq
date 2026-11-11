@@ -158,9 +158,16 @@ func (a *Service) Tick(after string) error {
 	}
 	started, note := 0, ""
 	now := a.Now()
+	// 自己长大、自动更新：有要做的升级或回滚时不接新活，没任务在跑就交给 agentq evolve apply 去做（见 internal/evolve/upgrade.go、autoupdate.go）
+	hold, holdWhy := false, ""
+	if !recovered && !a.Cfg.Paused {
+		hold, holdWhy = a.Evolve.SelfUpdate(st)
+	}
 	switch {
 	case recovered:
 		note = "状态文件损坏后按 meta.json 重建，本次只收尾不启动"
+	case hold:
+		note = holdWhy
 	case a.Cfg.Paused:
 		note = pausedNote
 		if !slices.ContainsFunc(st.PendingResumes(), func(j *state.Job) bool { return j.Manual }) {
@@ -486,9 +493,9 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob, manualOn
 		if scanErr != nil && !slices.ContainsFunc(projects, func(p backlog.Project) bool { return p.Name == orig.Project }) {
 			continue // 它的项目现在看不到：留着等 projects_root 回来，不算中断了结
 		}
-		// 被排除的项目只续跑用户亲手启动的（agentq run、Telegram「做」）：那是在接着办用户点名的事，同暂停时。
+		// 被排除的项目只续跑用户亲手启动的（agentq run、Telegram「做」）和自己长大派的（self_project 是用户点名的）。
 		// 其余不自动续跑，也别一直挂着：放掉后巡逻照常报这个中断
-		if a.Backlog.Excluded(orig.Project) && !orig.Manual {
+		if a.Backlog.Excluded(orig.Project) && !orig.Manual && !orig.SelfGrow {
 			orig.ResumePending = false
 			orig.Summary += "；项目在 exclude_projects 里，不自动续跑，要接着做就 agentq run " + orig.Project
 			a.Ledger.WriteMeta(orig)
@@ -598,6 +605,46 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob, manualOn
 			continue
 		}
 		a.Logf("接手任务 %s：%s「%s」分支 %s pid %d", j.ID, j.Project, j.Title, o.Facts.Branch, j.PID)
+		started++
+	}
+	// 自己长大写进 self_project 待做的条目：先于别的新条目起，记成自己长大派的（项目在 exclude_projects 里也做，门退回、中断不暂停时接着做）
+	for _, it := range a.Evolve.SelfItemsToStart(st) {
+		if ok, _ := state.Capacity(st, a.Cfg, ""); !ok || breaker() {
+			break
+		}
+		if ok, _ := state.Capacity(st, a.Cfg, it.Project); !ok || resumed[it.Project] {
+			continue
+		}
+		if name := a.Cfg.ProjectBackend(it.Project); a.Runner.PermissionBlocked(name) || !ready(name) {
+			if done(name) {
+				return started, strings.Join(notes, "；")
+			}
+			continue
+		}
+		p := backlog.Project{Name: it.Project, Dir: a.ProjectDir(it.Project)}
+		items, err := p.Items()
+		if err != nil {
+			notes = append(notes, it.Project+" 的 BACKLOG 读不出："+err.Error())
+			continue
+		}
+		if !slices.ContainsFunc(items, func(x backlog.Item) bool { return x.Title == it.Title && !x.InProgress && !x.Stuck }) {
+			a.Evolve.MarkSelfItem(it, "", "待做里已经没有这一条（被移走、改过、标了卡住或已有人在做）")
+			continue
+		}
+		pick, ok := a.Runner.Pick(st, items, it.Title, true)
+		if !ok || a.branchBlocked(st, p.Name, p.Dir, "", &notes) { // 依赖、并行、retry_after、分支这类一时的原因：下次 tick 再看
+			continue
+		}
+		j, err := a.Runner.Launch(st, p, pick)
+		if err != nil {
+			notes = append(notes, it.Project+" 自己长大的条目这次没起："+err.Error())
+			continue
+		}
+		j.SelfGrow = true
+		a.Ledger.WriteMeta(j)
+		a.Evolve.MarkSelfItem(it, j.ID, "")
+		resumed[it.Project] = true
+		a.Logf("启动任务 %s：%s「%s」（自己长大）pid %d", j.ID, it.Project, j.Title, j.PID)
 		started++
 	}
 projects:

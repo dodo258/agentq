@@ -100,6 +100,8 @@ type PatrolState struct {
 	Issues        []PatrolIssue `json:"issues"`
 	AnalysisDay   string        `json:"analysis_day,omitempty"`
 	AnalysisCount int           `json:"analysis_count,omitempty"`
+	// Vuln：每周一次的漏洞检查（vuln.go）。
+	Vuln *VulnState `json:"vuln,omitempty"`
 }
 
 type PatrolReport struct {
@@ -222,7 +224,7 @@ func (a *Service) CmdPatrol() error {
 func (a *Service) RunPatrol(st *state.State, ps *PatrolState) (*PatrolReport, error) {
 	now := a.Now()
 	r := &PatrolReport{At: now}
-	found, failed := a.patrolChecks(st, now, r)
+	found, failed := a.patrolChecks(st, ps, now, r)
 	prev := map[string]PatrolIssue{}
 	for _, is := range ps.Issues {
 		prev[is.Fingerprint] = is
@@ -360,7 +362,7 @@ func (a *Service) goneHow(st *state.State, r *PatrolReport, is PatrolIssue, now 
 }
 
 // patrolChecks 依次跑各项检查。检查本身没做成时，在 r.Notes 记原因、返回它的指纹前缀（那一类上次的问题照旧记着）。
-func (a *Service) patrolChecks(st *state.State, now time.Time, r *PatrolReport) ([]PatrolIssue, []string) {
+func (a *Service) patrolChecks(st *state.State, ps *PatrolState, now time.Time, r *PatrolReport) ([]PatrolIssue, []string) {
 	var out []PatrolIssue
 	var failed []string
 	fail := func(prefix, note string) {
@@ -376,6 +378,7 @@ func (a *Service) patrolChecks(st *state.State, now time.Time, r *PatrolReport) 
 	out = append(out, a.checkDecisions(fail)...)
 	out = append(out, a.CheckDirtyBacklogs(now, fail)...)
 	out = append(out, a.checkDisk(fail)...)
+	out = append(out, a.checkVuln(ps, now)...)
 	return out, failed
 }
 
@@ -391,8 +394,13 @@ func (a *Service) PatrolStatus() string {
 		return off + "读不了 " + a.PatrolPath() + "：" + err.Error()
 	case ps.LastRun.IsZero():
 		return off + "还没巡逻过（agentq patrol 立刻查一遍）"
-	case len(ps.Issues) == 0:
-		return off + "上次 " + textfmt.WhenCN(ps.LastRun) + "，没有问题"
 	}
-	return fmt.Sprintf("%s上次 %s，现有 %d 个问题（agentq patrol 看证据）", off, textfmt.WhenCN(ps.LastRun), len(ps.Issues))
+	vuln := ps.VulnStatus()
+	if vuln != "" {
+		vuln = "；" + vuln
+	}
+	if len(ps.Issues) == 0 {
+		return off + "上次 " + textfmt.WhenCN(ps.LastRun) + "，没有问题" + vuln
+	}
+	return fmt.Sprintf("%s上次 %s，现有 %d 个问题（agentq patrol 看证据）%s", off, textfmt.WhenCN(ps.LastRun), len(ps.Issues), vuln)
 }

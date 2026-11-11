@@ -57,7 +57,7 @@ func TestMain(m *testing.M) {
 
 // 假 claude：auth status 回登录状态；否则记录参数/目录/环境，按 prompt 里的关键字睡几秒、写 JSON。
 // READYMERGE：照新合同只做到分支可合并：认领（提交 BACKLOG 的进行中标记）、在任务分支提交改动和 .agentq/ready.json，不合并。
-// 再带 TASKSCRIPT：提交前在任务 worktree 里跑 $HOME/fake-task.sh（用例自己写要改什么）。
+// 再带 TASKSCRIPT：提交前在任务 worktree 里跑 $HOME/fake-task.sh（用例自己写要改什么）。TYPE=fix 之类：ready.json 的 type（默认 feature）。
 // SELFMERGE：不写 ready.json，自己把条目移到「已完成」并提交，写上合并提交号（绕过门、升级前的老任务）。
 // INTERRUPT：首次运行时像 agent 认领一样给 BACKLOG 那一条加进行中标记，然后停在「继续等通知」；
 // 用 -r 续跑时把那一条勾掉并报已合并，prompt 里还有 AGAIN 就再中断一次。
@@ -247,7 +247,8 @@ case "$prompt" in
     echo "$$" >> "$wt/$n"
     case "$prompt" in *TASKSCRIPT*) (cd "$wt" && sh "$HOME/fake-task.sh") ;; esac
     mkdir -p "$wt/.agentq"
-    printf '{"branch":"%s","type":"feature","acceptance":"看 %s","progress":"做好了 %s"}\n' "$b" "$n" "$n" > "$wt/.agentq/ready.json"
+    ty=$(printf '%s' "$prompt" | sed -n 's/.*TYPE=\([a-z]*\).*/\1/p'); [ -z "$ty" ] && ty=feature
+    printf '{"branch":"%s","type":"%s","acceptance":"看 %s","progress":"做好了 %s"}\n' "$b" "$ty" "$n" "$n" > "$wt/.agentq/ready.json"
     git -C "$wt" add -A; git -C "$wt" -c user.name=t -c user.email=t commit -q -m "做事 $n"
     case "$prompt" in *SELFREADY*) git -c user.name=t -c user.email=t merge -q --no-edit "$b" >/dev/null 2>&1 ;; esac # 不听合同，自己合并
     printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"做完了。\n\n分支可以合并了；用户看 README。","session_id":"s-ready"}' ;;
@@ -263,6 +264,32 @@ case "$prompt" in
       :*|*AGAIN*) printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"审查人还在复跑测试，继续等通知。","session_id":"s-int","origin":{"kind":"task-notification"},"result_index":1}' ;;
       *) sedi -e '/^- \[ \] .*INTERRUPT/ s/（进行中.*$//' -e '/^- \[ \] .*INTERRUPT/ s/^- \[ \]/- [x]/' docs/BACKLOG.md
          printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"接着做完了。\n\n已合并，提交 def5678；用户看 README。","session_id":"s-int"}' ;;
+    esac ;;
+  *STUCKRETAKE*) # 任务自己标卡住、引擎再接一次。再接的合同里有「引擎去掉了卡住标记」：RETAKEOK 换思路做到可合并，否则又卡住
+    b=agent/t-rt; wt=$PWD/.claude/worktrees/t-rt
+    claim() { sedi "/^- \[ \] .*STUCKRETAKE/ s#\$#（进行中：$b $1）#" docs/BACKLOG.md; git add docs/BACKLOG.md; git -c user.name=t -c user.email=t commit -q -m "待办：认领"; }
+    stuck() { sedi -e "/^- \[ \] .*STUCKRETAKE/ s/（进行中.*\$//" -e "/^- \[ \] .*STUCKRETAKE/ s#\$#（卡住：$1，分支 $b）#" docs/BACKLOG.md; git add docs/BACKLOG.md; git -c user.name=t -c user.email=t commit -q -m "待办：卡住"; }
+    case "$prompt" in
+      *引擎去掉了卡住标记*)
+        printf '%s\n' "$prompt" >> "$HOME/retake-prompts.txt"
+        claim "2026-01-02 10:00"
+        case "$prompt" in
+          *RETAKEOK*)
+            echo again >> "$wt/rt.txt"; mkdir -p "$wt/.agentq"
+            printf '{"branch":"%s","type":"feature","acceptance":"看 rt.txt","progress":"换思路做好了"}\n' "$b" > "$wt/.agentq/ready.json"
+            git -C "$wt" add -A; git -C "$wt" -c user.name=t -c user.email=t commit -q -m 换思路
+            printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"查了官方文档，换成分批跑。\n\n分支 agent/t-rt 可以合并了；用户看 rt.txt。","session_id":"s-rt2"}' ;;
+          *)
+            stuck "上游接口一直 500"
+            printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"查了上游 issue 12，换了重试还是 500。\n\n没合并，分支 agent/t-rt；第二次试了重试，查到上游 issue 12，卡在上游接口 500。","session_id":"s-rt2"}' ;;
+        esac ;;
+      *)
+        reason="测试一直超时"; case "$prompt" in *STUCKUSER*) reason="等用户：付费，要开通付费账号" ;; esac
+        claim "2026-01-01 10:00"
+        git worktree add -q "$wt" -b "$b" main
+        echo first > "$wt/rt.txt"; git -C "$wt" add -A; git -C "$wt" -c user.name=t -c user.email=t commit -q -m 第一次
+        stuck "$reason"
+        printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"试了加超时、拆测试都不行。\n\n没合并，分支 agent/t-rt；第一次试了加超时和拆测试，卡在测试超时。","session_id":"s-rt1"}' ;;
     esac ;;
   *STUCKMARK*) sedi '/^- \[ \] .*STUCKMARK/ s/$/（卡住：agent\/t-stuck 两次没过）（进行中：agent\/t-stuck 10-10 03:00）/' docs/BACKLOG.md
     printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"两次换思路都没过，标了卡住，没合并。","session_id":"s-st"}' ;;
@@ -300,6 +327,7 @@ esac
 
 type testEnv struct {
 	t      *testing.T
+	bin    string // 要跑的 agentq，空的是测试编出来的那个
 	home   string
 	root   string
 	fake   string
@@ -336,7 +364,11 @@ func newEnv(t *testing.T, cfg map[string]any) *testEnv {
 // run 执行 agentq；环境模仿 launchd：没有 LANG/LC_*，HOME 指向临时目录；故意带上 CLAUDECODE 验证会被去掉。
 func (e *testEnv) run(args ...string) (string, int) {
 	e.t.Helper()
-	cmd := exec.Command(agentqBin, args...)
+	bin := agentqBin
+	if e.bin != "" {
+		bin = e.bin
+	}
+	cmd := exec.Command(bin, args...)
 	cmd.Dir = e.dir
 	var envs []string
 	for _, kv := range os.Environ() {

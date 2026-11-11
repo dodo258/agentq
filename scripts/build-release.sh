@@ -1,6 +1,6 @@
 #!/bin/sh
 # 发行构建：scripts/build-release.sh <版本> <输出目录> [<owner/repo>]
-# 产出 macOS、Linux 的 arm64、amd64 四个 agentq_<os>_<arch>.tar.gz（包里只有 agentq）和 SHA256SUMS。
+# 产出 macOS、Linux 的 arm64、amd64 四个 agentq_<os>_<arch>.tar.gz（包里只有 agentq）、VERSION（版本号一行，自动更新据它判断有没有新版本）和 SHA256SUMS。
 # 给了 owner/repo 时，把仓库名编进程序（agentq update 用），再填进 install.sh 的副本放进输出目录，也写进 SHA256SUMS；仓库里的原文件不写账号。
 # 只构建，不打 tag、不上传。install.sh 按这几个文件名下载和校验。
 set -eu
@@ -60,6 +60,9 @@ for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
 	COPYFILE_DISABLE=1 tar -C "$stage" -czf "$out/$file" agentq
 	files="$files $file"
 done
+
+printf '%s\n' "$version" >"$out/VERSION"
+files="$files VERSION"
 
 rm -f "$out/install.sh"
 if [ -n "$repo" ]; then

@@ -247,9 +247,9 @@ func (r *sigRig) unknown(id, project string) {
 	r.gateResult(id, gate.RunResult{Outcome: "merged", Results: []gate.Result{{Gate: "review", Outcome: gate.Unknown, Level: gate.LevelWarn, Summary: "审查没给结论：输出不是 JSON（第 " + id + " 次）"}}})
 }
 
-// 配了 self_project：写进它的「## 建议」，编号走闲时找活的索引，回「做 N」能用；同 Key 只写一次。
+// 配了 self_project、关着自己长大：写进它的「## 建议」，编号走闲时找活的索引，回「做 N」能用；同 Key 只写一次。
 func TestSelfSignalProposalToBacklog(t *testing.T) {
-	r := newSigRig(t, func(c *config.Config) { c.SelfProject = "agentq" })
+	r := newSigRig(t, func(c *config.Config) { c.SelfProject, c.SelfGrowEnabled = "agentq", false })
 	p := selfRepo(t, r, "agentq")
 	r.unknown("u1", "web")
 	r.unknown("u2", "api")
@@ -278,7 +278,7 @@ func TestSelfSignalProposalToBacklog(t *testing.T) {
 
 // 用户说过不做的不提。
 func TestSelfSignalProposalNotDoing(t *testing.T) {
-	r := newSigRig(t, func(c *config.Config) { c.SelfProject = "agentq" })
+	r := newSigRig(t, func(c *config.Config) { c.SelfProject, c.SelfGrowEnabled = "agentq", false })
 	p := selfRepo(t, r, "agentq")
 	sig := Signal{Kind: KindGateUnknown, Summary: "review 门判不了：审查没给结论：输出不是 JSON（第 u1 次）"}
 	title := makeProposal(&sig).title

@@ -64,6 +64,8 @@ type Result struct {
 	Usage *backend.JobUsage `json:"usage,omitempty"`
 	// Hold 非空：这道门没挡，但这次改动不能自动合并（比如候选改了评判它的尺子），等用户放行。原因写在这里。
 	Hold string `json:"hold,omitempty"`
+	// Caps：能力门这次用上的每项能力和它的检查结果，见 capability.go。
+	Caps []CapRun `json:"caps,omitempty"`
 }
 
 // Ready 是任务写的交付单。
@@ -174,6 +176,7 @@ func init() {
 	Register("smoke", LevelWarn, func(d Deps) Gate { return smokeGate{d} })
 	Register("review", LevelError, func(d Deps) Gate { return reviewGate{d} })
 	Register("ui", LevelWarn, func(d Deps) Gate { return uiGate{d} })
+	Register("capability", LevelWarn, func(d Deps) Gate { return capGate{d} })
 }
 
 // levelOf 是这道门这次的档位：项目调过的优先，没调的用默认。没登记的门算 off。

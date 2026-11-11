@@ -72,8 +72,12 @@ func TestBuildReleaseScript(t *testing.T) {
 			}
 		}
 	}
-	if len(sums) != 5 {
-		t.Fatalf("校验文件应有 5 条：%v", sums)
+	if len(sums) != 6 {
+		t.Fatalf("校验文件应有 6 条：%v", sums)
+	}
+	// VERSION：自动更新据它判断有没有新版本，也写进了校验文件
+	if ver := testkit.ReadBytes(t, filepath.Join(out, "VERSION")); string(ver) != "v9.8.7-test\n" || sums["VERSION"] != sha256Hex(ver) {
+		t.Fatalf("VERSION 不对：%q %q", ver, sums["VERSION"])
 	}
 	script := testkit.ReadBytes(t, filepath.Join(out, "install.sh"))
 	if sums["install.sh"] != sha256Hex(script) {
@@ -92,6 +96,9 @@ func TestBuildReleaseScript(t *testing.T) {
 	}
 	if exists(filepath.Join(out, "install.sh")) || strings.Contains(string(testkit.ReadBytes(t, filepath.Join(out, "SHA256SUMS"))), "install.sh") {
 		t.Fatal("没给 owner/repo 不该有 install.sh")
+	}
+	if !strings.Contains(string(testkit.ReadBytes(t, filepath.Join(out, "SHA256SUMS"))), "  VERSION\n") {
+		t.Fatal("没给 owner/repo 也要有 VERSION")
 	}
 	for _, bad := range [][]string{{"v1"}, {"bad version", out}, {"--help", out}, {"v1", out, "noslash"}, {"v1", out, "a/b/c"}, {"v1", out, "a/b;c"}, {"v1", out, "-x/y"}, {"v1", out, ""}, {"v1", out, "a/b", "extra"}} {
 		cmd := exec.Command("/bin/sh", append([]string{filepath.Join("scripts", "build-release.sh")}, bad...)...)

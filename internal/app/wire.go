@@ -5,7 +5,7 @@ import (
 
 	_ "agentq/internal/backend/claude" // 注册后端：接新后端加一行 import
 	_ "agentq/internal/backend/codex"
-	_ "agentq/internal/backend/opencode"
+	_ "agentq/internal/backend/pi"
 	"agentq/internal/chat"
 	"agentq/internal/discuss"
 	"agentq/internal/runner"

@@ -204,6 +204,11 @@ type Job struct {
 	// Handoff：用户去掉卡住标记后，从 StuckBranch 接着做的任务。它认领之前就结束（5xx、秒退）时，下一个任务还要接这个分支；
 	// 结束时看到认领过（条目标了进行中、卡住，或已不在待做）就清掉，之后由它自己的标记管。
 	Handoff bool `json:"handoff,omitempty"`
+	// Retake：任务自己标了卡住、不属于必须等用户定的，引擎去掉了标记、等下次 tick 用新会话再接一次（见 internal/runner/retake.go），值是它写的卡住原因。
+	// 和 StuckMarked 一样，之后条目又能被挑到时不等 retry_after，从 StuckBranch 接着做。
+	Retake string `json:"retake,omitempty"`
+	// RetakeOf：这个任务是引擎再接的那一次，值是第一次卡住的任务 id。同一条只再接一次，它再卡住就交给用户。
+	RetakeOf string `json:"retake_of,omitempty"`
 	// StillListed：报告做完了，条目却还在「待做」（没标进行中）。连续两次就标卡住，不再按 retry_after 一遍遍重做（见 noteStillListed）。
 	StillListed bool `json:"still_listed,omitempty"`
 	// StuckBranch、StuckWorktree：放下时这一条的分支和 worktree（Handoff 的任务是接手的来源分支）。标记去掉后分支名就只有这里有了。
@@ -211,6 +216,9 @@ type Job struct {
 	StuckWorktree string `json:"stuck_worktree,omitempty"`
 	// Manual 是用户亲手启动的（agentq run 或 Telegram「做」，续跑沿用）：暂停时 tick 也接着续跑这一条。
 	Manual bool `json:"manual,omitempty"`
+	// SelfGrow：自己长大派的（agentq 自己的问题，见 internal/evolve/selfgrow.go），不是亲手派的：暂停时不续跑。
+	// self_project 在 exclude_projects 里时，只有它和 Manual 的任务门退回、中断了接着做。续跑沿用。
+	SelfGrow bool `json:"self_grow,omitempty"`
 	// Usage 是结束时从 result.json 读到的用量（token、费用估算），结果文件里没有就为空。
 	Usage *backend.JobUsage `json:"usage,omitempty"`
 	// Verify：升级前的「合并后核验」留下的记录，只读。新任务不写，见 MergeVerify。
@@ -560,7 +568,7 @@ func retryAt(st *State, project, fp string, retryAfter time.Duration) (at time.T
 			last = j
 		}
 	}
-	if last == nil || last.StuckMarked { // 用户去掉了 agentq 写的卡住标记才挑得到这里：他已经表态了
+	if last == nil || last.StuckMarked || last.Retake != "" { // 用户去掉了 agentq 写的卡住标记才挑得到这里：他已经表态了；引擎去掉的是要马上再接一次
 		return time.Time{}, last, stuckPending
 	}
 	return last.EndedAt.Add(retryWait(st, last, retryAfter)), last, stuckPending
@@ -717,6 +725,8 @@ type GateRecord struct {
 	CleanErr string `json:"clean_err,omitempty"`
 	// DecideErr：用户的决定还没做成的原因（决定留着，下次 tick 再做），只记一次日志。
 	DecideErr string `json:"decide_err,omitempty"`
+	// ReturnWhy：用户看过后退回时写的意见，下一轮的提示词带上。下一轮交付时门记录重建，自然清掉。
+	ReturnWhy string `json:"return_why,omitempty"`
 	// Usage：门调模型花的（审查），已经加进 Job.Usage。
 	Usage *backend.JobUsage `json:"usage,omitempty"`
 	// Tally：这个任务记录上每道门跑了多少次、什么结论，agentq stats 和早报看。升级前的记录没有。

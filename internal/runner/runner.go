@@ -622,7 +622,7 @@ func (a *Service) SchedNote(st *state.State, stErr error, now time.Time, ulvl in
 func (a *Service) schedNote(st *state.State, stErr error, now time.Time, ulvl int, uuntil time.Time, uwhy string) string {
 	switch {
 	case stErr == nil && !backend.Known(a.Cfg.Backend):
-		return "未知后端 " + a.Cfg.Backend + "，不接活；改 config.json 的 backend，agentq doctor 看详情"
+		return backend.Unsupported(a.Cfg.Backend) + "，不接活；改 config.json 的 backend，agentq doctor 看详情"
 	case stErr != nil:
 		if errors.Is(stErr, state.ErrStateCorrupt) {
 			return fmt.Sprintf("状态文件损坏，下次 tick 会备份它、按各任务的 meta.json 重建并收尾（那次不启动新任务）：%v", stErr)

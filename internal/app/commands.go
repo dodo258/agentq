@@ -123,6 +123,12 @@ func (a *App) CmdStatus() error {
 	if l := a.Chat.ListenStatus(); l != "" {
 		fmt.Fprintf(w, "监听：%s\n", l)
 	}
+	switch l := a.Evolve.AutoUpdateLine(); {
+	case l != "":
+		fmt.Fprintf(w, "自动更新：%s\n", l)
+	case a.Evolve.AutoUpdateApplies():
+		off = append(off, "自动更新")
+	}
 	if len(off) > 0 {
 		fmt.Fprintf(w, "没开：%s（docs/guide/configuration.md 说明怎么开）\n", strings.Join(off, "、"))
 	}

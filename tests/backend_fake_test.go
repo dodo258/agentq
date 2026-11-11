@@ -606,6 +606,14 @@ func TestUnknownBackendRefuses(t *testing.T) {
 	}
 }
 
+// 以后再加的后端：status 说暂不支持，不说写错。
+func TestNotYetBackendStatus(t *testing.T) {
+	e := newEnv(t, map[string]any{"backend": "opencode"})
+	if out, _ := e.run("status"); !strings.Contains(out, "opencode 暂不支持，以后再加，不接活") {
+		t.Errorf("status 要说暂不支持：%s", out)
+	}
+}
+
 // 按项目换后端；续跑跟着原后端，不跟随之后的配置。
 func TestProjectBackendAndResumeSticks(t *testing.T) {
 	cli := fakeCLI(t, `echo '{"type":"result","ok":true,"text":"答"}'`)

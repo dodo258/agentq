@@ -122,6 +122,6 @@ unit 文件在 `~/.config/systemd/user/`，由收据管理；同名的非 agentq
 
 常规离线测试：`go test ./...`，全部临时 HOME/假 CLI/假 launchctl/假 systemctl。真实 systemd 用户服务验收 `TestSystemdAcceptance` 只在 CI runner 上跑（动真实用户服务和家目录，没有 `GITHUB_ACTIONS` 就拒绝）。显式网络入口验收：`AGENTQ_BOOTSTRAP_ACCEPTANCE=1 go test -count=1 -v -run '^TestBootstrapAcceptance$' ./...`。真实模型闭环：`AGENTQ_REAL_E2E=1 go test -count=1 -v -run '^TestRealClaudeInstallationE2E$' ./...`；连接型身份只有另显式 `AGENTQ_REAL_E2E_CONNECTION=1` 时才把调用方现有连接环境最小投影到临时 HOME，用后删除，不读取真实 HOME。会消耗已授权模型额度，不默认在 CI 跑。
 
-能力和验证范围见[支持矩阵](reference/support-matrix.md)。没有宣称 Intel 实机、WSL、真实的 opencode、公开远程下载或正式 Release 已通过。
+能力和验证范围见[支持矩阵](reference/support-matrix.md)。后端支持 Claude Code、Codex 和 pi（`--backend codex`、`--backend pi`，不写是 Claude Code），其他 CLI 以后再加。没有宣称 Intel 实机、WSL、公开远程下载或正式 Release 已通过。
 
 官方文档（核对于 2026-10-13）：[CLI 安装与 stable 通道](https://code.claude.com/docs/en/setup)、[CLI 参数与 auth status](https://code.claude.com/docs/en/cli-reference)、[GitHub CLI repo view](https://cli.github.com/manual/gh_repo_view)。原生 Claude 自动更新保留自定义 launcher，但普通 launcher 仍由官方管理；npm 支持自动更新，Homebrew 默认通过包管理器手动更新。这些策略不等于保留所有用户定制；agentq 不覆盖它们，不接管用户自定义 CLI launcher。

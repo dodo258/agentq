@@ -285,44 +285,6 @@ func emit(v map[string]any) {
 	os.Stdout.Write(append(b, '\n'))
 }
 
-// opencodeMode：这次是按 opencode run --format json 被调的。每行带时间戳和 sessionID，走完一轮是 step_finish。
-var opencodeMode bool
-
-func opencodeEmit(typ string, data map[string]any) {
-	v := map[string]any{"type": typ, "timestamp": time.Now().UnixMilli(), "sessionID": threadID}
-	for k, x := range data {
-		v[k] = x
-	}
-	emit(v)
-}
-
-func opencodeStart(resume string) {
-	threadID = resume
-	if threadID == "" {
-		threadID = fmt.Sprintf("ses_%04x%012x", os.Getpid()&0xffff, time.Now().UnixNano()&0xffffffffffff)
-	}
-	opencodeEmit("step_start", map[string]any{"part": map[string]any{"type": "step-start"}})
-}
-
-func opencodeRes(fields map[string]any) {
-	text, _ := fields["result"].(string)
-	if failed, _ := fields["is_error"].(bool); failed {
-		status, _ := fields["api_error_status"].(int)
-		if strings.Contains(text, "session limit") {
-			text, status = "Rate limit exceeded", 429
-		}
-		opencodeEmit("error", map[string]any{"error": map[string]any{"name": "APIError", "data": map[string]any{"message": text, "statusCode": status, "isRetryable": false}}})
-		return
-	}
-	if so, ok := fields["structured_output"]; ok {
-		b, _ := json.Marshal(so)
-		text = string(b)
-	}
-	opencodeEmit("text", map[string]any{"part": map[string]any{"type": "text", "text": text}})
-	opencodeEmit("step_finish", map[string]any{"part": map[string]any{"type": "step-finish", "reason": "stop", "cost": 0.01,
-		"tokens": map[string]any{"input": 100, "output": 20, "reasoning": 0, "cache": map[string]any{"read": 40, "write": 0}}}})
-}
-
 func codexStart(resume string) {
 	threadID = resume
 	if threadID == "" {
@@ -352,13 +314,50 @@ func codexRes(fields map[string]any) {
 	emit(map[string]any{"type": "turn.completed", "usage": map[string]any{"input_tokens": 100, "cached_input_tokens": 40, "output_tokens": 7, "reasoning_output_tokens": 3}})
 }
 
+// piMode：这次是按 pi -p --mode json 被调的。第一行 session 头，结果是 message_end 加 agent_settled，提示词从标准输入来。
+var piMode bool
+
+func piStart(session string) {
+	if session == "" {
+		session = fmt.Sprintf("pi-%d-%d", os.Getpid(), time.Now().UnixNano())
+	}
+	emit(map[string]any{"type": "session", "version": 3, "id": session, "cwd": mustWd()})
+	emit(map[string]any{"type": "agent_start"})
+	emit(map[string]any{"type": "turn_start"})
+}
+
+func piRes(fields map[string]any) {
+	text, _ := fields["result"].(string)
+	msg := map[string]any{"role": "assistant", "stopReason": "stop",
+		"usage": map[string]any{"input": 100, "output": 7, "cacheRead": 40, "cacheWrite": 0, "totalTokens": 147, "cost": map[string]any{"total": 0.01}}}
+	if failed, _ := fields["is_error"].(bool); failed {
+		if strings.Contains(text, "session limit") {
+			text = "429: {\"message\":\"You exceeded your current quota, please check your plan and billing details.\"}"
+		} else if c, ok := fields["api_error_status"].(int); ok {
+			text = fmt.Sprintf("%d: {\"message\":%q}", c, text)
+		}
+		msg["stopReason"], msg["errorMessage"], msg["content"] = "error", text, []any{}
+		msg["usage"] = map[string]any{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0, "cost": map[string]any{"total": 0}}
+	} else {
+		if so, ok := fields["structured_output"]; ok {
+			b, _ := json.Marshal(so)
+			text = string(b)
+		}
+		msg["content"] = []any{map[string]any{"type": "text", "text": text}}
+	}
+	emit(map[string]any{"type": "message_end", "message": msg})
+	emit(map[string]any{"type": "turn_end", "message": msg, "toolResults": []any{}})
+	emit(map[string]any{"type": "agent_end", "messages": []any{msg}, "willRetry": false})
+	emit(map[string]any{"type": "agent_settled", "aborted": false})
+}
+
 func res(fields map[string]any) {
-	if codexMode {
-		codexRes(fields)
+	if piMode {
+		piRes(fields)
 		return
 	}
-	if opencodeMode {
-		opencodeRes(fields)
+	if codexMode {
+		codexRes(fields)
 		return
 	}
 	base := map[string]any{"type": "result", "subtype": "success", "is_error": false, "session_id": "s-" + strconv.Itoa(os.Getpid()), "num_turns": 7, "result": ""}
@@ -739,6 +738,16 @@ func main() {
 		return
 	}
 	os.MkdirAll(fdir, 0o755)
+	if len(args) > 1 && args[0] == "auth" && args[1] == "check" { // pi auth check --provider <p> --json
+		rec("auth", map[string]any{"args": strings.Join(args, " ")})
+		b, _ := os.ReadFile(filepath.Join(fdir, "authmode"))
+		if strings.TrimSpace(string(b)) == "out" {
+			fmt.Println("{\"status\":\"not_ready\",\"provider\":\"fakep\",\"reason\":\"credentials_not_configured\"}")
+			os.Exit(1)
+		}
+		fmt.Println("{\"status\":\"ready\",\"provider\":\"fakep\",\"authType\":\"api_key\"}")
+		return
+	}
 	if len(args) > 0 && args[0] == "auth" {
 		rec("auth", map[string]any{})
 		b, _ := os.ReadFile(filepath.Join(fdir, "authmode"))
@@ -796,19 +805,19 @@ func main() {
 			os.WriteFile(filepath.Join(d, strconv.Itoa(os.Getpid())+".txt"), []byte(fmt.Sprintf("PPID[%d]\n", os.Getppid())), 0o644)
 		}
 	}
-	if len(args) > 0 && args[0] == "run" && arg(args, "--format") == "json" {
-		opencodeMode = true
+	if len(args) > 2 && args[0] == "-p" && args[1] == "--mode" && args[2] == "json" {
+		piMode = true
 		in, _ := io.ReadAll(os.Stdin)
 		prompt = string(in)
 		if prompt == "" {
-			appendLine("violations.log", "假 opencode 没从标准输入收到提示词："+strings.Join(args, " "))
+			appendLine("violations.log", "假 pi 没从标准输入收到提示词："+strings.Join(args, " "))
 		}
-		for _, a := range args {
-			if strings.HasPrefix(a, "--session=") {
-				resume = strings.TrimPrefix(a, "--session=")
-			}
+		resume = arg(args, "--session")
+		session := resume
+		if session == "" {
+			session = arg(args, "--session-id")
 		}
-		opencodeStart(resume)
+		piStart(session)
 		if d := os.Getenv("AGENTQ_FAKE_LOG"); d != "" {
 			os.WriteFile(filepath.Join(d, strconv.Itoa(os.Getpid())+".txt"), []byte(fmt.Sprintf("PPID[%d]\n", os.Getppid())), 0o644)
 		}
@@ -844,11 +853,11 @@ func main() {
 		mode = strings.TrimSpace(string(b))
 	}
 	start := map[string]any{"kind": kind, "tok": tok, "mode": mode, "resume": resume, "takeover": strings.Contains(prompt, "现在由你接手"), "job": os.Getenv("AGENTQ_JOB"), "budget": arg(args, "--max-budget-usd")}
-	if codexMode || opencodeMode {
+	if codexMode || piMode {
 		start["args"] = strings.Join(args, " ")
 		start["prompt_head"] = prompt[:min(len(prompt), 400)]
 		var login []string
-		for _, n := range []string{"OPENCODE_CONFIG", "CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"} {
+		for _, n := range []string{"CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "PI_CODING_AGENT_DIR", "DEEPSEEK_API_KEY"} {
 			if os.Getenv(n) != "" {
 				login = append(login, n)
 			}

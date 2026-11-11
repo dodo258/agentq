@@ -182,14 +182,14 @@ Telegram 是可选的。配好后可以给机器人发需求，也可以带截�
 | :-- | :-- |
 | **Claude Code CLI** | 默认后端。2.1.316 在 macOS 上真实走到合并，包括审查门、界面门、`agentq new`、launchd 后台和桌面端派活 |
 | **Codex CLI** | 手动选择。codex-cli 0.166.0 在 macOS 上真实走到合并和 SIGTERM 续跑。大方向商量和巡逻分析在它上面不启动，没有美元上限 |
-| **opencode** | 实验，真实的 opencode 没跑过 |
+| **pi** | 手动选择。pi 1.5.1 在 macOS 上真实走到合并和 SIGTERM 续跑，模型跟随 pi 自己的设置。pi 没有权限确认和沙箱，工具以你的身份直接运行；大方向商量、追问和巡逻分析在它上面不启动，没有美元上限（tick 按用量停） |
 | **macOS** | arm64 是主要平台。amd64 能交叉编译，没有在 Intel Mac 上跑过 |
 | **Linux** | 需要 `systemd --user`。amd64 在 CI 上跑测试和真实 systemd 验收，没跑过真实任务。arm64 能交叉编译 |
 | **WSL、Windows** | WSL 未验证，Windows 不支持 |
 
-还没有真实验证的：真实撞限和令牌失效、Codex 桌面端派活、Linux 上的真实任务和暴力测试、opencode 的任何运行。门和裸 CLI 在真实项目上的对比也没有做过。每项详情见[支持矩阵](docs/reference/support-matrix.md)。
+还没有真实验证的：真实撞限和令牌失效、Codex 桌面端派活、Linux 上的真实任务和暴力测试。门和裸 CLI 在真实项目上的对比也没有做过。每项详情见[支持矩阵](docs/reference/support-matrix.md)。
 
-安装时用 `--backend codex` 或 `--backend opencode` 选择后端（`... | sh -s -- --backend codex`）。接新工具的接口见 [docs/backends.md](docs/backends.md)。预编译程序只依赖 Git，源码构建只用 Go 标准库。
+后端现在支持 Claude Code、Codex 和 pi，其他 CLI 以后再加。安装时用 `--backend codex` 或 `--backend pi` 选（`... | sh -s -- --backend pi`），不写就是 Claude Code。接新工具的接口见 [docs/backends.md](docs/backends.md)。预编译程序只依赖 Git，源码构建只用 Go 标准库。
 
 Claude 桌面端的 Code 标签页和 CLI 读同一份规则和技能。后台任务不显示在客户端的会话列表里，结果用 `agentq status` 或推送查看。
 

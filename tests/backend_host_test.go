@@ -110,3 +110,32 @@ func isDir(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
 }
+
+// 假 pi：install.sh 走到 setup、doctor 探测用。不调真实 CLI。
+const installFakePi = `#!/bin/sh
+case "$1 $2" in
+"--version "*) echo "1.5.1" ;;
+"--help "*) echo "--mode --session-id --no-approve" ;;
+"auth check") echo '{"status":"ready","provider":"fakep","authType":"api_key"}' ;;
+*) exit 0 ;;
+esac
+`
+
+// install.sh --backend pi：技能进 ~/.agents/skills，配置写下 pi，不碰 ~/.claude。
+func TestInstallShBackendPi(t *testing.T) {
+	t.Parallel()
+	k := newInstallKit(t, "claude")
+	k.writeBin("pi", installFakePi)
+	testkit.WriteInstall(t, filepath.Join(k.home, ".pi", "agent", "settings.json"), `{"defaultProvider":"fakep"}`+"\n", 0o644)
+	k.serveRelease("v1.0.0")
+	k.mustInstall("--backend", "pi")
+	if !exists(filepath.Join(k.home, ".agents", "skills", "agent-task", "SKILL.md")) || exists(filepath.Join(k.home, ".claude", "skills")) {
+		t.Fatal("技能应进 ~/.agents/skills，不往 ~/.claude 放")
+	}
+	if b := testkit.ReadBytes(t, k.configPath()); !strings.Contains(string(b), `"backend": "pi"`) {
+		t.Fatalf("配置没写 backend：\n%s", b)
+	}
+	if out, _ := k.agentq(k.home, "doctor"); !strings.Contains(out, "后端：pi") {
+		t.Fatalf("doctor 按 pi 查：\n%s", out)
+	}
+}

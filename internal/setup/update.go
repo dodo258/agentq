@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,6 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"agentq/internal/fsx"
 )
 
 // viaMirror 把 github.com 的下载地址放到镜像前缀后面；别的地址不动。校验文件不走这里。
@@ -74,13 +77,16 @@ const updateHowTo = `这个程序是从源码构建的，里面没有发布地�
   或重跑当初那条一键安装命令（Release 附件里的 install.sh）`
 
 // RunUpdate 是 agentq update：取发布地址上的 install.sh，对过校验再运行，真正的升级和一键脚本是同一条路。
-// repo 由发行构建写进程序；AGENTQ_RELEASE_BASE 优先，和脚本一致。参数原样交给脚本。
+// repo 由发行构建写进程序；AGENTQ_RELEASE_BASE 优先，和脚本一致。
+// --check 只看发布上的版本：取 VERSION 对过 SHA256SUMS 再打印，不装。--saved-net 是自动更新用的：沿用一键安装时记下的代理和镜像（UpdateNetPath）。
 func RunUpdate(repo string, args []string, stdout, stderr io.Writer) int {
 	f := flag.NewFlagSet("update", flag.ContinueOnError)
 	f.SetOutput(stderr)
 	version := f.String("version", "", "要升到的版本，默认 latest；main 走源码")
 	proxy := f.String("proxy", os.Getenv("AGENTQ_PROXY"), "下载走的代理")
 	mirror := f.String("mirror", os.Getenv("AGENTQ_MIRROR"), "GitHub 下载镜像前缀；校验文件不走镜像")
+	check := f.Bool("check", false, "只看发布上的最新版本（对过校验），不装")
+	savedNet := f.Bool("saved-net", false, "沿用一键安装时用过的 --proxy、--mirror（自动更新用）")
 	if e := f.Parse(args); e != nil {
 		return 2
 	}
@@ -96,6 +102,21 @@ func RunUpdate(repo string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "agentq update：版本不对：%s\n", want)
 		return 2
 	}
+	if *savedNet {
+		if home, e := os.UserHomeDir(); e == nil {
+			saved, e := ReadUpdateNet(home)
+			if e != nil {
+				fmt.Fprintln(stderr, "agentq update：", e)
+				return 1
+			}
+			if *proxy == "" {
+				*proxy = saved.Proxy
+			}
+			if *mirror == "" {
+				*mirror = saved.Mirror
+			}
+		}
+	}
 	base := strings.TrimRight(os.Getenv("AGENTQ_RELEASE_BASE"), "/")
 	switch {
 	case base != "":
@@ -110,9 +131,39 @@ func RunUpdate(repo string, args []string, stdout, stderr io.Writer) int {
 	default:
 		base = "https://github.com/" + repo + "/releases/download/" + want
 	}
+	client, e := updateClient(*proxy)
+	if e != nil {
+		fmt.Fprintln(stderr, "agentq update：", e)
+		return 1
+	}
+	// 下载有超时；安装脚本不设：安装事务第一步就卸载服务，中途被杀会留下没做完的事务、服务全停。脚本里联网的步骤自己有超时。
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	if e := runUpdateScript(ctx, base, *proxy, *mirror, args, stdout, stderr); e != nil {
+	if *check {
+		v, e := releaseVersion(ctx, client, base, *mirror)
+		if e != nil {
+			fmt.Fprintln(stderr, "agentq update：", e)
+			return 1
+		}
+		fmt.Fprintln(stdout, v)
+		return 0
+	}
+	script, e := fetchScript(ctx, client, base, *mirror)
+	if e != nil {
+		fmt.Fprintln(stderr, "agentq update：", e)
+		return 1
+	}
+	var scriptArgs []string // 只把脚本认的参数交给它
+	if *version != "" {
+		scriptArgs = append(scriptArgs, "--version", *version)
+	}
+	if *proxy != "" {
+		scriptArgs = append(scriptArgs, "--proxy", *proxy)
+	}
+	if *mirror != "" {
+		scriptArgs = append(scriptArgs, "--mirror", *mirror)
+	}
+	if e := runScript(script, scriptArgs, stdout, stderr); e != nil {
 		var exit *exec.ExitError
 		if errors.As(e, &exit) {
 			return exit.ExitCode()
@@ -123,28 +174,57 @@ func RunUpdate(repo string, args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func runUpdateScript(ctx context.Context, base, proxy, mirror string, args []string, stdout, stderr io.Writer) error {
+func updateClient(proxy string) (*http.Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if proxy != "" {
 		u, e := url.Parse(proxy)
 		if e != nil {
-			return fmt.Errorf("代理地址不对：%w", e)
+			return nil, fmt.Errorf("代理地址不对：%w", e)
 		}
 		transport.Proxy = http.ProxyURL(u)
 	}
-	client := &http.Client{Timeout: 2 * time.Minute, Transport: transport}
-	script, e := downloadBytes(ctx, client, viaMirror(mirror, base+"/install.sh"))
+	return &http.Client{Timeout: 2 * time.Minute, Transport: transport}, nil
+}
+
+// verified 取 base/<name>（github.com 上的走镜像）和 base/SHA256SUMS（不走镜像），对上了才返回内容。
+func verified(ctx context.Context, client *http.Client, base, mirror, name string) ([]byte, error) {
+	data, e := downloadBytes(ctx, client, viaMirror(mirror, base+"/"+name))
 	if e != nil {
-		return e
+		return nil, e
 	}
 	sums, e := downloadBytes(ctx, client, base+"/SHA256SUMS")
 	if e != nil {
-		return fmt.Errorf("拿到了安装脚本，但拿不到校验文件，没有运行：%w", e)
+		return nil, fmt.Errorf("拿到了 %s，但拿不到校验文件：%w", name, e)
 	}
-	got := sha256.Sum256(script)
-	if want := checksumFor(string(sums), "install.sh"); want == "" || want != hex.EncodeToString(got[:]) {
-		return fmt.Errorf("install.sh 校验不过，没有运行：SHA256 是 %s，校验文件里写的是 %q", hex.EncodeToString(got[:]), want)
+	got := sha256.Sum256(data)
+	if want := checksumFor(string(sums), name); want == "" || want != hex.EncodeToString(got[:]) {
+		return nil, fmt.Errorf("%s 校验不过：SHA256 是 %s，校验文件里写的是 %q", name, hex.EncodeToString(got[:]), want)
 	}
+	return data, nil
+}
+
+// releaseVersion 读发布里的 VERSION（scripts/build-release.sh 产出，写进了 SHA256SUMS）。
+func releaseVersion(ctx context.Context, client *http.Client, base, mirror string) (string, error) {
+	b, e := verified(ctx, client, base, mirror, "VERSION")
+	if e != nil {
+		return "", e
+	}
+	v := strings.TrimSpace(string(b))
+	if !validVersion(v) {
+		return "", fmt.Errorf("发布里的 VERSION 不是版本号：%.80q", v)
+	}
+	return v, nil
+}
+
+func fetchScript(ctx context.Context, client *http.Client, base, mirror string) ([]byte, error) {
+	script, e := verified(ctx, client, base, mirror, "install.sh")
+	if e != nil {
+		return nil, fmt.Errorf("没有运行安装脚本：%w", e)
+	}
+	return script, nil
+}
+
+func runScript(script []byte, args []string, stdout, stderr io.Writer) error {
 	dir, e := os.MkdirTemp("", "agentq-update-*")
 	if e != nil {
 		return fmt.Errorf("建临时目录失败：%w", e)
@@ -154,8 +234,55 @@ func runUpdateScript(ctx context.Context, base, proxy, mirror string, args []str
 	if e = os.WriteFile(path, script, 0o600); e != nil {
 		return fmt.Errorf("写安装脚本失败：%w", e)
 	}
-	cmd := exec.CommandContext(ctx, "/bin/sh", append([]string{path}, args...)...)
+	cmd := exec.Command("/bin/sh", append([]string{path}, args...)...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	return cmd.Run()
+}
+
+// UpdateNet 是一键安装时用过的代理和镜像（~/.agentq/update-net.json，用户自己的状态）：agentq update --saved-net 沿用。
+type UpdateNet struct {
+	Proxy  string `json:"proxy,omitempty"`
+	Mirror string `json:"mirror,omitempty"`
+}
+
+// UpdateNetPath 是记代理和镜像的文件。
+func UpdateNetPath(home string) string { return filepath.Join(home, ".agentq", "update-net.json") }
+
+// ReadUpdateNet 读记下的代理和镜像；没有文件就是都没用。
+func ReadUpdateNet(home string) (UpdateNet, error) {
+	var n UpdateNet
+	b, e := os.ReadFile(UpdateNetPath(home))
+	if errors.Is(e, os.ErrNotExist) {
+		return n, nil
+	}
+	if e != nil {
+		return n, fmt.Errorf("读 %s：%w", UpdateNetPath(home), e)
+	}
+	if e = json.Unmarshal(b, &n); e != nil {
+		return n, fmt.Errorf("%s 格式不对：%w", UpdateNetPath(home), e)
+	}
+	return n, nil
+}
+
+// recordUpdateNet：一键脚本（install.sh 带 --defer-engine 调 setup）装完时记下这次用的代理和镜像，都没用就删掉旧的记录。
+func recordUpdateNet(home string) error {
+	n := UpdateNet{Proxy: os.Getenv("AGENTQ_PROXY"), Mirror: os.Getenv("AGENTQ_MIRROR")}
+	if n == (UpdateNet{}) {
+		if e := os.Remove(UpdateNetPath(home)); e != nil && !errors.Is(e, os.ErrNotExist) {
+			return fmt.Errorf("删 %s：%w", UpdateNetPath(home), e)
+		}
+		return nil
+	}
+	b, e := json.Marshal(n)
+	if e != nil {
+		return fmt.Errorf("编码代理和镜像记录：%w", e)
+	}
+	if e = os.MkdirAll(filepath.Dir(UpdateNetPath(home)), 0o700); e != nil {
+		return fmt.Errorf("建 %s：%w", filepath.Dir(UpdateNetPath(home)), e)
+	}
+	if e = fsx.WriteFileAtomic(UpdateNetPath(home), append(b, '\n')); e != nil {
+		return fmt.Errorf("写 %s：%w", UpdateNetPath(home), e)
+	}
+	return nil
 }

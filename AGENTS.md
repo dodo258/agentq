@@ -12,17 +12,17 @@ Go 标准库，单二进制，分模块见下一节。平台差异只在 `*_darw
 | 层 | 模块 | 负责 |
 |---|---|---|
 | 0 | `textfmt` `fsx` `proc` `backend` | 给人看的短文字；原子写和文件锁；子进程环境白名单和进程组；后端接口、注册表、共用类型（用量、额度档位、进展信号） |
-| 1 | `config` `env` `backend/claude` `backend/codex` `backend/opencode` `gitx` | config.json；运行环境（路径、时钟、日志、取后端）；Claude Code 后端（参数、结果解析、额度、会话记录、登录）；Codex 后端（参数、事件流解析、登录）；跑 git |
+| 1 | `config` `env` `backend/claude` `backend/codex` `backend/pi` `gitx` | config.json；运行环境（路径、时钟、日志、取后端）；Claude Code 后端（参数、结果解析、额度、会话记录、登录）；Codex 后端（参数、事件流解析、登录）；pi 后端（参数、事件流解析、登录）；跑 git |
 | 2 | `state` `backlog` `telegram` | state.json 和 Job；BACKLOG 文本和提交；Telegram 客户端 |
 | 3 | `quality` `ledger` `service` `envlayer` `notify` | 满意率；meta.json 和当天汇总；launchd、systemd；通用工程规则（`rules/`）放到后端的规则目录；通知队列、早报 |
 | 4 | `gate` `runner` | 合并前的质量门和引擎合并（门队列、`_gate` 进程、收尾，加门走 `gate.Register`；`agentq health`）；任务从启动到收尾（任务外壳、续跑、超时、熔断、预算、额度门，功能走 `runner.Hooks`） |
-| 5 | `orphan` `discuss` `newproj` `suggest` `routine` `patrol` `evolve` | 孤儿条目；开工前商量大方向；`agentq new`（用 `discuss`）；「## 建议」的编号、回「做 N」「不做 N」和不做清单；夜班和复盘；巡逻；评测集和判分（`agentq eval`，tick 不调用），自我进化的信号、学到的约束和 L0 提案（`agentq evolve`，tick 每小时收，不调模型；用 `suggest` 的建议编号和不做清单，只读 `gate` 的结果类型） |
+| 5 | `orphan` `discuss` `newproj` `suggest` `routine` `patrol` `evolve` | 孤儿条目；开工前商量大方向；`agentq new`（用 `discuss`）；「## 建议」的编号、回「做 N」「不做 N」和不做清单；夜班和复盘；巡逻；评测集和判分（`agentq eval`，tick 不调用），自我进化的信号、学到的约束、提案和自己长大（自身问题进 `self_project` 待做、空闲时升级自己、观察期变差回滚；`agentq evolve`，tick 每小时收，不调模型；用 `suggest` 的建议编号和不做清单，只读 `gate` 的结果类型；装和回滚只经子进程调安装引擎） |
 | 6 | `chat` `stats` | 用户消息（长轮询、Fast Path、对话任务、回复链）；任务统计 |
 | 7 | `sched` `setup` `onboard` | 一次 tick 的固定流程和磁盘清理；安装引擎；`init`、`add`、`start`、`env` 和接手时判断检查命令 |
 | 8 | `app` | 建每个模块的唯一实例、接钩子；`status`、`run`、`stop`、`logs`、`notify`、`backlog archive` |
 
 - 只给测试 import：`testkit`（`GitT`、`MkProject` 这类夹具）、`testkit/stack`（建到 `runner` 为止的一套真实例，不接钩子）。
-- 接新后端见 `docs/backends.md`：新增一个包，`app` 加一行 import。后端实现只有 `app` 能 import（注册），其余都走 `backend.Backend`；各家 CLI 的参数、结果格式、会话文件位置只能写在自己的包里（`TestArchBackendImpls`、`TestArchClaudeFlagsOnlyInBackend`，Codex 也查）。
+- 接新后端见 `docs/backends.md`：新增一个包，`app` 加一行 import。后端实现只有 `app` 能 import（注册），其余都走 `backend.Backend`；各家 CLI 的参数、结果格式、会话文件位置只能写在自己的包里（`TestArchBackendImpls`、`TestArchClaudeFlagsOnlyInBackend`，Codex、pi 也查）。
 - 每个模块的实例类型都叫 `Service`，匿名嵌入 `*env.Env`，依赖是具名字段；只有 `internal/app` 能建（`TestArchSingletons`）。`app.Wire` 最后四行的顺序固定，`Hooks` 最后（`TestArchWireOrder`）。
 - 单独测一块：`go test -race ./internal/<模块>`。跑真二进制的行为用例在 `tests/`（`go test -race ./tests`，约 5 分钟，`TestMain` 把工作目录切到仓库根；黄金文件在 `tests/testdata/`）；要走到钩子或多个功能的用例放 `tests/` 走导出 API。
 - 反复出问题的模块重写时接口尽量不变，要变就写进提交说明。`Job`、`NotifyState` 仍是共享数据，改字段要看所有读写方，落盘格式由 `tests/testdata/` 的黄金文件固定。
@@ -34,6 +34,7 @@ Go 标准库，单二进制，分模块见下一节。平台差异只在 `*_darw
 - 网络入口验收：`AGENTQ_BOOTSTRAP_ACCEPTANCE=1 go test -count=1 -v -run '^TestBootstrapAcceptance$' ./...`。
 - 真实 systemd 验收：只在 CI 的 Linux runner 上，见 `.github/workflows/ci.yml` 的 `TestSystemdAcceptance`；本机不跑（动真实用户服务）。
 - 评测：`agentq eval run` 只跑程序题，`--fake` 用假 CLI 走完全部题，`--real` 才调模型（周额度 ≥85% 拒绝），见 `docs/reference/commands.md`。
+- 真实 pi 验收：`AGENTQ_REAL_PI=1 go test -count=1 -v -run '^TestRealPi' ./tests`，花本机 pi 配的模型额度。
 - 真实 CLI 验收：`AGENTQ_REAL_E2E=1 go test -count=1 -v -run '^TestRealClaudeInstallationE2E$' ./...`；会消耗模型额度，连接型身份最小投影需另显式 `AGENTQ_REAL_E2E_CONNECTION=1`。
 
 ## 约定

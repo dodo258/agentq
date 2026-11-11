@@ -4,7 +4,7 @@
 
 每一项验证到了哪一步，如实写。「假 CLI」指用假的 claude 跑，没消耗模型额度。「真机」指 macOS、Claude Code 2.1.316、订阅登录、真实模型。
 
-后端有 Claude CLI、Codex CLI 和 opencode（实验，真实的没跑过）。接别的 CLI 的接口见 [docs/backends.md](../backends.md)；`agentq doctor` 打出当前后端和 `project_backends` 用到的后端的能力表。
+后端有 Claude CLI、Codex CLI 和 pi，其他 CLI 以后再加，配置写了别的后端时 `agentq doctor` 如实报出、不接活。接别的 CLI 的接口见 [docs/backends.md](../backends.md)；`agentq doctor` 打出当前后端和 `project_backends` 用到的后端的能力表。
 
 | 平台 | 状态 | 验证到哪一步 |
 | --- | --- | --- |
@@ -22,7 +22,7 @@
 | 后端选择 `backend`、`project_backends`、`backends`，`install.sh --backend`，能力降级 | `claude` | 假后端，覆盖每条降级路径；`install.sh --backend` 用假 CLI 和本地假 Release 走通 |
 | 混用后端时撞限冷却和额度按后端分（`backend_limits`） | 只用一种后端时不写这个键 | 假 CLI 和暴力测试。真实两个后端同时跑、真实撞限没跑过 |
 | Codex 后端 | 手动选 | codex-cli 0.166.0、macOS arm64、ChatGPT 登录、临时项目：真实跑通启动、分支提交、`ready.json`、测试门、审查门、引擎合并，SIGTERM 后同一会话续跑，走到合并。撞限只用按官方文字拼的样本测过，令牌失效没有真实样本（只测过没有凭据的 401），大方向商量和巡逻分析在 Codex 上不启动。Codex 桌面端派活没有真实验证。Linux 上只跑过假 CLI。后台服务（launchd）下的 ChatGPT 令牌刷新没验证 |
-| opencode 后端（实验） | 手动选 | **真实的 opencode 没跑过**：本机没装，按 v1.19.5 的官方文档和源码写，假 CLI 和暴力测试（真二进制）走通启动、分支提交、`ready.json`、测试门、审查门、引擎合并、撞限续跑。事件样本是手写的。审查结论靠提示词要 JSON。只读、隔离 MCP 没验证，要它们的任务（追问、巡逻分析、大方向商量）不启动。登录查不了，第一次认证失败才暂停。官方记过丢最后 `step_finish` 的问题：丢了就当没有终态，不算成功。各模型来源的 API Key 环境变量不传，用 `opencode auth login` |
+| pi 后端 | 手动选 | pi 1.5.1、macOS arm64、本机 pi 配的 OpenAI 兼容模型来源（API key）、临时项目：真实跑通启动、分支提交、`ready.json`、测试门、审查门（同样是 pi，靠提示词要 JSON）、引擎合并，SIGTERM 后同一会话续跑，走到合并。401、429、500、截断、断流用真实 pi 对本地假接口录的样本测，真实撞限没跑过；OAuth 登录的来源（订阅）没验证。大方向商量、追问、巡逻分析在 pi 上不启动。Linux 上只跑过假 CLI，Linux 上进程认得出（环境读得到）没验证 |
 | 调度、并发、中断续跑、用量和额度、熔断 | 暂停，`agentq start` 打开 | macOS arm64 真实运行。真机：`agentq start` 装 launchd 服务，定时器和任务结束后的 tick 自己走到合并。真实撞限、令牌失效没跑过，这些故障路径用假 CLI 和暴力测试覆盖 |
 | 排除项目 `exclude_projects` | 空 | 假 CLI |
 | 外面的项目 `extra_projects`、第一次 `add` 自动接入 | 空，`add` 时登记 | 假 CLI，走到 tick 接任务 |
@@ -31,7 +31,7 @@
 | 模型跟随、按活分配模型 | 新配置留空 | 假 CLI 看 argv。真实 CLI 不带这两个参数时用哪个模型没有自动验收 |
 | 磁盘清理（`launchd.log`、超过 90 天的任务记录） | 开，90 天 | 假数据，包括时钟跳变和软链接 |
 | `agentq new` | 手动可用 | 真机：一句话建新项目，过测试门、成品门、审查门，合并，生成交付单。另有假 CLI 和暴力测试 |
-| 质量门和引擎合并 | 开，测试门和审查门都是 `error`；补丁门、界面门、成品门是 `warn` | 真机：普通任务到分支，测试门、审查门（真实 Claude）通过，引擎合并，BACKLOG 关闭。测试门把修复还原后再跑，确认新测试失败。界面门用桌面和手机两张真实截图，按 `no-ai-look` 审查通过，截图脚本是任务自己新增的。矛盾的需求任务不硬做，转交用户决定，不合并。另有假 CLI 和暴力测试（真二进制）。Codex 上的审查见 Codex 那一行，opencode 上没跑过。界面门的 Playwright、`simctl` 脚本示例只查过语法，没有在真实项目上跑过；阈值没有用真实项目校准。门和裸 CLI 在真实项目上的对比没有做过 |
+| 质量门和引擎合并 | 开，测试门和审查门都是 `error`；补丁门、界面门、成品门是 `warn` | 真机：普通任务到分支，测试门、审查门（真实 Claude）通过，引擎合并，BACKLOG 关闭。测试门把修复还原后再跑，确认新测试失败。界面门用桌面和手机两张真实截图，按 `no-ai-look` 审查通过，截图脚本是任务自己新增的。矛盾的需求任务不硬做，转交用户决定，不合并。另有假 CLI 和暴力测试（真二进制）。Codex 上的审查见 Codex 那一行。界面门的 Playwright、`simctl` 脚本示例只查过语法，没有在真实项目上跑过；阈值没有用真实项目校准。门和裸 CLI 在真实项目上的对比没有做过 |
 | 大方向商量 | 开 | 真机加真实 Telegram：选了方向后写进条目并开工 |
 | 夜班、复盘 | 关 | 假 CLI 和暴力测试 |
 | 巡逻 | 关 | 假 CLI 和暴力测试 |
@@ -42,4 +42,4 @@
 
 暴力测试（杀进程、写坏状态文件、并发、磁盘写满、时钟跳变）在 macOS 上跑过，Linux 可以手动触发但还没跑过，依赖全部是假的，方法见 [CONTRIBUTING](../../CONTRIBUTING.md#暴力测试)。
 
-还没有真实验证的：Codex 桌面端派活；真实撞限、令牌失效；Linux 上的真实任务和暴力测试（Linux 只有 CI 的测试和真实 systemd 验收）；opencode 的任何真实运行；门和裸 CLI 在真实项目上的对比。
+还没有真实验证的：Codex 桌面端派活；真实撞限、令牌失效；Linux 上的真实任务和暴力测试（Linux 只有 CI 的测试和真实 systemd 验收）；门和裸 CLI 在真实项目上的对比。

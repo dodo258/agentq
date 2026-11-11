@@ -72,7 +72,7 @@ var Tasks = []Task{
 func Describe(b Backend, p Probe, perr error) string {
 	var s strings.Builder
 	if !Known(b.Name()) {
-		fmt.Fprintf(&s, "后端：%s（未知，不接活）\n%v\n", b.Name(), perr)
+		fmt.Fprintf(&s, "后端：%s（%s，不接活）\n%v\n", b.Name(), unknownWord(b.Name()), perr)
 		return s.String()
 	}
 	switch {
@@ -118,6 +118,14 @@ func Describe(b Backend, p Probe, perr error) string {
 	return s.String()
 }
 
+// unknownWord 是没注册的后端在一句话里的说法。
+func unknownWord(name string) string {
+	if NotYet(name) {
+		return "暂不支持，以后再加"
+	}
+	return "未知"
+}
+
 // Limits 是这个后端缺的能力，一行一条，给 agentq start 提醒用。什么都不缺返回空。
 func Limits(b Backend) []string {
 	var out []string
@@ -147,7 +155,7 @@ func ConfigProblems(def string, projects map[string]string) []string {
 	for _, p := range names {
 		b := projects[p]
 		if !Known(b) {
-			out = append(out, fmt.Sprintf("项目 %s 的后端 %s 未知，这个项目不接活（现有：%v）", p, b, Names()))
+			out = append(out, fmt.Sprintf("项目 %s 的后端 %s %s，这个项目不接活（现有：%v）", p, b, unknownWord(b), Names()))
 			continue
 		}
 		if lacks := Get(b, Options{}).Caps().Lacks(MustMerge); len(lacks) > 0 {

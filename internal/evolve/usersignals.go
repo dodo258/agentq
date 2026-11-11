@@ -213,30 +213,13 @@ func (s *Service) reworkDomains(ctx context.Context, p backlog.Project, backlogT
 	for _, c := range commits {
 		paths = append(paths, changedFiles(ctx, p.Dir, c)...)
 	}
-	set := map[string]bool{}
-	for _, f := range paths {
-		if d := pathDomain(f); d != "" {
-			set[d] = true
-		}
+	if out := filesDomains(paths); len(out) > 0 {
+		return out, "按范围和改动文件"
 	}
-	basis := "按范围和改动文件"
-	if len(set) == 0 {
-		for d, re := range domainWords {
-			if re.MatchString(body) {
-				set[d] = true
-			}
-		}
-		basis = "按意见的文字"
+	if out := wordDomains(body); len(out) > 0 {
+		return out, "按意见的文字"
 	}
-	if len(set) == 0 {
-		return []string{"未分类"}, "范围、改动文件、文字都看不出"
-	}
-	out := make([]string, 0, len(set))
-	for d := range set {
-		out = append(out, d)
-	}
-	sort.Strings(out)
-	return out, basis
+	return []string{domainUnknown}, "范围、改动文件、文字都看不出"
 }
 
 // changedFiles：这个提交（合并提交按第一父）改了的文件。不是提交、git 出错都当没有。
@@ -254,12 +237,13 @@ func changedFiles(ctx context.Context, dir, commit string) []string {
 	return strings.Fields(string(out))
 }
 
-// 领域：前端、后端、设计、文档。路径归不了的不算。
+// 领域：前端、后端、设计、文档由路径归，路径归不了的不算。和英文名的对照见 capability.go 的 domainTable。
 const (
 	DomainFrontend = "前端"
 	DomainBackend  = "后端"
 	DomainDesign   = "设计"
 	DomainDocs     = "文档"
+	domainUnknown  = "未分类"
 )
 
 var (
@@ -325,6 +309,9 @@ func (s *Service) absorbRework(st *SignalStore, r reworkItem, now time.Time) {
 	for _, d := range r.domains {
 		summary := d + "返工（" + r.basis + "）：「" + textfmt.TruncRunes(r.title, 30) + "」" + textfmt.OneLine(strings.TrimPrefix(r.text, backlog.ItemTitle(r.text)), 120)
 		st.add(now, KindRework, r.project, SignalKey(KindRework, d, ""), summary, ev)
+		if d != domainUnknown {
+			st.addDomain(now, []string{d}, evRework, r.key, ev)
+		}
 	}
 	if !slices.Contains(st.ReworkSeen, r.key) {
 		st.ReworkSeen = append(st.ReworkSeen, r.key)

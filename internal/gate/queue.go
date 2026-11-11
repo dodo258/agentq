@@ -26,7 +26,7 @@ import (
 )
 
 // ReadyTypes 是 ready.json 的 type 能写的值。
-var ReadyTypes = []string{"fix", "feature", "rewrite", "docs"}
+var ReadyTypes = []string{"fix", "feature", "rewrite", "docs", "capability"}
 
 // ReadReady 读任务分支上的 ready.json。found 为假是还没写；写了但不合格返回错误，任务要改了再写。
 func (a *Service) ReadReady(dir, branch string) (Ready, string, bool, error) {
@@ -451,8 +451,8 @@ func (a *Service) failed(st *state.State, j *state.Job, res RunResult) {
 	be := a.BackendFor(j.Backend)
 	first := j.SessionInRoot() // 新项目第一版的会话在 projects_root，换了目录接不回去：和不能续跑的后端一样，由接手任务接着做
 	// 用户放行之后还没过（只会是合并冲突）：条目标着卡住，退回没人接得上，再让用户定。再审没过同理，也不算退回轮数。
-	// 被排除的项目 tick 只续跑用户亲手启动的，自动起的退回了没人接，直接让用户定
-	if g.Override != "" || g.Rerun || (a.Backlog.Excluded(j.Project) && !j.Manual) || (be.Caps().Resume && j.SessionID == "" && !first) {
+	// 被排除的项目 tick 只续跑用户亲手启动的和自己长大派的，别的自动起的退回了没人接，直接让用户定
+	if g.Override != "" || g.Rerun || (a.Backlog.Excluded(j.Project) && !j.Manual && !j.SelfGrow) || (be.Caps().Resume && j.SessionID == "" && !first) {
 		a.stuck(st, j, res.Reason)
 		return
 	}
@@ -545,9 +545,25 @@ func (a *Service) crashed(st *state.State, j *state.Job, why string) {
 	a.Ledger.WriteMeta(j)
 }
 
-// stuck：判不了或轮数用完。保留分支，条目标卡住（下次 RetryStuckMarks 写），发决定卡片。同项目下一条照常做。
+// stuck：判不了或轮数用完。保留分支，条目标卡住（下次 RetryStuckMarks 写），发决定卡片：审查报告的结论之外，带上任务最后一轮自己写的说明，
+// 用户不用翻日志就知道它怎么看这些意见、改到哪了。同项目下一条照常做。
 func (a *Service) stuck(st *state.State, j *state.Job, why string) {
-	a.park(j, why, "门没过", "没过，等你定", "B")
+	var extra []string
+	if own := a.ownWords(j); own != "" {
+		extra = append(extra, "任务自己的说明："+own)
+	}
+	a.park(j, why, "门没过", "没过，等你定", "B", extra...)
+}
+
+// ownWords：任务这一轮结束时结果的最后一段（agent-task 要求写合并情况、没好的原因和对审查意见的分析）。读不到返回空。
+func (a *Service) ownWords(j *state.Job) string {
+	paras := strings.Split(strings.TrimSpace(a.Ledger.ReadResult(j).Text), "\n\n")
+	for i := len(paras) - 1; i >= 0; i-- {
+		if p := strings.TrimSpace(paras[i]); p != "" {
+			return textfmt.OneLine(p, 300)
+		}
+	}
+	return ""
 }
 
 // hold：门没挡，但改错了难撤回，或影响面广又没有确定性检查。和卡住一样等用户定，agentq gate pass 才合。不推荐选项：要用户自己看过。
@@ -556,7 +572,7 @@ func (a *Service) hold(j *state.Job, why string) {
 }
 
 // park 是卡住和等拍板共用的：标卡住、写日志和当天汇总、发决定卡片。head 是标记和通知标题里的说法，logHead 是日志里的。
-func (a *Service) park(j *state.Job, why, head, logHead, recommend string) {
+func (a *Service) park(j *state.Job, why, head, logHead, recommend string, extra ...string) {
 	g := j.Gate
 	g.State, g.Override, g.Rerun = state.GateStuck, "", false
 	g.Report = textfmt.OneLine(why, 300)
@@ -574,7 +590,7 @@ func (a *Service) park(j *state.Job, why, head, logHead, recommend string) {
 	}
 	a.Notify.Notify(notify.Notice{Cat: "decide", Key: "gate:" + j.ID, JobID: j.ID,
 		Text:  j.Project + "　「" + textfmt.TruncRunes(j.Title, 40) + "」" + head,
-		Lines: []string{textfmt.OneLine(why, 200), "分支 " + g.Branch + " 留着；详情 agentq gate report " + j.ID, how},
+		Lines: append(append([]string{textfmt.OneLine(why, 200)}, extra...), "分支 "+g.Branch+" 留着；详情 agentq gate report "+j.ID, how),
 		Card:  &notify.DecideCard{Project: j.Project, Fingerprint: j.Fingerprint, Title: j.Title, Recommend: recommend, GateJob: j.ID, Options: options}})
 }
 
@@ -773,11 +789,15 @@ func (a *Service) applyDecision(st *state.State, j *state.Job) {
 			}
 			return
 		}
-		g.DecideErr = ""
+		g.DecideErr, g.ReturnWhy = "", d.Reason
 		g.State = state.GateReturned
 		j.Status, j.ResumePending = state.StatusInterrupted, a.BackendFor(j.Backend).Caps().Resume && j.SessionID != "" && !j.SessionInRoot()
 		j.StuckPending, j.StuckMarked = "", false
-		a.audit(fmt.Sprintf("退回 %s %s「%s」分支 %s", j.ID, j.Project, title, g.Branch))
+		audit := fmt.Sprintf("退回 %s %s「%s」分支 %s", j.ID, j.Project, title, g.Branch)
+		if d.Reason != "" {
+			audit += "：" + textfmt.OneLine(d.Reason, 300)
+		}
+		a.audit(audit)
 	default:
 		a.Logf("门：任务 %s 的决定 %q 不认识，丢掉", j.ID, d.Action)
 		drop()
@@ -1017,6 +1037,9 @@ func (a *Service) ReturnNote(j *state.Job) string {
 	if a.mustRewrite(j) {
 		b.WriteString("\n" + rewriteContract + "\n")
 	}
+	if j.Gate.ReturnWhy != "" {
+		b.WriteString("\n用户看过后退回，意见如下（逐条改掉，在交付说明里写每条怎么改的、怎么验证的）：\n" + j.Gate.ReturnWhy + "\n")
+	}
 	return b.String()
 }
 
@@ -1070,9 +1093,9 @@ func (a *Service) reportText(j *state.Job) string {
 	return s.String()
 }
 
-// CmdGate：agentq gate report <任务> 看报告；agentq gate pass <任务> --reason "..." 只放行这一次；agentq gate rerun <任务> 再审一次；agentq gate abandon <任务> 放弃。
+// CmdGate：agentq gate report <任务> 看报告；agentq gate pass <任务> --reason "..." 只放行这一次；agentq gate return <任务> --reason "..." 带意见退回；agentq gate rerun <任务> 再审一次；agentq gate abandon <任务> 放弃。
 func (a *Service) CmdGate(args []string) error {
-	const usage = "用法：agentq gate report <任务id>；agentq gate pass <任务id> --reason \"原因\"；agentq gate rerun <任务id>；agentq gate abandon <任务id>"
+	const usage = "用法：agentq gate report <任务id>；agentq gate pass <任务id> --reason \"原因\"；agentq gate return <任务id> --reason \"意见\"；agentq gate rerun <任务id>；agentq gate abandon <任务id>"
 	if len(args) < 2 {
 		return errors.New(usage)
 	}
@@ -1108,6 +1131,18 @@ func (a *Service) CmdGate(args []string) error {
 			return err
 		}
 		fmt.Fprintf(a.Out, "记下了：任务 %s 放行这一次，只合提交 %s。下次 tick 合并（最多 5 分钟；马上就 agentq tick），写审计行\n", j.ID, textfmt.TruncRunes(j.Gate.Head, 12))
+		return nil
+	case "return":
+		if len(args) != 4 || args[2] != "--reason" || strings.TrimSpace(args[3]) == "" {
+			return errors.New("退回要写意见，下一轮照着改：" + usage)
+		}
+		if j.Gate == nil || j.Gate.State != state.GateStuck {
+			return fmt.Errorf("任务 %s 不是卡在门上（%s），不能退回", j.ID, state.JobLabel(j))
+		}
+		if err := a.Decide(j.ID, DecideReturn, strings.TrimSpace(args[3])); err != nil {
+			return err
+		}
+		fmt.Fprintf(a.Out, "记下了：任务 %s 带意见退回，下次 tick 用同一会话接着改（最多 5 分钟；马上就 agentq tick），写审计行\n", j.ID)
 		return nil
 	case "rerun":
 		if len(args) != 2 {

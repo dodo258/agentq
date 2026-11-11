@@ -669,7 +669,9 @@ func TestFailReturnsThenStuck(t *testing.T) {
 	if j.Gate.State != state.GateReturned {
 		t.Fatalf("%+v", j.Gate)
 	}
-	// 第 3 次：用完了
+	// 第 3 次：用完了。卡片带上任务最后一轮自己的说明，不只是门的结论
+	os.MkdirAll(f.a.JobDir(j.ID), 0o755)
+	os.WriteFile(filepath.Join(f.a.JobDir(j.ID), "result.json"), []byte(`{"type":"result","subtype":"success","is_error":false,"result":"改了测试数据。\n\n没合并；审查说的竞态我不同意：加了 -race 连跑 20 次都过。","session_id":"s"}`+"\n"), 0o644)
 	j.Status, j.ResumePending = state.StatusDone, false
 	j.Gate = &state.GateRecord{State: state.GateRunning, Branch: "agent/x", Round: gate.MaxRounds}
 	f.collect(j, res)
@@ -693,6 +695,9 @@ func TestFailReturnsThenStuck(t *testing.T) {
 	for _, n := range s.Pending {
 		if n.Card != nil {
 			card = n.Card
+			if lines := strings.Join(n.Lines, "\n"); !strings.Contains(lines, "测试没过") || !strings.Contains(lines, "任务自己的说明：没合并；审查说的竞态我不同意") {
+				t.Errorf("卡片要带门的结论和任务自己的说明：\n%s", lines)
+			}
 		}
 	}
 	if card == nil || card.GateJob != j.ID || len(card.Options) != 3 || card.Options[0].Text != "放行" || card.Options[1].Text != "退回" || card.Options[2].Text != "放弃" {
@@ -1464,5 +1469,40 @@ func TestAuthFailureNotifiesAndPauses(t *testing.T) {
 	}
 	if st := f.st.CooldownUntil; !st.IsZero() {
 		t.Errorf("认证失败不走全局冷却：%v", st)
+	}
+}
+
+// 用户看过卡住的任务后带意见退回：意见进下一轮的提示词；不写意见的命令拒绝；不是卡在门上的不能退回。
+func TestUserReturnWithReason(t *testing.T) {
+	f := newFix(t, fixBacklog)
+	j := f.claim("做事", "agent/x", map[string]string{"a.txt": "a"}, ready("agent/x"))
+	f.collect(j, gate.RunResult{Outcome: "unknown", Reason: "改了评测题，等你看"})
+	if j.Gate.State != state.GateStuck {
+		t.Fatalf("%+v", j.Gate)
+	}
+	f.saveState()
+	if err := f.a.CmdGate([]string{"return", j.ID}); err == nil || !strings.Contains(err.Error(), "要写意见") {
+		t.Fatalf("不写意见要拒绝：%v", err)
+	}
+	why := "1. 回滚只禁了那一个提交（upgrade.go:263）\n2. 安装中途会被杀"
+	if err := f.a.CmdGate([]string{"return", j.ID, "--reason", why}); err != nil {
+		t.Fatal(err)
+	}
+	f.a.Collect(f.st)
+	if j.Gate.State != state.GateReturned || j.Status != state.StatusInterrupted {
+		t.Fatalf("%+v %s", j.Gate, j.Status)
+	}
+	note := f.a.ReturnNote(j)
+	for _, want := range []string{"用户看过后退回", "回滚只禁了那一个提交（upgrade.go:263）", "安装中途会被杀"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("退回的话缺 %q：%s", want, note)
+		}
+	}
+	if b := testkit.ReadFile(t, filepath.Join(f.a.DataDir(), "gate", "audit.log")); !strings.Contains(b, "退回 "+j.ID) || !strings.Contains(b, "回滚只禁了") {
+		t.Errorf("审计要有意见：%s", b)
+	}
+	f.saveState()
+	if err := f.a.CmdGate([]string{"return", j.ID, "--reason", "再退"}); err == nil {
+		t.Error("不是卡在门上不能退回")
 	}
 }

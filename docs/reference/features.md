@@ -64,7 +64,7 @@
 
 - `error` 档的门 `fail`：退回任务，最多 2 轮。任务记中断，用同一会话续跑，提示词带门的报告，改完再提交 `ready.json`。不能续跑的后端由接手任务接着做。
 - 只提交了 `ready.json`、分支相对默认分支没有改动：算失败退回（可能忘了提交），不关条目。核实后确实不用改的，任务走 `（卡住：不用改：…）` 标记，由你定。
-- 再失败或判不了（`unknown`）：保留分支，条目标 `（卡住：门没过：…，任务 <id>，分支 …）`，发决定卡片（放行、退回、放弃）。这一条卡住不挡同项目下一条。退回 2 轮还没过的，原因写成「退回 2 轮还没过，多半是计划（条目拆法）的问题：建议重新拆或改验收」，通知、卡住标记和 `agentq gate report` 都带这句。
+- 再失败或判不了（`unknown`）：保留分支，条目标 `（卡住：门没过：…，任务 <id>，分支 …）`，发决定卡片（放行、退回、放弃）。这一条卡住不挡同项目下一条。退回 2 轮还没过的，原因写成「退回 2 轮还没过，多半是计划（条目拆法）的问题：建议重新拆或改验收」，通知、卡住标记和 `agentq gate report` 都带这句；决定卡片还带任务最后一轮自己写的说明（结果最后一段：对审查意见的分析、改到哪了）。
 - `warn` 档只记录，`off` 不跑。
 - 门都过了但主目录挡着：结论按 tree 留着，下次 tick 重试，只通知一次，不覆盖你的改动。通知分开说：不在任务记下的分支写 `git switch <记下的分支>`，有重叠的未提交改动才说提交或还原，别的原因（比如 index 被锁）不让你动手。
 - 审查撞了用量上限：不算结论，不耗轮数，进冷却，过后重跑。认证失败（401、要重新登录）同样重跑，不进全局冷却，任务也按认证失败暂停。
@@ -76,9 +76,9 @@
 {"branch": "agent/1105-短名", "type": "fix", "acceptance": "用户怎么验收", "progress": "给 PROGRESS 的一句话"}
 ```
 
-`type` 是 `fix`、`feature`、`rewrite`、`docs` 之一。分支以条目的进行中标记为准，写的不一样算不合格。不合格的按没写处理：条目还标进行中就记中断、续跑。
+`type` 是 `fix`、`feature`、`rewrite`、`docs`、`capability` 之一（`capability` 是 agentq 自己长出一项能力，见[评测门](#评测门)）。分支以条目的进行中标记为准，写的不一样算不合格。不合格的按没写处理：条目还标进行中就记中断、续跑。
 
-**调档位**：提交 `.agentq/gates.json`，读默认分支上的那份，任务分支上的改动不算。写坏了按默认档位，不放宽。门的名字是 `patch`、`scope`、`test`、`eval`、`smoke`、`review`、`ui`，按这个顺序跑，默认档位是 `warn`、`error`、`error`、`error`、`warn`、`error`、`warn`。`eval` 只在 agentq 自己的仓库跑，见[评测门](#评测门)。`warn` 档没过的合并时写一行日志和当天汇总。
+**调档位**：提交 `.agentq/gates.json`，读默认分支上的那份，任务分支上的改动不算。写坏了按默认档位，不放宽。门的名字是 `patch`、`scope`、`test`、`eval`、`smoke`、`review`、`ui`、`capability`，按这个顺序跑，默认档位是 `warn`、`error`、`error`、`error`、`warn`、`error`、`warn`、`warn`。`eval` 只在 agentq 自己的仓库跑，见[评测门](#评测门)；`capability` 见[能力门](#能力门)。`warn` 档没过的合并时写一行日志和当天汇总。
 
 ```json
 {"levels": {"test": "error", "review": "warn", "patch": "error"}, "ui_files": [".tsx", "View.swift"]}
@@ -171,8 +171,18 @@
 - 和 `~/.agentq/evals/baseline.json` 比，比法同 `agentq eval compare`：任一题或任一领域变差就 `fail` 退回，理由写哪题、哪个领域、从多少到多少，不看总平均。候选编译不过也 `fail`。
 - 没有基线，或基线里没有 `--fake` 和程序题的分：只记录不挡，提示先 `agentq eval run --fake` 再 `agentq eval baseline`。
 - 结论写明耗时（构建、评测各多少）。日志 `~/.agentq/gate/<任务>/eval-build.log`、`eval.log`，结论 `eval/verdict.json`；候选二进制用完删掉。评测结果不进 `~/.agentq/evals/runs/`，`eval baseline` 不会拿候选的分当基线。
-- 候选改了评判它的尺子：`evals/`、`assets.go`、`.agentq/`、`internal/gate/` 的代码、`internal/evolve/` 里出题判分比较的 `case.go`、`score.go`、`harness.go`、`cmd.go`、`judge.go`（测试文件不算）。评测没变差也不自动合并，条目标卡住、发卡片「等你拍板」，`agentq gate pass` 才合。
+- 候选改了评判它的尺子：`evals/`、`assets.go`、`.agentq/`、`internal/gate/` 的代码、`internal/evolve/` 里出题判分比较的 `case.go`、`score.go`、`harness.go`、`cmd.go`、`judge.go`，自己升级和回滚的 `internal/evolve/upgrade.go`、`apply.go`、`selfgrow.go`、`internal/setup/`（测试文件不算）。评测没变差也不自动合并，条目标卡住、发卡片「等你拍板」，`agentq gate pass` 才合。只是新加整道题（`evals/` 下默认分支上没有的题目录，里面全是新文件）不算改尺子，照常合并；往已有的题目录里加文件、改 `evals/README.md`、`_fake/` 都算改。
+- 修过就记住：`ready.json` 的 `type` 是 `fix`、改了 Go 代码（测试文件不算）却没新加题的，`fail` 退回，范围指到 `evals/`：每个修好的真实问题要留一道能复现它的题（修之前那一代跑它要判没过）。只改 `go.mod`、文档的修复不要求。
+- 长能力：`type` 是 `capability` 的交付，能力清单 `internal/gate/capabilities/capabilities.json` 要比默认分支多登记一项，并新加这项能力领域的题（`case.json` 的 `domain` 写同一个英文名），少一样就 `fail` 退回，不评判。齐了的，运行中这一代把新题在自己和候选上各跑一次（`eval judge --new-dir … --new <题号> --domain <领域>`）：这个领域的老题加上新题，候选的通过题数比例或平均分要比基线（老题的基线分加新题在运行中这一代上的分）高，没涨就退回；别的领域照上面的比法，掉了也退回。新题在运行中这一代上就过了，证明不了缺这项能力，也算没涨。
 - `--real`（调模型）不进门。
+
+### 能力门
+
+默认 `warn`。能力清单（`internal/gate/capabilities/capabilities.json`，编译进二进制）里每一项是 agentq 长出来的一项能力：名字、领域（英文名，和评测题一样）、知识文件（`skills/`、`rules/` 下）、检查脚本（同目录下，可选）、考题、启用条件（`when`：`files` 是项目根目录有其中任一，`changed` 是这次改的文件有匹配其中任一，两项都写要都满足）、加进来的日期。
+
+- 一项都用不上就不跑，报告写「capability 门不适用这次改动」。用得上的：有检查脚本的在候选 worktree 里跑运行中这一代的那份（`AGENTQ_BASE` 是默认分支基点），退出码 0 算过、125 算判不了、别的算报出问题；没有检查的只记「用上了」（它的知识按项目由后端加载）。
+- 报出问题在 `warn` 档只记录不挡，合并时写一行日志；真实项目上有证据了，项目在 `.agentq/gates.json` 把 `capability` 调成 `error`。
+- 结果里每项能力的结论记进 `last.json`（`caps`），自我进化靠它看能力有没有帮上忙，见 [`agentq evolve signals`](commands.md#agentq-evolve-signals)。
 
 ### 成品门
 

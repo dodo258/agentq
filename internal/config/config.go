@@ -70,6 +70,12 @@ type Config struct {
 	UsageStopWeekPct    float64 `json:"usage_stop_week_pct"`
 	// SelfProject 是 agentq 源码所在的项目名：配了就把 agentq 自身反复出现的问题写成那个项目「## 建议」里的提案，没配只写 ~/.agentq/evolve/proposals.md（见 internal/evolve）。
 	SelfProject string `json:"self_project,omitempty"`
+	// SelfGrowEnabled（默认开）：配了 self_project 时，agentq 自己的问题直接写进它的「待做」接着做（被排除也做），
+	// 合并过了评测门的修复在空闲时用安装引擎升级自己，之后几个任务变差就回滚（见 internal/evolve/selfgrow.go）。关掉和以前一样：只提案、不升级。
+	SelfGrowEnabled bool `json:"self_grow_enabled"`
+	// AutoUpdate（默认关）：发行版每天最多看一次发布地址，有更新的版本就在空闲时照 agentq update 装上，之后几个任务变差就回滚（见 internal/evolve/autoupdate.go）。
+	// 关着时不联网。源码构建、配了 self_project 的机器不管（由自己长大升级）。
+	AutoUpdate bool `json:"auto_update,omitempty"`
 	// ExcludeProjects：projects_root 下这些项目 tick 不碰（可能是公开仓库或不想交出去的）；agentq run 明确指定时仍可跑。
 	ExcludeProjects []string `json:"exclude_projects,omitempty"`
 	// ExtraProjects：projects_root 外的项目，绝对路径。agentq add 在外面的仓库里运行时自动登记。项目名还是目录名，exclude_projects 优先。
@@ -377,7 +383,8 @@ func Default() Config {
 		UsageStopSessionPct: 70,
 		UsageStopWeekPct:    90,
 
-		DiscussEnabled: true,
+		DiscussEnabled:  true,
+		SelfGrowEnabled: true,
 
 		TickAfterJob:    true,
 		BreakerStreak:   3,

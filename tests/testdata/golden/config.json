@@ -18,12 +18,14 @@
   "usage_stop_session_pct": 21.5,
   "usage_stop_week_pct": 22.5,
   "self_project": "Config.SelfProject-23",
+  "self_grow_enabled": true,
+  "auto_update": true,
   "exclude_projects": [
-    "Config.ExcludeProjects[]-25"
+    "Config.ExcludeProjects[]-27"
   ],
   "extra_projects": [
-    "Config.ExtraProjects[]-27"
+    "Config.ExtraProjects[]-29"
   ],
   "discuss_enabled": true,
-  "retention_days": 51
+  "retention_days": 53
 }

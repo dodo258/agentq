@@ -18,39 +18,39 @@ import (
 // archAllowed 是模块表（AGENTS.md 给人看）：包 → 它的代码（产品和测试）可以 import 的 internal 包。
 // 没出现在这里的 internal 包一律不许建：要加模块、加依赖先改这张表。
 var archAllowed = map[string]string{
-	"textfmt":          "",
-	"fsx":              "",
-	"proc":             "",
-	"config":           "textfmt fsx backend",
-	"env":              "fsx proc config backend",
-	"backend":          "textfmt proc",
-	"backend/claude":   "textfmt fsx proc config backend",
-	"backend/codex":    "fsx proc backend",
-	"backend/opencode": "fsx backend",
-	"gitx":             "textfmt proc env",
-	"state":            "textfmt fsx config backend",
-	"backlog":          "textfmt fsx env gitx",
-	"telegram":         "textfmt env",
-	"quality":          "textfmt env gitx backlog",
-	"ledger":           "textfmt fsx env backend state quality",
-	"service":          "textfmt fsx proc config env",
-	"envlayer":         "fsx backend",
-	"notify":           "textfmt fsx proc config env backend state backlog telegram",
-	"gate":             "textfmt fsx proc config env backend gitx state backlog ledger notify",
-	"runner":           "textfmt fsx proc config env backend gitx state backlog ledger notify gate",
-	"orphan":           "textfmt env state backlog ledger notify runner",
-	"discuss":          "textfmt fsx proc config env backend gitx state backlog telegram ledger notify runner",
-	"newproj":          "textfmt env backend gitx state backlog ledger notify runner discuss",
-	"suggest":          "textfmt fsx config env gitx backlog telegram notify",
-	"routine":          "textfmt fsx proc config env backend gitx state backlog ledger service notify runner",
-	"patrol":           "textfmt fsx config env backend gitx state backlog telegram ledger service notify runner",
-	"chat":             "textfmt fsx proc config env backend gitx state backlog telegram ledger service notify gate runner orphan discuss suggest",
-	"stats":            "textfmt config env backend state ledger",
-	"evolve":           "textfmt fsx proc config env backend state backlog ledger notify gate suggest",
-	"sched":            "textfmt fsx config env backend state backlog telegram ledger notify gate runner orphan discuss newproj routine patrol evolve chat",
-	"setup":            "fsx proc config backend state service envlayer",
-	"onboard":          "textfmt fsx config env backend gitx state backlog telegram service envlayer runner sched setup",
-	"app":              "textfmt fsx proc config env backend backend/claude backend/codex backend/opencode gitx state backlog telegram quality ledger service notify gate runner orphan discuss newproj suggest routine patrol chat stats sched setup onboard evolve",
+	"textfmt":        "",
+	"fsx":            "",
+	"proc":           "",
+	"config":         "textfmt fsx backend",
+	"env":            "fsx proc config backend",
+	"backend":        "textfmt proc",
+	"backend/claude": "textfmt fsx proc config backend",
+	"backend/codex":  "fsx proc backend",
+	"backend/pi":     "fsx proc backend",
+	"gitx":           "textfmt proc env",
+	"state":          "textfmt fsx config backend",
+	"backlog":        "textfmt fsx env gitx",
+	"telegram":       "textfmt env",
+	"quality":        "textfmt env gitx backlog",
+	"ledger":         "textfmt fsx env backend state quality",
+	"service":        "textfmt fsx proc config env",
+	"envlayer":       "fsx backend",
+	"notify":         "textfmt fsx proc config env backend state backlog telegram",
+	"gate":           "textfmt fsx proc config env backend gitx state backlog ledger notify",
+	"runner":         "textfmt fsx proc config env backend gitx state backlog ledger notify gate",
+	"orphan":         "textfmt env state backlog ledger notify runner",
+	"discuss":        "textfmt fsx proc config env backend gitx state backlog telegram ledger notify runner",
+	"newproj":        "textfmt env backend gitx state backlog ledger notify runner discuss",
+	"suggest":        "textfmt fsx config env gitx backlog telegram notify",
+	"routine":        "textfmt fsx proc config env backend gitx state backlog ledger service notify runner",
+	"patrol":         "textfmt fsx proc config env backend gitx state backlog telegram ledger service notify runner",
+	"chat":           "textfmt fsx proc config env backend gitx state backlog telegram ledger service notify gate runner orphan discuss suggest",
+	"stats":          "textfmt config env backend state ledger",
+	"evolve":         "textfmt fsx proc config env backend state backlog ledger notify gate suggest",
+	"sched":          "textfmt fsx config env backend state backlog telegram ledger notify gate runner orphan discuss newproj routine patrol evolve chat",
+	"setup":          "fsx proc config backend state service envlayer",
+	"onboard":        "textfmt fsx config env backend gitx state backlog telegram service envlayer runner sched setup",
+	"app":            "textfmt fsx proc config env backend backend/claude backend/codex backend/pi gitx state backlog telegram quality ledger service notify gate runner orphan discuss newproj suggest routine patrol chat stats sched setup onboard evolve",
 	// main 是根目录的产品代码：入口和编译进二进制的资产。
 	"main": "textfmt config env runner chat setup onboard app",
 	// testkit 只给测试 import。它 import backend/claude 是为了注册 Claude 后端，给测试看 argv。
@@ -192,11 +192,11 @@ var (
 	archCodexSrc = regexp.MustCompile(`\.codex/sessions|rollout-\*|approval_policy|sandbox_mode|model_reasoning_effort`)
 )
 
-// opencode 同样。--format、--session、--model 别处也用（git log --format、Claude），查的是它专有的。
+// pi 专有的东西同样只能出现在 internal/backend/pi：参数、事件名、配置和会话目录。
 var (
-	archOpencodeFlags = regexp.MustCompile(`(^|[^-\w])--(auto|variant|session=|thinking|attach|dangerously-skip-permissions)\b`)
-	archOpencodeExact = map[string]bool{"step_start": true, "step_finish": true, "tool_use": true, "ProviderAuthError": true, "OPENCODE_CONFIG": true, "OPENCODE_CONFIG_DIR": true, "OPENCODE_DB": true}
-	archOpencodeSrc   = regexp.MustCompile(`\.config", "opencode"|\.config/opencode|\.local/share/opencode|OPENCODE_`)
+	archPiFlags = regexp.MustCompile(`(^|[^-\w])--(no-approve|session-dir|thinking|no-mcp|exclude-tools)\b`)
+	archPiExact = map[string]bool{"agent_settled": true, "message_end": true, "tool_execution_start": true, "PI_CODING_AGENT_DIR": true, "PI_CODING_AGENT_SESSION_DIR": true}
+	archPiSrc   = regexp.MustCompile(`\.pi/agent|"\.pi", "agent"`)
 )
 
 func TestArchClaudeFlagsOnlyInBackend(t *testing.T) {
@@ -212,8 +212,8 @@ func TestArchClaudeFlagsOnlyInBackend(t *testing.T) {
 		if m := archCodexSrc.Find(src); m != nil {
 			t.Errorf("%s 写了 Codex 专有的 %s：只有 internal/backend/codex 能写", path, m)
 		}
-		if m := archOpencodeSrc.Find(src); m != nil {
-			t.Errorf("%s 写了 opencode 专有的 %s：只有 internal/backend/opencode 能写", path, m)
+		if m := archPiSrc.Find(src); m != nil {
+			t.Errorf("%s 写了 pi 专有的 %s：只有 internal/backend/pi 能写", path, m)
 		}
 		fset := token.NewFileSet()
 		f, err := parser.ParseFile(fset, path, src, 0)
@@ -242,11 +242,11 @@ func TestArchClaudeFlagsOnlyInBackend(t *testing.T) {
 			if m := archClaudeFlags.FindString(s); m != "" || archClaudeExact[s] {
 				t.Errorf("%s:%d 的字面量有 Claude CLI 专有的 %q：只有 internal/backend/claude 能写", path, fset.Position(lit.Pos()).Line, strings.TrimSpace(m+map[bool]string{true: s}[archClaudeExact[s]]))
 			}
-			if m := archOpencodeFlags.FindString(s); m != "" || archOpencodeExact[s] {
-				t.Errorf("%s:%d 的字面量有 opencode CLI 专有的 %q：只有 internal/backend/opencode 能写", path, fset.Position(lit.Pos()).Line, strings.TrimSpace(m+map[bool]string{true: s}[archOpencodeExact[s]]))
-			}
 			if m := archCodexFlags.FindString(s); m != "" || archCodexExact[s] {
 				t.Errorf("%s:%d 的字面量有 Codex CLI 专有的 %q：只有 internal/backend/codex 能写", path, fset.Position(lit.Pos()).Line, strings.TrimSpace(m+map[bool]string{true: s}[archCodexExact[s]]))
+			}
+			if m := archPiFlags.FindString(s); m != "" || archPiExact[s] {
+				t.Errorf("%s:%d 的字面量有 pi 专有的 %q：只有 internal/backend/pi 能写", path, fset.Position(lit.Pos()).Line, strings.TrimSpace(m+map[bool]string{true: s}[archPiExact[s]]))
 			}
 			return true
 		})
@@ -263,8 +263,7 @@ func TestArchClaudeFlagsOnlyInBackend(t *testing.T) {
 	for _, c := range []struct {
 		dir string
 		re  *regexp.Regexp
-	}{{"internal/backend/codex", archClaudeSrc}, {"internal/backend/claude", archCodexSrc}, {"internal/backend/opencode", archClaudeSrc}, {"internal/backend/opencode", archCodexSrc},
-		{"internal/backend/claude", archOpencodeSrc}, {"internal/backend/codex", archOpencodeSrc}} {
+	}{{"internal/backend/codex", archClaudeSrc}, {"internal/backend/claude", archCodexSrc}, {"internal/backend/pi", archClaudeSrc}, {"internal/backend/pi", archCodexSrc}, {"internal/backend/claude", archPiSrc}, {"internal/backend/codex", archPiSrc}} {
 		files, err := filepath.Glob(filepath.Join(c.dir, "*.go"))
 		if err != nil {
 			t.Fatal(err)

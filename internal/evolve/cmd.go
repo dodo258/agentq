@@ -76,9 +76,10 @@ const evalUsage = `agentq eval：评测集，给 agentq 自己打分
       --bin：评判这个 agentq，不写就评判自己
   agentq eval baseline [run]               把一次结果并进基线（默认最近一次）
   agentq eval compare [run]                和基线比（默认最近一次）；任一题或任一领域变差就报，退出码 1
-  agentq eval judge --bin 路径 [--out 文件] [题号…]
+  agentq eval judge --bin 路径 [--out 文件] [题号…] [--new-dir 目录 --new 题号… --domain 领域…]
       评测门用：拿这一代的题和判分评判别的 agentq（--fake 跑法，含程序题），和基线比，结论写进 --out；
       结果不进 runs/，不会被 eval baseline 当成最近一次；变差退出码 1
+      --new：候选新加的题，在这一代和候选上各跑一次；--domain：长能力的领域，加上新题后要涨分
 `
 
 func (s *Service) evalDir() string      { return filepath.Join(s.DataDir(), "evals") }

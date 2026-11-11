@@ -367,11 +367,11 @@ func (a *Service) ContinueNote(j *state.Job) string {
 // handoffNote：用户去掉卡住标记后，新任务用接手的提示词，多这一句。
 const handoffNote = "用户去掉了 agentq 写的卡住标记，要接着做。条目现在没有进行中标记：认领时写上面这个分支和当前时间，不另开分支。"
 
-// handoffFacts：条目上一个任务被 agentq 放下过、用户去掉了卡住标记（条目又能挑到了），或者上一个接手任务还没认领就结束了时，
+// handoffFacts：条目上一个任务被 agentq 放下过、用户去掉了卡住标记（条目又能挑到了），或者任务自己标了卡住、引擎去掉标记要再接一次，或者上一个接手任务还没认领就结束了时，
 // 返回记下的分支现状。分支已经不在（删了、合了）或查不了时返回 false，当普通条目。
 func (a *Service) handoffFacts(st *state.State, p backlog.Project, it backlog.Item) (backlog.OrphanFacts, bool) {
 	branch := ""
-	if last := LastTaskJob(st, p, it); last != nil && (last.StuckMarked || last.Handoff) {
+	if last := LastTaskJob(st, p, it); last != nil && (last.StuckMarked || last.Handoff || last.Retake != "") {
 		branch = last.StuckBranch
 	} else if h, ok := FirstVersionHold(st, p, []backlog.Item{it}); ok && h.Job.FirstItem != nil { // new 任务没做好的第一条：用户去掉了进行中标记
 		branch = h.Job.FirstItem.Branch

@@ -184,14 +184,14 @@ On a new install these features are off and only run once you turn on their swit
 | :-- | :-- |
 | **Claude Code CLI** | Default backend. 2.1.316 has reached a merge for real on macOS, including the review gate, the UI gate, `agentq new`, the launchd background and assigning work from the desktop app |
 | **Codex CLI** | Choose it by hand. codex-cli 0.166.0 has reached a merge and resumed after SIGTERM for real on macOS. Direction questions and patrol analysis do not start on it, and it has no dollar cap |
-| **opencode** | Experimental. The real opencode has never been run |
+| **pi** | Choose it by hand. pi 1.5.1 has reached a merge and resumed after SIGTERM for real on macOS; the model follows pi's own settings. pi has no permission prompts and no sandbox, so its tools run as you; direction questions, follow-ups and patrol analysis do not start on it, and it has no dollar cap (the tick stops a task by its usage) |
 | **macOS** | arm64 is the main platform. amd64 cross-compiles and has not run on an Intel Mac |
 | **Linux** | Needs `systemd --user`. amd64 runs the tests and a real systemd acceptance in CI, with no real task run. arm64 cross-compiles |
 | **WSL, Windows** | WSL is unverified. Windows is not supported |
 
-Not yet verified for real: a usage limit and an expired token, assigning work from the Codex desktop app, real tasks and stress tests on Linux, and any opencode run. The gates have not been compared with a bare CLI on real projects either. Details for each item are in the [support matrix](docs/reference/support-matrix.en.md).
+Not yet verified for real: a usage limit and an expired token, assigning work from the Codex desktop app, and real tasks and stress tests on Linux. The gates have not been compared with a bare CLI on real projects either. Details for each item are in the [support matrix](docs/reference/support-matrix.en.md).
 
-Pick a backend at install time with `--backend codex` or `--backend opencode` (`... | sh -s -- --backend codex`). The interface for new tools is described in [docs/backends.md](docs/backends.md) (in Chinese). The prebuilt binary needs only Git, and building from source uses only the Go standard library.
+Claude Code, Codex and pi are supported as backends for now; other CLIs will come later. Pick one at install time with `--backend codex` or `--backend pi` (`... | sh -s -- --backend pi`); without it you get Claude Code. The interface for new tools is described in [docs/backends.md](docs/backends.md) (in Chinese). The prebuilt binary needs only Git, and building from source uses only the Go standard library.
 
 The desktop app's Code tab and the CLI read the same rules and skills. Background tasks don't appear in the client's session list, so check results with `agentq status` or notifications.
 

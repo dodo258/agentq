@@ -1,2 +1,0 @@
-{"type": "step_start", "timestamp": 1763000000000, "sessionID": "ses_abc123", "part": {"id": "prt_s", "sessionID": "ses_abc123", "messageID": "msg_1", "type": "step-start"}}
-{"type": "step_finish", "timestamp": 1763000000001, "sessionID": "ses_abc123", "part": {"id": "prt_f", "sessionID": "ses_abc123", "messageID": "msg_1", "type": "step-finish", "reason": "unknown", "cost": 0.25, "tokens": {"total": 166, "input": 100, "output": 20, "reasoning": 5, "cache": {"read": 40, "write": 1}}}}

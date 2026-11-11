@@ -107,3 +107,53 @@ func TestIntegrationUserSignals(t *testing.T) {
 		t.Error("没有新数据，信号文件不该变")
 	}
 }
+
+// 验收（E7）：前端条目反复被门拦，tick 收信号（不调模型）报出「能力缺口：前端」，带任务号和门的结论；后端正常不报；
+// agentq evolve signals 看得到按领域的账和缺口。同一领域只写一次见 internal/evolve 的 TestCapabilityGapToTodoOnce。
+func TestIntegrationCapabilityGap(t *testing.T) {
+	e := newEnv(t, map[string]any{"paused": true})
+	data := filepath.Join(e.home, ".agentq")
+	at := time.Now().Add(-time.Hour)
+	put := func(path string, v any) {
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.MkdirAll(filepath.Dir(path), 0o700)
+		if err := os.WriteFile(path, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		at = at.Add(time.Second)
+		os.Chtimes(path, at, at)
+	}
+	end := time.Now().Add(-2 * time.Hour)
+	job := func(id, scope, file string) {
+		j := Job{ID: id, Project: "demo", Fingerprint: "fp-" + id, Title: "活 " + id, Item: "活 " + id + " —— 做（范围：" + scope + "）", Status: state.StatusDone, EndedAt: &end}
+		if file != "" {
+			j.Status, j.Gate = state.StatusInterrupted, &state.GateRecord{State: state.GateReturned}
+			put(filepath.Join(data, "gate", id, "last.json"), gate.RunResult{Outcome: "fail", Results: []gate.Result{{Gate: "review", Outcome: gate.Fail, Level: gate.LevelError, Summary: "审查：" + file + " 状态没清", Files: []string{file}}}})
+		}
+		put(filepath.Join(data, "jobs", id, "meta.json"), j)
+	}
+	job("w1", "web/", "web/App.tsx")
+	job("w2", "web/", "web/Nav.tsx")
+	job("w3", "web/", "web/Form.tsx")
+	job("w4", "web/", "")
+	for _, id := range []string{"s1", "s2", "s3", "s4"} {
+		job(id, "server/", "")
+	}
+	e.mustRun("tick")
+	if n := fakeCalls(t, e); n != 0 {
+		t.Fatalf("收信号不该调模型：%d 次", n)
+	}
+	sig := e.mustRun("evolve", "signals")
+	for _, want := range []string{"capability-gap", "前端（frontend）", "缺口，已写「能力缺口：前端」", "后端（backend）", "任务 w1（demo）review 门没过"} {
+		if !strings.Contains(sig, want) {
+			t.Errorf("evolve signals 缺 %q：\n%s", want, sig)
+		}
+	}
+	prop, err := os.ReadFile(filepath.Join(data, "evolve", "proposals.md"))
+	if err != nil || strings.Count(string(prop), "能力缺口：前端") != 1 || strings.Contains(string(prop), "能力缺口：后端") {
+		t.Fatalf("只写前端一条：%v\n%s", err, prop)
+	}
+}

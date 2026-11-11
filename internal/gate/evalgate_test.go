@@ -17,10 +17,11 @@ import (
 func (f *fix) selfRepo(v *gate.EvalVerdict) string {
 	f.t.Helper()
 	f.commitMain(map[string]string{
-		"go.mod":                    "module agentq\n\ngo 1.21\n",
-		"main.go":                   "package main\n\nfunc main() {}\n",
-		"evals/README.md":           "题\n",
-		"internal/evolve/README.md": "判分\n",
+		"go.mod":                      "module agentq\n\ngo 1.21\n",
+		"main.go":                     "package main\n\nfunc main() {}\n",
+		"evals/README.md":             "题\n",
+		"evals/001-impl-go/case.json": "旧题\n",
+		"internal/evolve/README.md":   "判分\n",
 	})
 	tmp := f.t.TempDir()
 	calls := filepath.Join(tmp, "calls")
@@ -73,7 +74,7 @@ func TestEvalGateWorseFails(t *testing.T) {
 	f := newFix(t, fixBacklog)
 	calls := f.selfRepo(&gate.EvalVerdict{Cases: 8, Baseline: true, Compared: 8, Failed: []string{"007-install-existing-skill"},
 		Worse: []string{"007-install-existing-skill：分数 100 → 0", "领域 install：平均分 100.0 → 50.0"}, Better: []string{"001-impl-go：分数 0 → 100"}})
-	j := f.claim("做事", "agent/x", map[string]string{"internal/setup/a.go": "package setup\n"}, ready("agent/x"))
+	j := f.claim("做事", "agent/x", map[string]string{"internal/textfmt/a.go": "package textfmt\n"}, ready("agent/x"))
 	res := f.run(j)
 	r := evalResult(t, res)
 	if res.Outcome != "fail" || r.Outcome != gate.Fail {
@@ -100,7 +101,7 @@ func TestEvalGateWorseFails(t *testing.T) {
 func TestEvalGateNoBaselineRecords(t *testing.T) {
 	f := newFix(t, fixBacklog)
 	f.selfRepo(&gate.EvalVerdict{Cases: 8, Hint: "还没有基线：先 agentq eval run --fake，再 agentq eval baseline"})
-	j := f.claim("做事", "agent/x", map[string]string{"internal/setup/a.go": "package setup\n"}, ready("agent/x"))
+	j := f.claim("做事", "agent/x", map[string]string{"internal/textfmt/a.go": "package textfmt\n"}, ready("agent/x"))
 	res := f.run(j)
 	r := evalResult(t, res)
 	if res.Outcome != "merged" || r.Outcome != gate.Pass || !strings.Contains(r.Summary, "只记录不挡") || !strings.Contains(r.Summary, "agentq eval baseline") || !strings.Contains(r.Summary, "耗时 ") {
@@ -110,7 +111,8 @@ func TestEvalGateNoBaselineRecords(t *testing.T) {
 
 // 改了评测题、判分、门的判定或 .agentq/：评测没变差也不自动合并，等用户拍板；放行之后照合。测试文件不算尺子。
 func TestEvalGateJudgeChangesHold(t *testing.T) {
-	for _, file := range []string{"evals/001-impl-go/case.json", "internal/evolve/score.go", "internal/gate/testgate.go", ".agentq/gates.json", "assets.go"} {
+	for _, file := range []string{"evals/001-impl-go/case.json", "internal/evolve/score.go", "internal/gate/testgate.go", ".agentq/gates.json", "assets.go",
+		"internal/evolve/upgrade.go", "internal/evolve/apply.go", "internal/setup/setup.go"} {
 		t.Run(file, func(t *testing.T) {
 			f := newFix(t, fixBacklog)
 			f.selfRepo(&gate.EvalVerdict{Cases: 8, Baseline: true, Compared: 8})
@@ -164,9 +166,57 @@ func TestEvalGateBuildFails(t *testing.T) {
 func TestEvalGateNoVerdictUnknown(t *testing.T) {
 	f := newFix(t, fixBacklog)
 	f.selfRepo(nil)
-	j := f.claim("做事", "agent/x", map[string]string{"internal/setup/a.go": "package setup\n"}, ready("agent/x"))
+	j := f.claim("做事", "agent/x", map[string]string{"internal/textfmt/a.go": "package textfmt\n"}, ready("agent/x"))
 	res := f.run(j)
 	if r := evalResult(t, res); res.Outcome != "unknown" || r.Outcome != gate.Unknown || !strings.Contains(r.Summary, "评测没给出结论") {
 		t.Fatalf("%+v", res)
+	}
+}
+
+// 修过就记住：新加整道题不算改尺子，照常自动合并；往已有的题目录里加文件算改题，等用户。
+// type 是 fix、改了 Go 代码却没新加题的退回，范围指到 evals/；加了题的过。
+func TestEvalGateNewCaseAndFixNeedsCase(t *testing.T) {
+	newCase := map[string]string{"evals/022-self-grow/case.json": "{}\n", "evals/022-self-grow/check.sh": "exit 0\n"}
+	f := newFix(t, fixBacklog)
+	f.selfRepo(&gate.EvalVerdict{Cases: 8, Baseline: true, Compared: 8})
+	j := f.claim("做事", "agent/x", newCase, ready("agent/x"))
+	res := f.run(j)
+	if r := evalResult(t, res); res.Outcome != "merged" || r.Hold != "" || !strings.Contains(strings.Join(r.Evidence, "\n"), "新加的评测题：evals/022-self-grow") {
+		t.Fatalf("新加整道题照常合并：%+v", res)
+	}
+
+	f = newFix(t, fixBacklog)
+	f.selfRepo(&gate.EvalVerdict{Cases: 8, Baseline: true, Compared: 8})
+	j = f.claim("做事", "agent/x", map[string]string{"evals/001-impl-go/extra.sh": "exit 0\n"}, ready("agent/x"))
+	if res := f.run(j); res.Outcome != "hold" {
+		t.Fatalf("往已有的题里加文件是改题：%+v", res)
+	}
+
+	fixReady := ready("agent/x")
+	fixReady.Type = "fix"
+	f = newFix(t, fixBacklog)
+	f.selfRepo(&gate.EvalVerdict{Cases: 8, Baseline: true, Compared: 8})
+	j = f.claim("做事", "agent/x", map[string]string{"internal/x/x.go": "package x\n"}, fixReady)
+	res = f.run(j)
+	if r := evalResult(t, res); res.Outcome == "merged" || r.Outcome != gate.Fail || !strings.Contains(r.Summary, "修了 bug 没加评测题") || len(r.Files) != 1 || r.Files[0] != "evals/" {
+		t.Fatalf("修 bug 没加题要退回：%+v", r)
+	}
+
+	f = newFix(t, fixBacklog)
+	f.selfRepo(&gate.EvalVerdict{Cases: 8, Baseline: true, Compared: 8})
+	files := map[string]string{"internal/x/x.go": "package x\n"}
+	for k, v := range newCase {
+		files[k] = v
+	}
+	j = f.claim("做事", "agent/x", files, fixReady)
+	if res := f.run(j); res.Outcome != "merged" {
+		t.Fatalf("修 bug 加了题照常合并：%+v", res)
+	}
+
+	f = newFix(t, fixBacklog)
+	f.selfRepo(&gate.EvalVerdict{Cases: 8, Baseline: true, Compared: 8})
+	j = f.claim("做事", "agent/x", map[string]string{"go.mod": "module agentq\n\ngo 1.22\n"}, fixReady)
+	if res := f.run(j); res.Outcome != "merged" {
+		t.Fatalf("只升 Go 版本、依赖的修复不要求加题：%+v", res)
 	}
 }

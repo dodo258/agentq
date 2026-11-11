@@ -75,3 +75,18 @@ var (
 	LightFlow    = lightFlow
 	ChangedLines = changedLines
 )
+
+// SetCapabilities 给测试：换掉运行中这一代的能力清单和检查脚本。
+func SetCapabilities(t *testing.T, caps []Capability, scripts map[string]string) {
+	t.Helper()
+	oldReg, oldScript := capRegistry, capScript
+	capRegistry = func() ([]Capability, error) { return caps, nil }
+	capScript = func(name string) ([]byte, error) {
+		s, ok := scripts[name]
+		if !ok {
+			return nil, errNoRegistry
+		}
+		return []byte(s), nil
+	}
+	t.Cleanup(func() { capRegistry, capScript = oldReg, oldScript })
+}

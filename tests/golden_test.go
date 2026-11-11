@@ -326,8 +326,8 @@ func TestGoldenDefaultConfig(t *testing.T) {
 // 白名单一个键都不能多、不能少：多了可能把 ANTHROPIC_API_KEY 这类东西传给任务。
 func TestGoldenChildEnvKeep(t *testing.T) {
 	want := []string{
-		"ALL_PROXY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "HOME", "HTTPS_PROXY", "HTTP_PROXY", "LANG", "LOGNAME", "NO_PROXY", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_DB", "PATH",
-		"SHELL", "SSH_AUTH_SOCK", "TMPDIR", "USER", "all_proxy", "http_proxy", "https_proxy", "no_proxy",
+		"ALL_PROXY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "HOME", "HTTPS_PROXY", "HTTP_PROXY", "LANG", "LOGNAME", "NO_PROXY", "PATH",
+		"PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "PI_PACKAGE_DIR", "SHELL", "SSH_AUTH_SOCK", "TMPDIR", "USER", "all_proxy", "http_proxy", "https_proxy", "no_proxy",
 	}
 	var got []string
 	for k, v := range proc.ChildEnvKeep {

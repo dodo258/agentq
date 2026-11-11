@@ -470,6 +470,32 @@ func TestInstallShRefusesWithoutVerifiedChecksum(t *testing.T) {
 	}
 }
 
+// 后端只有 claude、codex、pi：opencode 如实说以后再加，写错的说不认识，都在下载之前停下，什么都不装。
+func TestInstallShRefusesUnsupportedBackend(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--backend", "opencode"}, "opencode 暂不支持，以后再加"},
+		{[]string{"--backend=opencode"}, "opencode 暂不支持，以后再加"},
+		{[]string{"--backend", "nosuch"}, "不认识的后端 nosuch"},
+	} {
+		k := newInstallKit(t)
+		k.useFakeGoAndGit("v1.0.0")
+		k.serveRelease("v1.0.0")
+		out, code := k.piped(c.args...)
+		if code == 0 {
+			t.Fatalf("%v 应退出非 0：\n%s", c.args, out)
+		}
+		testkit.AssertContains(t, out, c.want, "claude、codex、pi", "什么都没有改")
+		k.assertNotInstalled()
+		if exists(k.configPath()) || len(k.requests()) != 0 || k.logFile("clone-calls") != "" {
+			t.Fatalf("%v 不该下载或写配置：%v %s", c.args, k.requests(), k.logFile("clone-calls"))
+		}
+	}
+}
+
 // tar 坏了、里面没有程序、程序跑不起来：校验和对也不装。
 func TestInstallShBadArchive(t *testing.T) {
 	t.Parallel()

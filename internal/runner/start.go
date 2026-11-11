@@ -230,18 +230,30 @@ func (a *Service) launch(st *state.State, p backlog.Project, it backlog.Item, ma
 		title = it.Text
 	}
 	j := &state.Job{Project: p.Name, ProjectDir: p.Dir, Item: it.Text, Title: title, Fingerprint: it.Fingerprint, DefaultBranch: def, Manual: manual}
+	first := retakeSource(st, p, it)
+	retake := a.retakeNote(first)
+	if first != nil {
+		j.RetakeOf = first.ID
+		j.Summary = "第一次卡住（任务 " + first.ID + "），引擎用新会话再接一次"
+	}
 	if handoff {
-		j.Summary = "用户去掉了卡住标记，从分支 " + f.Branch + " 接着做"
+		lead := handoffNote
+		if first != nil {
+			lead = retakeClaimNote
+			j.Summary += "，从分支 " + f.Branch + " 接着做"
+		} else {
+			j.Summary = "用户去掉了卡住标记，从分支 " + f.Branch + " 接着做"
+		}
 		j.Handoff, j.StuckBranch, j.StuckWorktree = true, f.Branch, f.Worktree
 		note := a.GateTakeoverNote(st, j, p, it)
-		j, err := a.Start(st, j, BuildTakeoverPrompt(p.Dir, it.Text, f)+contract+handoffNote+note+directionNote(it.Text), "")
+		j, err := a.Start(st, j, BuildTakeoverPrompt(p.Dir, it.Text, f)+contract+lead+note+retake+directionNote(it.Text), "")
 		if err == nil {
 			a.Ledger.AppendNightly(j)
 		}
 		return j, err
 	}
 	j.NewReport = firstReport(st, p, it)
-	return a.Start(st, j, BuildPrompt(p.Dir, it.Text)+contract+a.Gate.PatchNote(p.Dir, def, it.Text)+directionNote(it.Text)+a.constraintsNote(p.Name), "")
+	return a.Start(st, j, BuildPrompt(p.Dir, it.Text)+contract+a.Gate.PatchNote(p.Dir, def, it.Text)+retake+directionNote(it.Text)+a.constraintsNote(p.Name), "")
 }
 
 // constraintsNote：项目学到的约束，接在新任务合同末尾。没接钩子或没有约束时是空的，提示词一字不变。
@@ -275,7 +287,7 @@ func (a *Service) ResumeJob(st *state.State, orig *state.Job, id, extra string) 
 		ID:            id,
 		DefaultBranch: def,
 		Project:       orig.Project, ProjectDir: orig.ProjectDir, Item: orig.Item, Title: orig.Title,
-		Fingerprint: orig.Fingerprint, SessionID: orig.SessionID, ResumeOf: orig.ID, Takeover: orig.Takeover, Backend: orig.Backend, NewReport: orig.NewReport.Next(), Manual: orig.Manual,
+		Fingerprint: orig.Fingerprint, SessionID: orig.SessionID, ResumeOf: orig.ID, Takeover: orig.Takeover, Backend: orig.Backend, NewReport: orig.NewReport.Next(), Manual: orig.Manual, SelfGrow: orig.SelfGrow,
 		Summary: "上次中断（任务 " + orig.ID + "），已用同一会话 " + orig.SessionID + " 续跑",
 	}
 	carryGate(j, orig)
@@ -520,7 +532,7 @@ func (a *Service) Start(st *state.State, j *state.Job, prompt, resume string) (*
 		a.Ledger.WriteMeta(j)
 		a.Ledger.AppendNightly(j)
 		a.noteOutcome(st, j)
-		a.noticeEnded(j)
+		a.noticeEnded(st, j)
 		_ = state.Save(a.StatePath(), st)
 		return j, err
 	}

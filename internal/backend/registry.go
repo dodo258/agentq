@@ -14,6 +14,20 @@ import (
 // Default 是不写 backend 配置时用的后端，老任务记录（Job.Backend 为空）也算它。
 const Default = "claude"
 
+// later 是以后再加、这个版本还不支持的后端：配置或 --backend 写了它时如实说，不当成写错，也不换成别的。
+var later = []string{"opencode"}
+
+// NotYet：name 是以后再加、现在还不支持的后端。
+func NotYet(name string) bool { return slices.Contains(later, name) }
+
+// Unsupported 是没注册的后端给人看的说法：以后再加的说「暂不支持，以后再加」，其余说未知。
+func Unsupported(name string) string {
+	if NotYet(name) {
+		return name + " 暂不支持，以后再加"
+	}
+	return fmt.Sprintf("未知后端 %q", name)
+}
+
 // Factory 按 Options 建一个实例。
 type Factory func(Options) Backend
 
@@ -84,7 +98,11 @@ func Get(name string, o Options) Backend {
 type missing struct{ name string }
 
 func (m missing) err() error {
-	return fmt.Errorf("未知后端 %q，不接活（config.json 的 backend 写错了，或这个版本没有它；现有：%v）", m.name, Names())
+	hint := "config.json 的 backend 写错了，或这个版本没有它"
+	if NotYet(m.name) {
+		hint = "改 config.json 的 backend"
+	}
+	return fmt.Errorf("%s，不接活（%s；现有：%v）", Unsupported(m.name), hint, Names())
 }
 func (m missing) Name() string      { return m.name }
 func (m missing) Caps() Caps        { return Caps{} }

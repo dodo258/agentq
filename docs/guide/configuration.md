@@ -80,6 +80,16 @@ Claude 桌面端另有同类定时任务时，先停用它，否则会运行两�
 
 巡逻本身不消耗额度。有新异常时会启动一次只读的模型分析，每天最多 3 次。推送的通道配置见 [Telegram](telegram.md)。
 
+## 自动更新
+
+一键安装的发行版可以自己升级，默认关：
+
+```json
+{ "auto_update": true }
+```
+
+打开后每天最多看一次发布地址，有更新的版本就在没有任务在跑时照 `agentq update` 装上（安装时用的代理和镜像照样用），装上后任务变差会回滚到上一代。关着时不联网。`agentq status` 的「自动更新」一行显示上次看的时间和结果。详情见[自动更新](../reference/commands.md#自动更新)。
+
 ## 测试门的检查命令
 
 第一次 `agentq init` 或 `agentq add` 时，程序按 `go.mod`、`package.json`、`Cargo.toml`、`pyproject.toml`、`Package.swift` 生成一份 `.agentq/verify`。判断不了时，任务要在实现时补上，也可以自己在项目里提交一个可执行文件：

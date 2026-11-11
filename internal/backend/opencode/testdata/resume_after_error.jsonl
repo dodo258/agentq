@@ -1,5 +1,0 @@
-{"type": "step_start", "timestamp": 1763000000000, "sessionID": "ses_abc123", "part": {"id": "prt_s", "sessionID": "ses_abc123", "messageID": "msg_1", "type": "step-start"}}
-{"type": "error", "timestamp": 1763000000001, "sessionID": "ses_abc123", "error": {"name": "APIError", "data": {"message": "x", "statusCode": 500}}}
-{"type": "step_start", "timestamp": 1763000000002, "sessionID": "ses_abc123", "part": {"id": "prt_s", "sessionID": "ses_abc123", "messageID": "msg_1", "type": "step-start"}}
-{"type": "text", "timestamp": 1763000000003, "sessionID": "ses_abc123", "part": {"id": "prt_x", "sessionID": "ses_abc123", "messageID": "msg_1", "type": "text", "text": "接着做好了", "time": {"start": 1, "end": 2}}}
-{"type": "step_finish", "timestamp": 1763000000004, "sessionID": "ses_abc123", "part": {"id": "prt_f", "sessionID": "ses_abc123", "messageID": "msg_1", "type": "step-finish", "reason": "stop", "cost": 0.25, "tokens": {"total": 166, "input": 100, "output": 20, "reasoning": 5, "cache": {"read": 40, "write": 1}}}}

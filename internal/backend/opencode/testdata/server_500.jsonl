@@ -1,3 +1,0 @@
-{"type": "step_start", "timestamp": 1763000000000, "sessionID": "ses_abc123", "part": {"id": "prt_s", "sessionID": "ses_abc123", "messageID": "msg_1", "type": "step-start"}}
-{"type": "text", "timestamp": 1763000000001, "sessionID": "ses_abc123", "part": {"id": "prt_x", "sessionID": "ses_abc123", "messageID": "msg_1", "type": "text", "text": "{\"verdict\":\"pass\"}", "time": {"start": 1, "end": 2}}}
-{"type": "error", "timestamp": 1763000000002, "sessionID": "ses_abc123", "error": {"name": "APIError", "data": {"message": "Internal", "statusCode": 500, "isRetryable": true}}}

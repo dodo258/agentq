@@ -14,7 +14,7 @@ agentq 把活交给一个 CLI 去做。CLI 的差别都收在 `internal/backend.
    func New(o backend.Options) backend.Backend { return &Backend{o: o} }
    ```
 
-2. 在 `internal/app/wire.go` 的 import 里加一行 `_ "agentq/internal/backend/mycli"`。`tests/arch_test.go` 的 `archAllowed` 加这个包，`AGENTS.md` 的模块表加一行。
+2. 在 `internal/app/wire.go` 的 import 里加一行 `_ "agentq/internal/backend/mycli"`。`tests/arch_test.go` 的 `archAllowed` 加这个包，`AGENTS.md` 的模块表加一行。`install.sh` 的 `check_backend` 认这个名字；它在 `internal/backend/registry.go` 的 `later`（暂不支持的后端）里就删掉。
 
 3. 写测试：假 CLI 脚本加录下来的输出样本，覆盖成功、报错、撞限、截断、丢最后事件。
 
@@ -102,36 +102,44 @@ agentq 把活交给一个 CLI 去做。CLI 的差别都收在 `internal/backend.
 
 **钩子会一直花额度。** 用户配的 Stop 钩子报错时会拦下结束，模型被反复叫回来（实测 3 分钟 50 多条消息），没有回合上限兜底，只有 `timeout`。agentq 不改用户的钩子，确认钩子在后台环境里能跑。
 
-## opencode 的实际情况
+## pi 的实际情况
 
-**实验。真实的 opencode 没跑过**：下面都是 v1.19.5（2026-10-28）的官方文档和源码写的，官方依据在 `internal/backend/opencode/opencode.go` 开头，事件样本是手写的（`testdata/README.md`）。真实跑过之后才能改成「支持」，同时把样本换成录下来的。
+版本 pi 1.5.1（npm 包 `@earendil-works/pi-coding-agent`，MIT）。依据是包里自带的官方文档（`docs/cli.md`、`cli-integration.md`、`json.md`、`sessions.md`、`security.md`、`configuration.md`、`environment-variables.md`、`skills.md`），写在 `internal/backend/pi/pi.go` 开头；下面标「实测」的是 macOS 上真实跑出来的（模型来源是本机 pi 配的 OpenAI 兼容接口，失败样本用真实 pi 对本地假接口跑出）。
 
 | 能力 | 情况 | 缺了怎么办 |
 | --- | --- | --- |
-| 无头、事件流 | 有。`run --format json`，提示词走标准输入（没有终端时读 stdin） | |
-| 续跑 | 有。`--session=<id>`。每行事件都带 `sessionID`，中途被杀也接得上 | 没等到第一个事件就被杀走接手 |
-| 预设会话 id | 无 | 从事件流取 |
-| 结构化输出 | 无，`run` 没有这个参数 | 审查门靠提示词要 JSON（`SchemaByPrompt`），不合格重试一次，再不行判不了，不放行。要 `MustSchema` 的任务不启动 |
-| 引擎审查 | 有。`ProfileReview` 是 `--auto` 跑在一次性 worktree 里，没有 Codex 那样的操作系统沙箱，能力和 Claude 的审查进程一样 | |
-| 用量 | 有，每个 `step_finish` 的 tokens、cost，运行中就有（`UsageStream`） | 金额按它的价目表算，订阅和本地模型是 0：算未知。丢最后一个事件时少最后一步 |
-| 美元、回合上限 | 无（agent 的 `steps` 没有 run 参数） | tick 读运行中的用量，超了才停，最多滞后一个 tick |
-| 额度查询 | 无（多模型来源） | 只在撞限后冷却 |
-| 撞限 | error 事件的 `statusCode=429` 算结构化，`retry-after` 头当重置时间；文字（rate limit、quota 这些）算文字。它自己会先重试，这段时间事件流没动静 | 模型来源多，认不出就落到普通失败和熔断 |
-| 认证 | 查不了：`auth list` 只列存下的凭据，配置里的和本地模型看不到，空的不等于没登录。`ProviderAuthError`、401 由 `Parse` 认出 | 照常启动，第一次失败暂停到 `limit_cooldown` |
-| 终态 | 没有单独的事件：最后的 `step_finish` 的 `reason` 不是 `tool-calls`、`unknown`（它自己的循环也这么判），或者 `error` 事件 | 官方记过丢最后的 `step_finish` 还退 0（#26855、#53207，后者 2026-10-30 关）：当没有终态，不算成功，条目还进行中就走中断续跑 |
-| 只读、无工具、隔离 MCP | 没声明。agent 的 `permission` 是 CLI 强制的（`--agent`），`--auto` 下明确的 deny 还生效（官方），但没真实跑过，这些是安全边界，不靠文档开 | 大方向商量不问，追问回退普通对话，巡逻不分析 |
-| 工具调用记录 | 有，事件自带毫秒时间戳。`run` 把子代理的事件滤掉了 | 「子代理失控」看不到 |
-| 进程标记 | 没放进命令行：npm 版是 node 外壳再起原生程序，`--title` 放得下，但原生程序改不改进程名没验证。靠 `AGENTQ_JOB` | 见「认进程」 |
-| 技能 | `~/.agents/skills`，和 Codex 共用一份（官方也读 `~/.config/opencode/skills`、`~/.claude/skills`） | |
-| 用户级规则 | `~/.config/opencode/AGENTS.md`，块方式。这个文件存在时它不再读 `~/.claude/CLAUDE.md`（官方：每一类第一个算） | |
-| 权限 | `permission_mode` 只有 `default`、`auto`。不加 `--auto` 时要批准的动作（工作目录外、`.env`）一律被拒，读不到技能，所以要 `auto` | 没配不起能写文件的任务 |
-| API Key | 各模型来源的环境变量不传（`envKeep` 只有 `OPENCODE_CONFIG`、`OPENCODE_CONFIG_DIR`、`OPENCODE_DB`），用 `opencode auth login` 存的凭据。`backends.<名字>.env` 还没做 | 只靠环境变量配 Key 的用法跑不起来 |
-| 目录 | `XDG_*` 不传：外壳和 git 走同一份白名单，放了 git 就改读 `$XDG_CONFIG_HOME/git/config`，老用户行为会变 | 改过 `XDG_DATA_HOME`、`XDG_CONFIG_HOME` 的用户，后台任务里 opencode 用默认目录，凭据要在 `~/.local/share/opencode` |
+| 无头、事件流 | 有。`pi -p --mode json`，第一行 session 头，之后一行一个事件，`agent_settled` 是终态。提示词走标准输入（实测） | |
+| 失败的判断 | 失败、截断、中止只在事件里：最后一条助手消息的 `stopReason`（`error`、`length`、`aborted`）和 `agent_settled.aborted`。退出码是 0（实测 401、429、500、截断都退 0），`Parse` 不看退出码 | |
+| 续跑 | 有。`--session <id>`，SIGTERM 之后接得上（实测：pi 退 143，被打断的回答记成 aborted，续跑照常） | |
+| 预设会话 id | 有。`--session-id <id>` 不存在就建（实测） | |
+| 结构化输出 | 无 | 审查门靠提示词要 JSON，只认最后一条消息整条是 JSON（可以包在一个代码块里），不合格重试一次，再不行判不了，不放行 |
+| 引擎审查 | 有。审查进程带 `--no-approve`：候选分支上的 `.pi` 是任务写的，不在审查进程里加载 | pi 没有沙箱，审查进程能做的和 Claude 的审查进程一样 |
+| 用量和金额 | 有。每条助手消息的 token 和金额加起来；金额是 pi 按模型价目表算的，价目表里没有这个模型时一直是 0，记成未知 | |
+| 美元、回合上限 | 无 | 运行中读事件流里的用量（`UsageStream`），tick 超预算就停，最多滞后 5 分钟；回合上限只有超时兜底 |
+| 额度查询 | 无 | 只在撞限后冷却 |
+| 撞限 | 有。上游错误写成「状态码: 原文」（实测 429），只看错误通道，不看模型正文 | 别的写法认不出时落到普通失败和熔断 |
+| 认证 | `pi auth check --provider <默认来源> --json`，只说明本地配了凭据（API key 不验证），`Unverified`。401（实测）和没有凭据时的 `No API key found`（实测，退 1，只有 session 头）由 `Parse` 认出 | 暂停到 `limit_cooldown`，删暂停记录提前恢复。`backends.pi.model` 换了别家来源时查的还是默认那家 |
+| 只读、无工具 | 无。`--tools read,grep,find,ls` 和 `--no-tools` 确实只给模型这些工具，但 `read` 能读工作目录外的任何文件（实测），读密钥挡不住 | 大方向商量不问、按默认开工，追问回退普通对话，巡逻不分析 |
+| 隔离 MCP | 没声明。要它的任务同时要只读工具，pi 给不了，声明了也用不上；`--no-mcp` 加 `--no-extensions` 能不能完全隔离没实测 | 同上 |
+| 图片输入 | 有。`@路径` 附在第一条消息上，路径带逗号也行（实测）。模型本身不收图片时看不到 | |
+| 工具调用记录 | 有，读 agentq 保存的事件流（`tool_execution_start`），时间误差最多一个 tick | pi 没有子代理，「子代理失控」不适用 |
+| 进程标记 | 认不出。pi 启动就把进程名改成 `pi`，macOS 上 `ps` 连命令行带环境都读不到（实测，普通 node 进程读得到）。`--name` 只当会话显示名 | 靠任务外壳认，见「认进程」 |
+| 权限 | pi 没有权限确认，也没有沙箱，工具以本机用户身份直接运行（官方 `security.md`）。`permission_mode` 只有 `default`、`full`，`full` 只记用户在 `agentq start` 确认过，不变成参数 | |
+| 项目信任 | 任务不传 `--approve`/`--no-approve`，跟随用户在 pi 里保存的决定（`/trust`）；没保存过就按 `defaultProjectTrust`，默认跳过项目 `.pi` 里的扩展和设置（官方，实测） | |
+| 技能 | `~/.agents/skills`（官方，和 Codex 共用一份；实测加载） | |
+| 用户级规则 | 配置目录里第一个存在的 `AGENTS.override.md`、`AGENTS.md`、`CLAUDE.md`（源码）。块放进用户已有的 `AGENTS.md` 或 `CLAUDE.md`，都没有才建 `AGENTS.md`；`AGENTS.override.md` 存在时如实说读不到 | |
+| 模型和强度 | 跟随 pi 自己的 `defaultProvider`、`defaultModel`，`backends.pi.model` 覆盖（`--model`，可写 `提供商/模型`），强度映射到 `--thinking`，模型做不到的 pi 自己往下压 | |
+| 环境变量 | 只传 `PI_CODING_AGENT_DIR`、`PI_CODING_AGENT_SESSION_DIR`、`PI_PACKAGE_DIR`。API Key 不传：凭据要存在 pi 的 `auth.json` 或 `models.json` 里，靠环境变量给 Key 的来源在后台会报没有凭据 | |
+| 带你安装和登录 | 无 | 缺 CLI 或没选模型来源时报错，给官方命令 |
 
-`--variant` 对没有这档的模型是什么结果没查到：审查固定传 `medium`，真实验收时要看。
+pi 要 `node` 在后台环境的 PATH 里（npm 装的是 `#!/usr/bin/env node` 脚本）。
+
+## opencode
+
+opencode 暂不支持，以后再加：删除前最后一版后端在提交 `066111f`（`git show 066111f:internal/backend/opencode/opencode.go`），当时依据的官方文档和源码写在那个文件开头。
 
 ## 测试
 
 `testkit.RegisterFake` 注册一个能力可调的假后端，`tests/backend_fake_test.go` 用它覆盖每条降级路径。新后端不用再测这些，只测自己的参数和解析。
 
-默认测试只用假 CLI。真实 CLI 的验收要显式打开，在新的临时 HOME 和临时 Git 项目里跑：Claude 是 `AGENTQ_REAL_E2E=1`，Codex 是 `AGENTQ_REAL_CODEX=1 go test -count=1 -v -run '^TestRealCodex' .`，用已有登录（`CODEX_HOME`），不读用户的 `config.toml` 和钩子，CI 不跑。
+默认测试只用假 CLI。真实 CLI 的验收要显式打开，在新的临时 HOME 和临时 Git 项目里跑：Claude 是 `AGENTQ_REAL_E2E=1`，Codex 是 `AGENTQ_REAL_CODEX=1 go test -count=1 -v -run '^TestRealCodex' .`，用已有登录（`CODEX_HOME`），不读用户的 `config.toml` 和钩子；pi 是 `AGENTQ_REAL_PI=1 go test -count=1 -v -run '^TestRealPi' ./tests`，临时 HOME 里只软链接回 `~/.pi/agent` 的凭据和模型设置，会话、信任记录、扩展都在临时目录。CI 都不跑。

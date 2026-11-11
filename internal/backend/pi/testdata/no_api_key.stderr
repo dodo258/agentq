@@ -1,0 +1,5 @@
+No API key found for anthropic.
+
+Use /login to log into a provider via OAuth or API key. See:
+  <pi 包>/docs/providers.md
+  <pi 包>/docs/models.md

@@ -63,68 +63,71 @@
       "stuck_pending": "State.Jobs[].StuckPending-61",
       "stuck_marked": true,
       "handoff": true,
+      "retake": "State.Jobs[].Retake-64",
+      "retake_of": "State.Jobs[].RetakeOf-65",
       "still_listed": true,
-      "stuck_branch": "State.Jobs[].StuckBranch-65",
-      "stuck_worktree": "State.Jobs[].StuckWorktree-66",
+      "stuck_branch": "State.Jobs[].StuckBranch-67",
+      "stuck_worktree": "State.Jobs[].StuckWorktree-68",
       "manual": true,
+      "self_grow": true,
       "usage": {
-        "input_tokens": 70,
-        "output_tokens": 71,
-        "cache_read_tokens": 72,
-        "cache_write_tokens": 73,
-        "cost_usd": 74.5
+        "input_tokens": 73,
+        "output_tokens": 74,
+        "cache_read_tokens": 75,
+        "cache_write_tokens": 76,
+        "cost_usd": 77.5
       },
       "verify": {
-        "commit": "State.Jobs[].Verify.Commit-77",
-        "on_main": "State.Jobs[].Verify.OnMain-78",
-        "review": "State.Jobs[].Verify.Review-79",
-        "script": "State.Jobs[].Verify.Script-80",
+        "commit": "State.Jobs[].Verify.Commit-80",
+        "on_main": "State.Jobs[].Verify.OnMain-81",
+        "review": "State.Jobs[].Verify.Review-82",
+        "script": "State.Jobs[].Verify.Script-83",
         "failed": true,
-        "note": "State.Jobs[].Verify.Note-82",
-        "pid": 83,
-        "started_at": "2026-03-18T22:00:00Z",
-        "deadline": "2026-03-18T23:00:00Z",
-        "boot_time": 86,
-        "regression": "State.Jobs[].Verify.Regression-87",
-        "regression_pending": "State.Jobs[].Verify.RegressionPending-88",
-        "regression_err": "State.Jobs[].Verify.RegressionErr-89",
-        "clean_err": "State.Jobs[].Verify.CleanErr-90"
+        "note": "State.Jobs[].Verify.Note-85",
+        "pid": 86,
+        "started_at": "2026-03-19T01:00:00Z",
+        "deadline": "2026-03-19T02:00:00Z",
+        "boot_time": 89,
+        "regression": "State.Jobs[].Verify.Regression-90",
+        "regression_pending": "State.Jobs[].Verify.RegressionPending-91",
+        "regression_err": "State.Jobs[].Verify.RegressionErr-92",
+        "clean_err": "State.Jobs[].Verify.CleanErr-93"
       }
     }
   ],
-  "cooldown_until": "2026-03-19T05:00:00Z",
-  "breaker_until": "2026-03-19T06:00:00Z",
-  "fail_streak": 93,
-  "breaker_level": 94,
+  "cooldown_until": "2026-03-19T08:00:00Z",
+  "breaker_until": "2026-03-19T09:00:00Z",
+  "fail_streak": 96,
+  "breaker_level": 97,
   "item_hold": {
-    "State.ItemHold.key-96": "2026-03-19T11:00:00Z"
+    "State.ItemHold.key-99": "2026-03-19T14:00:00Z"
   },
   "branch_blocked": {
-    "State.BranchBlocked.key-99": "State.BranchBlocked.value-100"
+    "State.BranchBlocked.key-102": "State.BranchBlocked.value-103"
   },
   "usage": {
-    "checked_at": "2026-03-19T17:00:00Z",
+    "checked_at": "2026-03-19T20:00:00Z",
     "windows": [
       {
-        "label": "State.Usage.Windows[].Label-106",
-        "scope": "State.Usage.Windows[].Scope-107",
-        "used": 108.5,
-        "resets_at": "2026-03-20T00:00:00Z"
+        "label": "State.Usage.Windows[].Label-109",
+        "scope": "State.Usage.Windows[].Scope-110",
+        "used": 111.5,
+        "resets_at": "2026-03-20T03:00:00Z"
       }
     ],
-    "err": "State.Usage.Err-111",
-    "noted_day": "State.Usage.NotedDay-112",
-    "noted_level": 113
+    "err": "State.Usage.Err-114",
+    "noted_day": "State.Usage.NotedDay-115",
+    "noted_level": 116
   },
   "routine_marks": {
-    "State.RoutineMarks.key-115": {
-      "job_id": "State.RoutineMarks.value.JobID-118",
-      "at": "2026-03-20T09:00:00Z",
+    "State.RoutineMarks.key-118": {
+      "job_id": "State.RoutineMarks.value.JobID-121",
+      "at": "2026-03-20T12:00:00Z",
       "heads": {
-        "State.RoutineMarks.value.Heads.key-121": "State.RoutineMarks.value.Heads.value-122"
+        "State.RoutineMarks.value.Heads.key-124": "State.RoutineMarks.value.Heads.value-125"
       },
       "issues": {
-        "State.RoutineMarks.value.Issues.key-124": "State.RoutineMarks.value.Issues.value-125"
+        "State.RoutineMarks.value.Issues.key-127": "State.RoutineMarks.value.Issues.value-128"
       }
     }
   }

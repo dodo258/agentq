@@ -34,6 +34,8 @@ type realCodex struct {
 	env     []string
 	bin     string
 	project string
+	// backend 是审查记录和任务上该有的后端名，空的是 codex；artifact 是合并后主目录里该有的文件，空的是 a.txt。
+	backend, artifact string
 }
 
 func realCodexEnv(t *testing.T) *realCodex {
@@ -147,6 +149,11 @@ func (r *realCodex) run(dir, name string, args ...string) []byte {
 
 // project 建临时项目和配置，待做里放一条。
 func (r *realCodex) setProject(item string) {
+	r.setProjectWith(item, "danger-full-access", "#!/bin/sh\n[ -f a.txt ] && grep -q hi a.txt\n", nil)
+}
+
+// setProjectWith：权限值、测试门脚本、初始文件由调用方定。
+func (r *realCodex) setProjectWith(item, perm, verify string, files map[string]string) {
 	t := r.t
 	cfgPath := filepath.Join(r.home, ".agentq", "config.json")
 	raw, err := os.ReadFile(cfgPath)
@@ -159,7 +166,7 @@ func (r *realCodex) setProject(item string) {
 	}
 	root := filepath.Join(r.base, "projects")
 	cfg["projects_root"] = root
-	cfg["permission_mode"] = "danger-full-access"
+	cfg["permission_mode"] = perm
 	cfg["timeout"] = "20m"
 	b, _ := json.MarshalIndent(cfg, "", "  ")
 	testkit.WriteInstall(t, cfgPath, string(b)+"\n", 0o600)
@@ -170,7 +177,10 @@ func (r *realCodex) setProject(item string) {
 	testkit.WriteInstall(t, filepath.Join(dir, "README.md"), "fixture\n", 0o644)
 	testkit.WriteInstall(t, filepath.Join(dir, ".gitignore"), ".claude/worktrees/\n", 0o644)
 	testkit.WriteInstall(t, filepath.Join(dir, "AGENTS.md"), "# 验收项目\n只有这个临时仓库获得授权。没有远程，不发消息，不改全局配置。\n", 0o644)
-	testkit.WriteInstall(t, filepath.Join(dir, gate.VerifyScript), "#!/bin/sh\n[ -f a.txt ] && grep -q hi a.txt\n", 0o755)
+	testkit.WriteInstall(t, filepath.Join(dir, gate.VerifyScript), verify, 0o755)
+	for name, content := range files {
+		testkit.WriteInstall(t, filepath.Join(dir, name), content, 0o755)
+	}
 	for _, a := range [][]string{{"init", "-q", "-b", "main"}, {"add", "-A"}, {"commit", "-q", "-m", "init"}} {
 		r.run(dir, "/usr/bin/git", a...)
 	}
@@ -240,11 +250,18 @@ func (r *realCodex) report(j *statepkg.Job) {
 
 func (r *realCodex) assertMerged(j *statepkg.Job) {
 	t := r.t
+	name, artifact := r.backend, r.artifact
+	if name == "" {
+		name = "codex"
+	}
+	if artifact == "" {
+		artifact = "a.txt"
+	}
 	if j.Gate == nil || j.Gate.State != statepkg.GateMerged {
 		t.Fatalf("没有合并：%+v", j.Gate)
 	}
-	if !exists(filepath.Join(r.project, "a.txt")) {
-		t.Error("a.txt 没进主目录")
+	if !exists(filepath.Join(r.project, artifact)) {
+		t.Errorf("%s 没进主目录", artifact)
 	}
 	reviews, _ := filepath.Glob(filepath.Join(r.home, ".agentq", "gate", "reviews", "fixture", "*.json"))
 	if len(reviews) == 0 {
@@ -253,11 +270,11 @@ func (r *realCodex) assertMerged(j *statepkg.Job) {
 	for _, p := range reviews {
 		var rec gate.ReviewRecord
 		b, _ := os.ReadFile(p)
-		if json.Unmarshal(b, &rec) != nil || rec.Backend != "codex" || rec.Verdict == "" || rec.Verdict == "unknown" {
+		if json.Unmarshal(b, &rec) != nil || rec.Backend != name || rec.Verdict == "" || rec.Verdict == "unknown" {
 			t.Errorf("审查记录不对：%s", b)
 		}
 	}
-	if j.Backend != "codex" || j.SessionID == "" {
+	if j.Backend != name || j.SessionID == "" {
 		t.Errorf("%+v", j)
 	}
 	if b := string(mustReadFile(t, filepath.Join(r.project, "docs", "BACKLOG.md"))); !strings.Contains(b, "- [x] ") || strings.Contains(b, "（进行中") {

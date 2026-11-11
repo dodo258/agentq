@@ -51,13 +51,22 @@ const (
 	KindFailed       = "failed"
 	KindCrash        = "crash"
 	KindPatrol       = "patrol"
+	// KindVuln：巡逻每周的 govulncheck 报 agentq 用的 Go 或依赖有已知漏洞。一次就写提案，按模块归并。
+	KindVuln = "vuln"
+	// KindRollback：自己升级后任务变差、回滚了（upgrade.go）。一次就写待做，Key 带提交号。
+	KindRollback = "rollback"
 )
+
+// oneShot：一次就写，不等第二次。缺口和撤掉能力本身就是按次数、按时间算出来的。
+func oneShot(kind string) bool {
+	return kind == KindVuln || kind == KindRollback || kind == KindGap || kind == KindRetire
+}
 
 // selfKind：说的是 agentq 自己的问题，不分项目归并，够次数写提案。其余是项目自己的事。
 func selfKind(kind string) bool {
 	switch kind {
 	case KindGateUnknown, KindGateOverride, KindPlan, KindCrash, KindTimeout, KindPatrol,
-		KindUserStop, KindUserDecide, KindRework, KindPatrolGone, KindRetryWait:
+		KindUserStop, KindUserDecide, KindRework, KindPatrolGone, KindRetryWait, KindVuln, KindRollback, KindGap, KindRetire:
 		return true
 	}
 	return false
@@ -78,6 +87,10 @@ var kindWords = map[string]string{
 	KindRework:       "验收后返工",
 	KindPatrolGone:   "巡逻报了又自己消失",
 	KindRetryWait:    "条目被 retry_after 挡住超过 6 小时",
+	KindVuln:         "Go 或依赖有已知漏洞",
+	KindRollback:     "升级后任务变差",
+	KindGap:          "能力缺口",
+	KindRetire:       "能力该撤掉",
 }
 
 // Signal 是归并后的一类信号。
@@ -125,6 +138,14 @@ type SignalStore struct {
 	PatrolOpen []patrolIssue `json:"patrol_open,omitempty"`
 	// ReworkSeen：记过的返工意见（见 reworkKey）。意见留在「已完成」里，信号过期了也不再算。
 	ReworkSeen []string `json:"rework_seen,omitempty"`
+	// SelfItems：自己长大写进 self_project「待做」的条目，等起任务、等合并（selfgrow.go）。
+	SelfItems []SelfItem `json:"self_items,omitempty"`
+	// Fixes：Key → 修好这一类的合并提交。不随信号过期：同一类修过两次还出现就写成重写。
+	Fixes map[string][]string `json:"fixes,omitempty"`
+	// Domains：近 30 天按领域记的任务和问题，判断能力缺口用（capability.go）。
+	Domains []DomainEvent `json:"domains,omitempty"`
+	// Caps：能力名 → 用得怎么样，判断要不要撤掉（capability.go）。
+	Caps map[string]*CapUse `json:"caps,omitempty"`
 }
 
 func (s *Service) evolveDir() string         { return filepath.Join(s.DataDir(), "evolve") }
@@ -235,6 +256,8 @@ func (st *SignalStore) prune(now time.Time) {
 	old := func(t time.Time) bool { return now.Sub(t) > signalKeepDays*24*time.Hour }
 	st.Signals = slices.DeleteFunc(st.Signals, func(s Signal) bool { return old(s.Last) })
 	st.Pending = slices.DeleteFunc(st.Pending, func(p pendingFail) bool { return old(p.At) })
+	st.pruneSelfItems(now)
+	st.pruneCaps(now)
 	if len(st.ProposedKey) > proposedKeysMax {
 		st.ProposedKey = st.ProposedKey[len(st.ProposedKey)-proposedKeysMax:]
 	}
@@ -271,7 +294,8 @@ func (s *Service) Collect(force bool) (bool, error) {
 		return false, nil
 	}
 	// tick 和命令都没有上层 ctx：读 git 的那几次各有超时
-	in := s.scan(context.Background(), st, now)
+	ctx := context.Background()
+	in := s.scan(ctx, st, now)
 	if in.empty() {
 		return false, nil
 	}
@@ -292,11 +316,13 @@ func (s *Service) Collect(force bool) (bool, error) {
 	learned := map[string][]confirmed{}
 	for _, g := range in.gates {
 		s.absorbGate(st, g, now)
+		s.absorbGateDomains(ctx, st, g)
 	}
 	for _, j := range in.metas {
 		for _, c := range s.absorbMeta(st, j, now) {
 			learned[c.project] = append(learned[c.project], c)
 		}
+		s.absorbJobDomains(ctx, st, j, now)
 	}
 	if in.patrolRead {
 		s.absorbPatrol(st, in.patrol, now)
@@ -323,6 +349,8 @@ func (s *Service) Collect(force bool) (bool, error) {
 		}
 	}
 	st.prune(now)
+	st.detectGaps(now)
+	st.detectRetire(now)
 	s.propose(st, now)
 	st.Checked = now
 	st.Files = in.files
@@ -439,6 +467,9 @@ func (s *Service) scan(ctx context.Context, st *SignalStore, now time.Time) *sca
 	s.scanDecisions(st, now, in)
 	s.scanRework(ctx, st, in)
 	s.scanRetryWait(st, now, in)
+	if st.retireDue(now) {
+		in.touched = true
+	}
 	return in
 }
 
@@ -512,6 +543,7 @@ func (s *Service) absorbMeta(st *SignalStore, j *state.Job, now time.Time) []con
 	if g := j.Gate; g != nil {
 		switch g.State {
 		case state.GateMerged:
+			st.fixedSelfItem(j, g.Merge)
 			pend := st.takePending(j)
 			switch {
 			case g.Passes > 0 || g.Override != "":
@@ -568,6 +600,9 @@ func (s *Service) absorbMeta(st *SignalStore, j *state.Job, now time.Time) []con
 	return out
 }
 
+// patrolVuln 是巡逻 govulncheck 那一类问题的 check（internal/patrol 的 vuln.go）。
+const patrolVuln = "vuln"
+
 // selfPatrol：这类巡逻问题算 agentq 的问题。等用户决定、额度、任务失败（任务记录里已经有）、磁盘、外部推送脚本不算。
 func selfPatrol(check string) bool {
 	switch check {
@@ -581,6 +616,10 @@ func selfPatrol(check string) bool {
 func (s *Service) absorbPatrol(st *SignalStore, issues []patrolIssue, now time.Time) {
 	for _, is := range issues {
 		if !is.FirstSeen.After(st.PatrolAfter) || !selfPatrol(is.Check) {
+			continue
+		}
+		if is.Check == patrolVuln { // 按模块归并，不压掉标题里的版本和编号
+			st.add(now, KindVuln, "", KindVuln+"|"+is.Fingerprint, textfmt.OneLine(is.Title, 200), "巡逻 "+is.Fingerprint+" "+is.FirstSeen.Format("01-02 15:04"))
 			continue
 		}
 		st.add(now, KindPatrol, "", SignalKey(KindPatrol, is.Check, is.Title), "巡逻："+textfmt.OneLine(is.Title, 200), "巡逻 "+is.Fingerprint+" "+is.FirstSeen.Format("01-02 15:04"))

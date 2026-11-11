@@ -1,1 +1,0 @@
-{"type": "error", "timestamp": 1763000000000, "sessionID": "ses_abc123", "error": {"name": "APIError", "data": {"message": "Forbidden?", "statusCode": 401, "isRetryable": false}}}

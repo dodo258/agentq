@@ -278,6 +278,10 @@ func (a *Service) FinishFromResult(st *state.State, j *state.Job) {
 			summary = why
 		}
 	}
+	// 暂停时 tick 不挑新条目（亲手派的也只续跑、不再接）：去掉了标记也没人接，通知又不推，这一条就静静躺着。照常标着卡住推给用户
+	if status == state.StatusDone && j.Kind == "" && !gated && !j.LimitHit && !a.Cfg.Paused {
+		summary = a.noteRetake(st, j, summary)
+	}
 	if status == state.StatusDone && j.Kind == "" && !gated {
 		summary = a.withDoneCommit(j, summary)
 		if !j.LimitHit { // 撞上限的没开工，不算「报告做完」
@@ -399,7 +403,8 @@ func (a *Service) selfMerged(j *state.Job) bool {
 // noteStillListed：任务报告做完了，这一条却还在「待做」、也没标进行中或卡住。条目还能被挑到，retry_after 一到又起一个，
 // 如果每次都这样（任务忘了移到「已完成」、或者根本没做），会一直重做一直花钱。第一次只记下，下一次还这样就标卡住，通知用户。
 func (a *Service) noteStillListed(st *state.State, j *state.Job, summary string) string {
-	if a.Backlog.Excluded(j.Project) { // tick 不会再挑它，也不写它的 BACKLOG
+	// 排除的项目 tick 不会再挑它，也不写它的 BACKLOG；要再接的（noteRetake 刚去掉卡住标记）条目能挑到是有意的，不是忘了移走
+	if a.Backlog.Excluded(j.Project) || j.Retake != "" {
 		return summary
 	}
 	items, err := a.jobItems(j)
@@ -575,7 +580,7 @@ func (a *Service) Finish(st *state.State, j *state.Job, status, summary string) 
 	if stuck {
 		a.writeStuckMark(j)
 	} else {
-		a.noticeEnded(j)
+		a.noticeEnded(st, j)
 	}
 	if j.BudgetHit && j.Kind != state.KindNew {
 		a.noticeBudget(j, stuck)
@@ -598,9 +603,9 @@ func (a *Service) Finish(st *state.State, j *state.Job, status, summary string) 
 }
 
 // noticeEnded 告诉用户一条待办的结果。只说普通任务：别的 Kind 有自己的通知，或者不算「任务做完」。
-// 不说的：过门的（合并、卡片都由门说）；会接着做的（续跑、接手、重试，到了结果再说）；用户自己停的；撞上限、撞预算、自动停、绕过门、标了卡住的（都有专门的通知）。
-func (a *Service) noticeEnded(j *state.Job) {
-	if j.Kind != "" || j.Gate != nil || j.ResumePending || j.LimitHit || j.BudgetHit || j.Transient || j.AutoStop != "" || j.Status == state.StatusKilled {
+// 不说的：过门的（合并、卡片都由门说）；会接着做的（续跑、接手、重试、卡住后引擎再接，到了结果再说）；用户自己停的；撞上限、撞预算、自动停、绕过门、标了卡住的（都有专门的通知）。
+func (a *Service) noticeEnded(st *state.State, j *state.Job) {
+	if j.Kind != "" || j.Gate != nil || j.ResumePending || j.Retake != "" || j.LimitHit || j.BudgetHit || j.Transient || j.AutoStop != "" || j.Status == state.StatusKilled {
 		return
 	}
 	if j.Status == state.StatusInterrupted && (j.Takeover || !a.BackendFor(j.Backend).Caps().Resume) {
@@ -621,6 +626,10 @@ func (a *Service) noticeEnded(j *state.Job) {
 		case listed && it.Stuck:
 			n.Text = name + "卡住了"
 			n.Lines[0] = textfmt.OneLine(it.StuckMark(), 200)
+			if first, err := st.Find(j.RetakeOf); j.RetakeOf != "" && err == nil {
+				n.Text = name + "再接一次还是卡住了"
+				n.Lines = retakeNoticeLines(first, j, it.StuckMark())
+			}
 		case a.selfMerged(j): // noteBypass 说过了
 			return
 		case c != "": // 升级前启动的任务按老合同自己合并

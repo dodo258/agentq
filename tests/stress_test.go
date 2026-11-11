@@ -3499,11 +3499,6 @@ func scenarioCodex(t *testing.T, rng *rand.Rand) {
 	scenarioAltBackend(t, rng, "codex", "danger-full-access", "CODEX_HOME")
 }
 
-// scenarioOpencode：同样的故障演在 opencode 后端上（假 CLI，真实的没跑过）。没有终态事件，结果只看最后的 step_finish 和 error。
-func scenarioOpencode(t *testing.T, rng *rand.Rand) {
-	scenarioAltBackend(t, rng, "opencode", "auto", "OPENCODE_CONFIG")
-}
-
 func scenarioAltBackend(t *testing.T, rng *rand.Rand, backendName, permission, ownEnv string) {
 	e := newStressEnv(t, rng, "")
 	defer e.finish(backendName)
@@ -4235,7 +4230,6 @@ func stressScenarios() []stressScenario {
 		{"stats", 1, scenarioStats},
 		{"configrace", 3, scenarioConfigRace},
 		{"codex", 4, scenarioCodex},
-		{"opencode", 4, scenarioOpencode},
 		{"stoplock", 2, scenarioStopLock},
 		{"corruptboth", 4, scenarioCorruptBoth},
 		{"longrun", 1, scenarioLongRun},

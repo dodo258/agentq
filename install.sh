@@ -12,7 +12,7 @@
 #   --mirror <前缀>      GitHub 下载镜像，程序从 <前缀><github 地址> 取（AGENTQ_MIRROR 同义）。校验文件和源码仍从原地址取，镜像改过的文件会被拒绝
 #   --version <版本>     要装的版本，默认 latest；main 走源码（AGENTQ_VERSION 同义）
 #   --uninstall          转给 agentq remove --yes，数据保留
-# 其余参数交给 setup，如 --backend <名字>（新安装用哪个后端，默认 claude；已有配置不改）、--extras、--plan、--scope skills、--backend-path <路径>。
+# 其余参数交给 setup，如 --backend <名字>（新安装用哪个后端：claude（默认）、codex 或 pi；已有配置不改）、--extras、--plan、--scope skills、--backend-path <路径>。
 # 环境变量 AGENTQ_RELEASE_BASE 换下载地址，优先于仓库名，测试用：latest 取 <地址>/<文件>，指定版本取 <地址>/<版本>/<文件>
 # 全部逻辑在函数里，最后一行才调用：只下载到一半时语法不完整，sh 什么都不会做。
 
@@ -31,7 +31,7 @@ usage() {
 	say '  --mirror <前缀>    GitHub 下载镜像；校验文件和源码仍从原地址取，镜像改过的文件会被拒绝'
 	say '  --version <版本>   要装的版本，默认 latest；main 走源码'
 	say '  --uninstall        卸载，数据保留'
-	say '交给 setup 的常用参数：--backend <名字>（新安装用哪个后端，默认 claude；已有配置不改）、--extras（加装可选 Waza 技能）、--plan（只看计划不安装）、--scope skills（只装技能）、--backend-path <路径>（--claude 同义）'
+	say '交给 setup 的常用参数：--backend <名字>（新安装用哪个后端：claude（默认）、codex 或 pi；已有配置不改）、--extras（加装可选 Waza 技能）、--plan（只看计划不安装）、--scope skills（只装技能）、--backend-path <路径>（--claude 同义）'
 	say '环境变量：AGENTQ_PAUSED、AGENTQ_PROXY、AGENTQ_MIRROR、AGENTQ_VERSION、AGENTQ_RELEASE_BASE（下载地址）'
 }
 
@@ -95,9 +95,25 @@ parse_args() {
 					shift
 				fi
 				;;
+			--backend=* | -backend=*) check_backend "${1#*=}" ;;
+			--backend | -backend)
+				if [ "$#" -gt 1 ]; then
+					check_backend "$2"
+					shift
+				fi
+				;;
 		esac
 		shift
 	done
+}
+
+# 后端现在只有 claude、codex、pi。下载之前就说，不装半截。
+check_backend() {
+	case $1 in
+		claude | codex | pi) ;;
+		opencode) die 'opencode 暂不支持，以后再加。现在能用的后端：claude、codex、pi。什么都没有改。' ;;
+		*) die "不认识的后端 $1。现在能用的后端：claude、codex、pi。什么都没有改。" ;;
+	esac
 }
 
 check_options() {

@@ -17,6 +17,7 @@
   "notify_enabled": true,
   "usage_stop_session_pct": 70,
   "usage_stop_week_pct": 90,
+  "self_grow_enabled": true,
   "discuss_enabled": true,
   "retention_days": 90
 }
