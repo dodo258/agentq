@@ -264,7 +264,7 @@ func TestSelfGrowRollback(t *testing.T) {
 	if v := strings.TrimSpace(e.mustRun("version")); v != versionA || generation(t, e.home) != genA {
 		t.Fatalf("要回滚到上一代（%s %s）：%s %s", versionA, genA, v, generation(t, e.home))
 	}
-	if q := testkit.ReadFile(t, filepath.Join(e.home, ".agentq", "notify.json")); !strings.Contains(q, "已回滚") || !strings.Contains(q, "失败或超时 3 个") {
+	if q := testkit.ReadFile(t, filepath.Join(e.home, ".agentq", "notify.json")); !strings.Contains(q, "已回滚") || !strings.Contains(q, "卡在门上 3 个") {
 		t.Fatalf("要推通知说原因：\n%s", q)
 	}
 	if b := e.backlogOf(dir); !strings.Contains(b, "- [ ] agentq 自身：升级后任务变差") {

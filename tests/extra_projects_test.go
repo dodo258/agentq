@@ -238,7 +238,7 @@ func TestAddOutsideRootRefuses(t *testing.T) {
 		a, _, _, _ := onboardApp(t)
 		dir := filepath.Join(a.Home, "plain")
 		testkit.WriteInstall(t, filepath.Join(dir, "main.py"), "print(1)\n", 0o644)
-		testkit.WriteInstall(t, filepath.Join(a.Home, ".gitconfig"), "[user]\n\tuseConfigOnly = true\n", 0o644) // 不让 git 自己猜身份
+		testkit.WriteInstall(t, filepath.Join(a.Home, ".gitconfig"), "[user]\n\tuseConfigOnly = true\n\tname =\n\temail =\n", 0o644) // 不让 git 自己猜身份；空的名字盖住系统级配置（CI 用 git config --system 配了身份）
 		t.Chdir(dir)
 		err := a.Onboard.CmdAdd([]string{"x"})
 		if err == nil {

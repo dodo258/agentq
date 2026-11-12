@@ -110,12 +110,18 @@ var (
 	instructionDirs  = []string{".claude", ".codex", ".gemini", ".cursor", ".agents", ".opencode"}
 )
 
+// 不分大小写：pi 也读 AGENTS.MD、CLAUDE.MD，macOS 默认的文件系统不分大小写，agents.md 就是 AGENTS.md。
 func isInstructionFile(path string) bool {
 	parts := strings.Split(path, "/")
-	if slices.Contains(instructionNames, parts[len(parts)-1]) {
+	is := func(names []string) func(string) bool {
+		return func(s string) bool {
+			return slices.ContainsFunc(names, func(n string) bool { return strings.EqualFold(n, s) })
+		}
+	}
+	if is(instructionNames)(parts[len(parts)-1]) {
 		return true
 	}
-	return slices.ContainsFunc(parts[:len(parts)-1], func(d string) bool { return slices.Contains(instructionDirs, d) })
+	return slices.ContainsFunc(parts[:len(parts)-1], is(instructionDirs))
 }
 
 func instructionFiles(files []string) []string {

@@ -124,7 +124,7 @@ func TestUpgradeObservation(t *testing.T) {
 		u.job("p2", at.Add(2*time.Hour), state.StatusTimeout, 0)
 		u.job("p3", at.Add(3*time.Hour), state.StatusDone, 0)
 		pl := u.s.plan(t.Context(), u.st, u.now)
-		if pl.Action != EvRollback || pl.Commit != u.b || !strings.Contains(pl.Why, "失败或超时 2 个") {
+		if pl.Action != EvRollback || pl.Commit != u.b || !strings.Contains(pl.Why, "失败、超时或卡在门上 2 个") {
 			t.Fatalf("要回滚：%+v", pl)
 		}
 	})
@@ -153,6 +153,25 @@ func TestUpgradeObservation(t *testing.T) {
 		}
 		if up := openUpgrade(evs, u.s.Version); up != nil {
 			t.Fatal("留下之后不再观察")
+		}
+	})
+	t.Run("还在过门的不算，卡在门上的算失败", func(t *testing.T) {
+		u, at := setup(t)
+		for i, g := range []string{state.GateQueued, state.GateRunning, state.GateStuck} {
+			u.job("g"+string(rune('1'+i)), at.Add(time.Duration(i+1)*time.Hour), state.StatusDone, 0)
+			u.st.Jobs[len(u.st.Jobs)-1].Gate = &state.GateRecord{State: g}
+		}
+		if pl := u.s.plan(t.Context(), u.st, u.now); pl.Action != "" || !strings.Contains(pl.Note, "1/3") {
+			t.Fatalf("在过门的不算数，先等：%+v", pl)
+		}
+		if evs, _ := u.s.LoadUpgrades(); evs[len(evs)-1].Kind == EvKept {
+			t.Fatal("门没出结论不能记留下")
+		}
+		for _, j := range u.st.Jobs[len(u.st.Jobs)-3 : len(u.st.Jobs)-1] {
+			j.Gate.State = state.GateStuck
+		}
+		if pl := u.s.plan(t.Context(), u.st, u.now); pl.Action != EvRollback || !strings.Contains(pl.Why, "卡在门上 3 个") {
+			t.Fatalf("三个都卡在门上要回滚：%+v", pl)
 		}
 	})
 	t.Run("三天凑不够按已有的判", func(t *testing.T) {

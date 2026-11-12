@@ -29,7 +29,7 @@ import (
 //     （自己的进程组，服务被安装引擎卸载重装时不受影响）：在临时克隆里按这一代同样的构建标记 go build，再用新程序 setup --yes，
 //     和 scripts/bootstrap.sh 同一条路：新的一代装在新目录，旧的一代留着，状态、配置不动。
 //   - 第一次升级前先在真实服务上演练一次整代回滚：用这一代自己再装一代、再 rollback 回来（两代代码一样，中间跑 tick 也无妨）。
-//   - 观察期：升级后开始的 observeTasks 个任务结束，和升级前最近 baselineTasks 个比（失败或超时的比例、过门轮数）。
+//   - 观察期：升级后开始的 observeTasks 个任务结束，和升级前最近 baselineTasks 个比（失败、超时或卡在门上的比例，还在过门的不算、过门轮数）。
 //     变差就 rollback 回上一代、推通知，写一条待做去修；带着回滚过的提交的版本不再升，直到修它的那一条合并（或用户自己装上）。
 //     observeMaxDays 天还凑不够，按已有的判。有要做的事时不接新活，最多挡 holdMax。
 //   - 每次演练、升级、留下、回滚、失败记一行 ~/.agentq/evolve/upgrades.jsonl，agentq evolve upgrades 看。
@@ -45,7 +45,7 @@ const (
 	tickWait = 10 * time.Minute
 	// holdMax：有要做的升级或回滚时最多挡这么久的新活，等不到空闲就先接活。
 	holdMax = 2 * time.Hour
-	// worseBad：观察期里失败或超时至少这么多个、比例又比升级前高，才算变差（一两个偶然失败不回滚）。
+	// worseBad：观察期里失败、超时或卡在门上至少这么多个、比例又比升级前高，才算变差（一两个偶然失败不回滚）。
 	worseBad = 2
 	// worseRounds：平均过门轮数比升级前多这么多就算变差。
 	worseRounds = 1.0
@@ -166,7 +166,7 @@ type upgradePlan struct {
 	Note    string
 }
 
-// observation 是观察期的数：任务数、失败或超时的个数、过门轮数的和。
+// observation 是观察期的数：任务数、失败、超时或卡在门上的个数、过门轮数的和。
 type observation struct{ N, Bad, Rounds int }
 
 func (o observation) badRate() float64 {
@@ -184,13 +184,16 @@ func (o observation) avgRounds() float64 {
 }
 
 func (o observation) String() string {
-	return fmt.Sprintf("%d 个任务，失败或超时 %d 个，平均过门退回 %.1f 轮", o.N, o.Bad, o.avgRounds())
+	return fmt.Sprintf("%d 个任务，失败、超时或卡在门上 %d 个，平均过门退回 %.1f 轮", o.N, o.Bad, o.avgRounds())
 }
 
 // countable：算进观察的任务。只算 BACKLOG 的待做、正常结束的；撞额度、撞预算、机器重启、上游抖动、用户停掉的不算。
 func countable(j *state.Job) bool {
 	if j.Kind != "" || j.EndedAt == nil || j.LimitHit || j.BudgetHit || j.Rebooted || j.Transient {
 		return false
+	}
+	if j.Gate != nil && (j.Gate.State == state.GateQueued || j.Gate.State == state.GateRunning) {
+		return false // 还在过门：门的结论没出来，不能当成干净的成功
 	}
 	switch j.Status {
 	case state.StatusDone, state.StatusFailed, state.StatusTimeout:
@@ -199,11 +202,16 @@ func countable(j *state.Job) bool {
 	return false
 }
 
+// gateFailed：CLI 做完了，门判不了、退回用完（卡住等用户）或被放弃，和失败一样算。
+func gateFailed(j *state.Job) bool {
+	return j.Gate != nil && (j.Gate.State == state.GateStuck || j.Gate.State == state.GateAbandoned)
+}
+
 func observe(jobs []*state.Job) observation {
 	var o observation
 	for _, j := range jobs {
 		o.N++
-		if j.Status == state.StatusFailed || j.Status == state.StatusTimeout {
+		if j.Status == state.StatusFailed || j.Status == state.StatusTimeout || gateFailed(j) {
 			o.Bad++
 		}
 		o.Rounds += j.GateRound

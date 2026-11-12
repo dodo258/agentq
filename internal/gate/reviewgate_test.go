@@ -529,7 +529,7 @@ func TestReviewDistrustsInstructionFiles(t *testing.T) {
 
 // 审查前要换回基点版本的文件：各家 CLI 启动时自己会读的配置和指令都算。
 func TestInstructionFilesCoverBackends(t *testing.T) {
-	for _, p := range []string{"CLAUDE.md", "AGENTS.md", "sub/AGENTS.md", ".claude/settings.json", ".codex/config.toml", "opencode.json", "opencode.jsonc", "sub/opencode.json", ".opencode/plugins/x.ts"} {
+	for _, p := range []string{"CLAUDE.md", "AGENTS.md", "sub/AGENTS.md", ".claude/settings.json", ".codex/config.toml", "opencode.json", "opencode.jsonc", "sub/opencode.json", ".opencode/plugins/x.ts", "AGENTS.MD", "CLAUDE.MD", "agents.override.md", "sub/claude.md", ".Claude/x"} {
 		if !gate.IsInstructionFile(p) {
 			t.Errorf("%s 要算指令文件", p)
 		}
