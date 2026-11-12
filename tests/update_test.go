@@ -57,6 +57,7 @@ func runUpdate(t *testing.T, home, src string) (int, string) {
 		"GOCACHE=" + strings.TrimSpace(string(cache)), "GOTOOLCHAIN=local", "GOFLAGS=",
 		"AGENTQ_FAKE_REC=" + filepath.Join(home, "rec"),
 	}
+	testkit.GoTelemetryOff(t, goBin, cmd.Env)
 	b, err := cmd.CombinedOutput()
 	code := 0
 	if ee, ok := err.(*exec.ExitError); ok {

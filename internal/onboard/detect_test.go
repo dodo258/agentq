@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"agentq/internal/testkit"
 )
 
 func writeFiles(t *testing.T, dir string, files map[string]string) {
@@ -248,6 +250,7 @@ func TestVerifyScriptRealGo(t *testing.T) {
 		cmd.Dir = dir
 		home := t.TempDir()
 		cmd.Env = []string{"PATH=" + filepath.Dir(goBin) + ":/usr/bin:/bin", "HOME=" + home, "GOPATH=" + filepath.Join(home, "gopath"), "GOPROXY=off", "GOTOOLCHAIN=local", "GOCACHE=" + filepath.Join(home, "cache"), "GOFLAGS=-modcacherw"}
+		testkit.GoTelemetryOff(t, goBin, cmd.Env)
 		out, err := cmd.CombinedOutput()
 		code := 0
 		if ee, ok := err.(*exec.ExitError); ok {

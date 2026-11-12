@@ -254,3 +254,15 @@ func ClaudeArgv(t *testing.T, req backend.Request) []string {
 	}
 	return inv.Args
 }
+
+// GoTelemetryOff 在临时 HOME 里关掉 Go 的使用统计：开着时 go 退出后还会往
+// <配置目录>/go/telemetry 写文件，赶上 t.TempDir 的清理就报 directory not empty（macOS CI 上碰到过）。
+// env 要和之后跑 go 用的一样（HOME、有没有 XDG_CONFIG_HOME），模式文件才写在 go 会读的位置。
+func GoTelemetryOff(t *testing.T, goBin string, env []string) {
+	t.Helper()
+	cmd := exec.Command(goBin, "telemetry", "off")
+	cmd.Env = env
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go telemetry off: %v %s", err, out)
+	}
+}
