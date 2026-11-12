@@ -29,7 +29,7 @@ test -z "$(git ls-files '*.go' | xargs gofmt -l)" && go vet ./... && go test -ra
 Go 版本见 `go.mod`。Go 1.26.3 在 darwin/arm64 上的 `-race` 运行时有偶发的 fork 段错误（[golang/go#79804](https://github.com/golang/go/issues/79804)），修复在 1.26.5。遇到时换新工具链：
 
 ```sh
-GOTOOLCHAIN=go1.27.3 go test -race ./...
+GOTOOLCHAIN=go1.27.4 go test -race ./...
 ```
 
 Linux 路径在 macOS 上也能编译检查：`GOOS=linux go vet ./...`。
@@ -62,7 +62,7 @@ go build -o /tmp/agentq . && HOME=$(mktemp -d) /tmp/agentq status
 
 ```sh
 AGENTQ_STRESS=1 AGENTQ_STRESS_SEED=201 AGENTQ_STRESS_ROUNDS=40 \
-  GOTOOLCHAIN=go1.27.3 go test -race -count=1 -run '^TestStress$' -timeout 3h -v ./tests
+  GOTOOLCHAIN=go1.27.4 go test -race -count=1 -run '^TestStress$' -timeout 3h -v ./tests
 ```
 
 | 变量 | 作用 |

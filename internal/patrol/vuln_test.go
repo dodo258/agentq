@@ -131,6 +131,25 @@ func TestPatrolVulnSkipAndFail(t *testing.T) {
 	}
 }
 
+// 照提示 go install 装在 ~/go/bin，后台服务的 PATH 里没有它：也要找得到。
+func TestPatrolVulnFindsGoBin(t *testing.T) {
+	e := newPatrolFixture(t)
+	t.Setenv("PATH", t.TempDir())
+	calls := fakeVulncheck(t, "echo '{\"config\":{}}'\n")
+	bin := filepath.Join(e.a.Home, "go", "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(filepath.Dir(calls), "govulncheck"), filepath.Join(bin, "govulncheck")); err != nil {
+		t.Fatal(err)
+	}
+	e.patrol()
+	ps, _ := e.a.LoadPatrol()
+	if countCalls(calls) != 1 || ps.Vuln == nil || ps.Vuln.Note != "" {
+		t.Fatalf("~/go/bin 里的要用上：调用 %d 次，%+v", countCalls(calls), ps.Vuln)
+	}
+}
+
 func readFile(t *testing.T, p string) string {
 	t.Helper()
 	b, err := os.ReadFile(p)

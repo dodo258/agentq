@@ -60,7 +60,6 @@ func TestExcludePatrolDoesNotTouchBacklog(t *testing.T) {
 
 // 巡逻新发现推「巡逻发现」：写了接手待做的、拍板和额度不推，基础设施类（看门狗推）不推；看门狗查不到的（服务没装上、缺夜班报告）照推。
 func TestPatrolNotifies(t *testing.T) {
-	t.Parallel()
 	e := newPatrolFixture(t)
 	r := &PatrolReport{New: []PatrolIssue{
 		{Fingerprint: "disk", Check: "disk", Title: "磁盘剩余不到 20 GB", Evidence: []string{"剩 5 GB"}, Action: "清理"},
@@ -113,6 +112,12 @@ type patrolFixture struct {
 func newPatrolFixture(t *testing.T) *patrolFixture {
 	t.Helper()
 	home, root := t.TempDir(), t.TempDir()
+	// 本机装了 govulncheck 时不能查真的：默认放一个什么都查不出的假的，漏洞用例自己再放
+	fake := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fake, "govulncheck"), []byte("#!/bin/sh\necho '{\"config\":{}}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fake+string(os.PathListSeparator)+os.Getenv("PATH"))
 	// 接手待做要在临时仓库里提交：临时 HOME 下的 git 配置给出身份，也没有全局钩子
 	os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[user]\n\tname = t\n\temail = t@t\n[commit]\n\tgpgsign = false\n"), 0o644)
 	var out bytes.Buffer

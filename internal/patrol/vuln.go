@@ -111,9 +111,17 @@ func parseVulns(r io.Reader) ([]VulnFinding, error) {
 	return out, nil
 }
 
+// findVulncheck：先找 PATH。照提示 go install 会装到 ~/go/bin（Go 默认的 GOPATH），后台服务的 PATH 里没有它，再看这里。
+func findVulncheck(home string) (string, error) {
+	if p, err := exec.LookPath("govulncheck"); err == nil {
+		return p, nil
+	}
+	return exec.LookPath(filepath.Join(home, "go", "bin", "govulncheck"))
+}
+
 // runVulncheck 跑一次。返回的 note 非空是没跑成（没装、出错），findings 这时不可信。
-func runVulncheck(ctx context.Context) ([]VulnFinding, string) {
-	tool, err := exec.LookPath("govulncheck")
+func runVulncheck(ctx context.Context, home string) ([]VulnFinding, string) {
+	tool, err := findVulncheck(home)
 	if err != nil {
 		return nil, "没装 govulncheck，跳过漏洞检查（装上：" + vulnInstall + "）"
 	}
@@ -146,7 +154,7 @@ func runVulncheck(ctx context.Context) ([]VulnFinding, string) {
 func (a *Service) checkVuln(ps *PatrolState, now time.Time) []PatrolIssue {
 	v := ps.Vuln
 	if v == nil || now.Before(v.Run) || now.Sub(v.Run) >= vulnEvery {
-		found, note := runVulncheck(context.Background())
+		found, note := runVulncheck(context.Background(), a.Home)
 		next := &VulnState{Run: now, Note: note, Findings: found}
 		if note != "" { // 一周说一次，status 的巡逻那一行也带着
 			a.Logf("每周漏洞检查：%s", note)

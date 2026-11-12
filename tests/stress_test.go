@@ -37,7 +37,7 @@ import (
 // 暴力测试。AGENTQ_STRESS=1 才跑；默认 go test 跳过。真的起子进程：编译好的 agentq（-race）、编译好的假 claude、
 // 假 Telegram、假 ASC、假 gh、假 launchctl，全部用临时 HOME 和临时 projects_root。
 //
-//	AGENTQ_STRESS=1 AGENTQ_STRESS_SEED=42 AGENTQ_STRESS_ROUNDS=60 GOTOOLCHAIN=go1.27.3 go test -race -run '^TestStress$' -timeout 2h -v ./tests
+//	AGENTQ_STRESS=1 AGENTQ_STRESS_SEED=42 AGENTQ_STRESS_ROUNDS=60 GOTOOLCHAIN=go1.27.4 go test -race -run '^TestStress$' -timeout 2h -v ./tests
 //
 // AGENTQ_STRESS_ONLY=<场景名> 只跑一个场景；AGENTQ_STRESS_NORACE=1 编译不带 -race 的 agentq（调试场景时快一点）；
 // AGENTQ_STRESS_KEEP=1 不删现场。出问题时打印种子、轮次和场景；同一种子同一轮的破坏序列相同（进程调度的时序当然不同）。

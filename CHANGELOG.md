@@ -2,7 +2,7 @@
 
 只写用得到的变化。
 
-## 未发布
+## v0.2.0
 
 ### 可以用 pi 当后端
 
@@ -12,11 +12,11 @@
 - 做不到的如实降级：只读和无工具挡不住读工作目录外的文件，所以大方向商量不问、追问回退成普通对话、巡逻不起分析；没有美元上限，tick 按运行中的用量停任务；没有强制结构化输出，审查门靠提示词要 JSON，给不出就判不了、不合并。`agentq doctor` 列出能力表。
 - 审查进程不加载候选分支上项目 `.pi` 里的扩展和设置；任务跟随你在 pi 里保存的项目信任。
 
-### 后端先只支持 Claude Code 和 Codex
+### 下掉 opencode
 
 - 下掉了从没真实跑过的 opencode 后端，其他 CLI 以后再加（接法见 `docs/backends.md`）。
 - `install.sh --backend opencode`、`agentq setup --backend opencode` 直接说「opencode 暂不支持，以后再加」并退出，什么都不装；`install.sh` 在下载之前就拦下，`--backend` 写了别的名字也一样。
-- 配置里 `backend` 或 `project_backends` 写了 opencode 的：不接活，不换成别的后端，`agentq doctor` 报「opencode 暂不支持，以后再加」，改成 `claude` 或 `codex` 就好。
+- 配置里 `backend` 或 `project_backends` 写了 opencode 的：不接活，不换成别的后端，`agentq doctor` 报「opencode 暂不支持，以后再加」，改成 `claude`、`codex` 或 `pi` 就好。
 
 ### 发现自己不会什么，长出成套能力（自我进化 E7）
 
@@ -44,7 +44,7 @@
 配了 `self_project`（agentq 源码所在的项目）时默认打开，`self_grow_enabled=false` 关掉就和以前一样。详见 `docs/reference/commands.md` 的「自己长大」。
 
 - agentq 自己反复出的问题（门判不了、任务超时、巡逻发现等）直接写进 `self_project` 的「待做」并自动起任务，不再等你回「做 N」；`self_project` 在 `exclude_projects` 里也做。同一类修过两次还出现，条目写成重写这一块。
-- 巡逻每周用 `govulncheck` 查一次正在运行的 agentq 编进去的 Go 版本和依赖，有已知漏洞就写进待做；没装就跳过，`agentq status` 里说明怎么装。
+- 巡逻每周用 `govulncheck` 查一次正在运行的 agentq 编进去的 Go 版本和依赖，有已知漏洞就写进待做；没装就跳过，`agentq status` 里说明怎么装。照提示 `go install` 装在 `~/go/bin` 的也找得到（后台服务的 PATH 里没有这个目录）。
 - 评测门：agentq 自己的修复（`type` 是 `fix`、改了 Go 代码）必须新加一道能复现它的评测题，不然退回；只新加整道题不再算改尺子，照常自动合并。新加评测题 `022-self-grow-todo`。
 - 合并过了评测门的修复，在没有任务在跑、在过门时用同一安装引擎升级自己（有要升的就先不接新活，最多挡 2 小时）；第一次升级前先在真实服务上演练一次整代回滚，演练完原来的回滚点还在。升级后 3 个任务的失败、超时、过门轮数比升级前差就回滚到上一代、推通知说原因、写一条待做去修；带着回滚掉那次改动的版本都不再升，直到修它的那一条合并。
 - 每次安装后只留现在、上一代和最近 3 代程序，旧的代自动删掉（以前一直堆着）。

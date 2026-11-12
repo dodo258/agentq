@@ -93,7 +93,7 @@ agentq picks items, starts and monitors processes, runs the quality gates, merge
   <img src="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/flow-en-light.svg" width="900" alt="You say it, and it goes into docs/BACKLOG.md. agentq tick checks conditions and starts a separate claude -p process in its own worktree, which builds, self-tests and writes ready.json. agentq runs the gates (tests, review); when they pass, the engine merges and wraps up. A failed gate sends the work back to the task, and if it still fails it waits for you. Interrupted or limited work resumes in the same session. Results go to the daily digest and morning report.">
 </picture>
 
-The scheduler runs every 5 minutes and again whenever a task ends, so a queued item starts within seconds. By default 2 tasks run at once, with at most 1 per project. Tasks don't depend on a terminal or client, but the machine has to stay on.
+The scheduler runs every 5 minutes and again whenever a task ends, so a queued item starts within seconds. By default 2 tasks run at once. Within one project, items that declare `（范围：…）` (scope) with no overlap and no dependency on each other can also run 2 at a time; items without a scope run one at a time. Tasks don't depend on a terminal or client, but the machine has to stay on.
 
 The scheduler never runs `git push`. Merges happen on the local default branch, and pushing to a remote needs separate authorization. Full rules: [scheduling](docs/reference/scheduling.md) (in Chinese).
 
@@ -134,6 +134,7 @@ Direction questions (design, UI, technology choices) get asked once before work 
 | **A usage limit is hit** | Cools down until the reset time, then resumes the same session |
 | **Quota is nearly gone** | Starts no new tasks once the 5-hour window reaches 70% or the weekly quota reaches 90%, leaving the rest for you. `agentq run` is refused at 98% |
 | **Tasks fail right after starting** | Three tasks exiting within 3 minutes trip a breaker that stops new starts for 30 minutes. Another failure doubles that, up to 4 hours |
+| **A task gets stuck on its own** | Picks it up once more in a new session from the same branch, with instructions to research first and try another approach; only a second stall notifies you. Anything that needs your call (authorization, payment, accounts, product direction) comes straight to you |
 | **A task runs away** | Each run has a budget cap, subagent runaway stops it automatically, and the default timeout is 4 hours. Its changes are kept |
 | **The state file breaks** | Unreadable: nothing is wrapped up or started. Corrupt: the bad file is backed up, state is rebuilt from task records, and no new task starts that round |
 | **Run data grows** | Task records are kept 90 days, and logs are trimmed |
@@ -177,6 +178,7 @@ On a new install these features are off and only run once you turn on their swit
 | **Night shift** | `night_enabled` | Moves the backlog along, triages issues and writes a report at 01:00 every day |
 | **Review** | `review_enabled` | Reviews recent commits and failed tasks and writes the morning report at 06:30 every day |
 | **Patrol** | `patrol_enabled` | Checks services, backups, stuck tasks, quota and disk every hour, and starts one read-only analysis when something new goes wrong |
+| **Auto update** | `auto_update` | A release installed with the one-line script checks for a new version at most once a day and installs it when no task is running; if things get worse afterwards it rolls back to the previous generation and won't auto-install that version again. See the [command reference](docs/reference/commands.md#自动更新) (in Chinese) |
 
 ## Support
 
