@@ -162,3 +162,9 @@ func (a *Service) FirstHoldLines(st *state.State) []string {
 	}
 	return out
 }
+
+// TakeoverNow：这个中断的任务续跑不了（后端不能续跑，或是新项目第一版、会话在 projects_root），
+// tick 的孤儿接手就是它的续跑，下一次 tick 直接接手，不等没人在做的窗口，巡逻也不用另写接手待做。
+func (a *Service) TakeoverNow(j *state.Job) bool {
+	return j != nil && j.EndedAt != nil && j.Status == state.StatusInterrupted && (!a.BackendFor(j.Backend).Caps().Resume || j.SessionInRoot())
+}

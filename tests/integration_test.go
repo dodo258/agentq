@@ -57,7 +57,7 @@ func TestMain(m *testing.M) {
 
 // 假 claude：auth status 回登录状态；否则记录参数/目录/环境，按 prompt 里的关键字睡几秒、写 JSON。
 // READYMERGE：照新合同只做到分支可合并：认领（提交 BACKLOG 的进行中标记）、在任务分支提交改动和 .agentq/ready.json，不合并。
-// 再带 TASKSCRIPT：提交前在任务 worktree 里跑 $HOME/fake-task.sh（用例自己写要改什么）。TYPE=fix 之类：ready.json 的 type（默认 feature）。
+// 再带 TASKSCRIPT：提交前在任务 worktree 里跑 $HOME/fake-task.sh（用例自己写要改什么，提示词在 $FAKE_PROMPT）。TYPE=fix 之类：ready.json 的 type（默认 feature）。
 // SELFMERGE：不写 ready.json，自己把条目移到「已完成」并提交，写上合并提交号（绕过门、升级前的老任务）。
 // INTERRUPT：首次运行时像 agent 认领一样给 BACKLOG 那一条加进行中标记，然后停在「继续等通知」；
 // 用 -r 续跑时把那一条勾掉并报已合并，prompt 里还有 AGAIN 就再中断一次。
@@ -140,8 +140,12 @@ out=$(printf '%s\n' "$prompt" | sed -n 's/^产出文件：//p')
 overbudget='{"type":"result","subtype":"error_max_budget_usd","is_error":true,"result":"","session_id":"s-over","total_cost_usd":150.01}'
 if [ -n "$AGENTQ_FAKE_BUDGET" ]; then printf '%s\n' "$overbudget"; exit 1; fi
 case "$prompt" in
-  *大方向商量进程*) # 生成问题：$HOME/fake-discuss.json 在就原样输出，否则一个问题两个方向
+  *大方向商量进程*) # 生成问题：$HOME/fake-discuss.json 在就原样输出；REPOTIDY 像真进程一样只读看工作目录里各仓库的 worktree 和分支数；否则一个问题两个方向
     if [ -f "$HOME/fake-discuss.json" ]; then cat "$HOME/fake-discuss.json"
+    elif case "$prompt" in *REPOTIDY*) true ;; *) false ;; esac; then
+      seen=""
+      for g in */.git; do r=${g%/.git}; seen="$seen$r 有 $(git -C "$r" worktree list | wc -l | tr -d ' ') 个 worktree、$(git -C "$r" branch --list | wc -l | tr -d ' ') 个分支；"; done
+      printf '{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"s-dc","structured_output":{"questions":[{"text":"命令行还是窗口界面","default":"命令行（依据：要扫的是 git 仓库）"},{"text":"能清的指什么","default":"多余的 worktree 和已合并分支（依据：%s）；开发测试只用临时目录里造的数据，真实数据只读跑"}],"directions":[]}}\n' "$seen"
     else printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"s-dc","structured_output":{"questions":[{"text":"想要什么感觉","default":"简洁"}],"directions":["纸墨风","终端风"]}}'; fi ;;
   *界面门的独立审查进程*) # 界面门的审查进程：$HOME/fake-ui-review.json 在就原样输出，否则通过
     if [ -f "$HOME/fake-ui-review.json" ]; then cat "$HOME/fake-ui-review.json"
@@ -245,7 +249,7 @@ case "$prompt" in
     fi
     n=$(printf '%s' "$prompt" | sed -n 's/.*FILE=\([a-z0-9.]*\).*/\1/p'); [ -z "$n" ] && n=work.txt
     echo "$$" >> "$wt/$n"
-    case "$prompt" in *TASKSCRIPT*) (cd "$wt" && sh "$HOME/fake-task.sh") ;; esac
+    case "$prompt" in *TASKSCRIPT*) (cd "$wt" && FAKE_PROMPT="$prompt" sh "$HOME/fake-task.sh") ;; esac
     mkdir -p "$wt/.agentq"
     ty=$(printf '%s' "$prompt" | sed -n 's/.*TYPE=\([a-z]*\).*/\1/p'); [ -z "$ty" ] && ty=feature
     printf '{"branch":"%s","type":"%s","acceptance":"看 %s","progress":"做好了 %s"}\n' "$b" "$ty" "$n" "$n" > "$wt/.agentq/ready.json"
@@ -657,8 +661,8 @@ func TestIntegrationCooldownAndFailures(t *testing.T) {
 		t.Fatalf("撞上限后应收尾且不启动甲二：\n%s", out)
 	}
 	st := e.state()
-	if d := time.Until(st.CooldownUntil); d < 55*time.Minute || d > 61*time.Minute {
-		t.Errorf("冷却截止应约为 1 小时后：%v", st.CooldownUntil)
+	if d := time.Until(st.CooldownOf("")); d < 55*time.Minute || d > 61*time.Minute {
+		t.Errorf("冷却截止应约为 1 小时后：%v", st.CooldownOf(""))
 	}
 	if j := e.jobByTitle("撞上限"); j.Status != state.StatusFailed || !j.LimitHit {
 		t.Errorf("撞上限：%+v", j)
@@ -1241,8 +1245,8 @@ func TestIntegrationLimitDetection(t *testing.T) {
 	if out := e.mustRun("tick"); strings.Contains(out, "冷却") {
 		t.Errorf("成功结果提到 rate limit 不应冷却：\n%s", out)
 	}
-	if j, st := e.jobByTitle("提到限流"), e.state(); j.Status != state.StatusDone || j.LimitHit || !st.CooldownUntil.IsZero() {
-		t.Errorf("应跑完、不算撞上限：%+v，冷却到 %v", j, st.CooldownUntil)
+	if j, st := e.jobByTitle("提到限流"), e.state(); j.Status != state.StatusDone || j.LimitHit || !st.CooldownOf("").IsZero() {
+		t.Errorf("应跑完、不算撞上限：%+v，冷却到 %v", j, st.CooldownOf(""))
 	}
 
 	testkit.MkProject(t, e.root, "beta", "- [ ] 有重置时间 —— RESETS\n")
@@ -1253,7 +1257,7 @@ func TestIntegrationLimitDetection(t *testing.T) {
 		t.Fatalf("应按提示的重置时间冷却：\n%s", out)
 	}
 	// 提示只精确到分钟，重置后再加 1 分钟
-	if d := time.Until(e.state().CooldownUntil); d < 119*time.Minute || d > 121*time.Minute {
+	if d := time.Until(e.state().CooldownOf("")); d < 119*time.Minute || d > 121*time.Minute {
 		t.Errorf("冷却应约 2 小时（按 resets 时间），实际 %s", d)
 	}
 }

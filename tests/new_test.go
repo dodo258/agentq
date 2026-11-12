@@ -301,10 +301,10 @@ func TestIntegrationNewBadEnds(t *testing.T) {
 		t.Errorf("撞上限：%+v", j)
 	}
 	st := e.state()
-	if !time.Now().Before(st.CooldownUntil) {
-		t.Errorf("撞上限要冷却：%+v", st.CooldownUntil)
+	if !time.Now().Before(st.CooldownOf("")) {
+		t.Errorf("撞上限要冷却：%+v", st.CooldownOf(""))
 	}
-	st.CooldownUntil = time.Time{}
+	delete(st.BackendLimits, "claude")
 	if err := state.Save(filepath.Join(e.home, ".agentq", "state.json"), st); err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +392,7 @@ func TestIntegrationNewRefused(t *testing.T) {
 
 	// 用量冷却
 	statePath := filepath.Join(e.home, ".agentq", "state.json")
-	if err := state.Save(statePath, &State{CooldownUntil: time.Now().Add(time.Hour)}); err != nil {
+	if err := state.Save(statePath, &State{BackendLimits: claudeLimit(time.Now().Add(time.Hour), nil)}); err != nil {
 		t.Fatal(err)
 	}
 	if out, code := e.run("new", "做个工具"); code == 0 || !strings.Contains(out, "用量冷却") {
@@ -433,7 +433,7 @@ func TestIntegrationNewCapacity(t *testing.T) {
 	}
 	os.Remove(filepath.Join(e.home, "fake-usage.json"))
 	st := e.state()
-	st.Usage = nil
+	st.SetUsageOf("", nil)
 	if err := state.Save(filepath.Join(e.home, ".agentq", "state.json"), st); err != nil {
 		t.Fatal(err)
 	}

@@ -199,8 +199,8 @@ func (a *Service) FinishFromResult(st *state.State, j *state.Job) {
 		if t := res.ResetAt; !limitFromStructuredOnly(j.Kind) && t.After(a.Now()) {
 			until, how = t, "（按提示的重置时间）"
 		}
-		st.ExtendCooldown(j.Backend, a.Cfg.Backend, until)
-		cooling := st.CooldownOf(j.Backend, a.Cfg.Backend)
+		st.ExtendCooldown(j.Backend, until)
+		cooling := st.CooldownOf(j.Backend)
 		summary = "撞到用量上限，暂停启动到 " + textfmt.WhenCN(cooling) + how + "；" + summary
 		a.Logf("任务 %s 撞到用量上限，冷却到 %s%s", j.ID, cooling.Format("2006-01-02 15:04"), how)
 		var items []backlog.Item
@@ -245,9 +245,12 @@ func (a *Service) FinishFromResult(st *state.State, j *state.Job) {
 	if status == state.StatusDone && j.Kind == state.KindNew {
 		status, summary = a.Hooks.CheckNewResult(j, res, summary)
 	}
-	gated := false
+	gated, ask := false, ""
 	if status == state.StatusDone && !j.LimitHit && j.Kind == "" {
-		gated = a.enqueueReady(st, j)
+		gated, ask = a.enqueueReady(st, j)
+	}
+	if ask != "" { // 没进门：同一会话续一轮补提交说明，下面按做完了的那些都不走
+		status, summary = state.StatusInterrupted, ask+"；结果最后："+summary
 	}
 	if gated {
 		if j.Gate.State == state.GateQueued {
@@ -353,32 +356,54 @@ func (a *Service) interruptedNoResult(j *state.Job, status, summary string) (str
 }
 
 // enqueueReady：条目标着进行中、任务分支上有合格的 ready.json，就排进门队列。ready.json 不合格的只记下，这一条按没做完走（续跑时任务再写）。
-func (a *Service) enqueueReady(st *state.State, j *state.Job) bool {
+// 进门前缺门说明、要任务先补的（见 askNote），不排队，ask 是给用户看的说明。
+func (a *Service) enqueueReady(st *state.State, j *state.Job) (gated bool, ask string) {
 	p := backlog.Project{Name: j.Project, Dir: j.ProjectDir}
 	items, err := a.jobItems(j)
 	if err != nil {
 		a.Logf("任务 %s：读不了 BACKLOG，不知道分支，当没写 ready.json：%v", j.ID, err)
-		return false
+		return false, ""
 	}
 	it, ok := stuckTarget(j, p, items)
 	if !ok || !it.InProgress || it.Stuck {
-		return false
+		return false, ""
 	}
 	r, head, found, err := a.Gate.ReadReady(j.ProjectDir, backlog.MarkerBranch(it.Text))
 	if err != nil {
 		a.Logf("任务 %s：%v", j.ID, err)
-		return false
+		return false, ""
 	}
 	if !found {
-		return false
+		return false, ""
 	}
 	j.Fingerprint = it.Fingerprint   // 任务改过正文时指纹变了：退回时要认得这一条
 	if a.Gate.OnJobBranch(j, head) { // 它自己合并了：过不了门，也不能当引擎合的
 		a.Gate.Bypassed(st, j, r, head)
-		return true
+		return true, ""
+	}
+	if ask := a.askNote(j, head); ask != "" {
+		return false, ask
 	}
 	a.Gate.Enqueue(j, r, head)
-	return true
+	return true, ""
+}
+
+// askNote：进门前按测试门同一段判断查门说明（gate.NoteMissing）。缺了、这一轮还没要过、能用同一会话续跑，就不进门，
+// 续一轮只让任务补提交说明：不占门的名额，也不算退回轮次。补了还缺照常进门，由测试门退回。不用要时返回空。
+func (a *Service) askNote(j *state.Job, head string) string {
+	be := a.BackendFor(j.Backend)
+	// 和门退回一样：接不回会话的、排除的项目里不会自动续跑的，直接进门
+	if len(j.NoteAsk) > 0 || !be.Caps().Resume || j.SessionID == "" || j.SessionInRoot() || (a.Backlog.Excluded(j.Project) && !j.Manual && !j.SelfGrow) {
+		return ""
+	}
+	flags := a.Gate.NoteMissing(j, head)
+	if len(flags) == 0 {
+		return ""
+	}
+	j.NoteAsk, j.ResumePending = flags, true
+	msg := "进门前查出缺门说明（" + textfmt.OneLine(strings.Join(flags, "；"), 200) + "），没进门，用同一会话续一轮只补提交说明，不算审查轮次"
+	a.Logf("任务 %s：%s", j.ID, msg)
+	return msg
 }
 
 // noteBypass：新合同的任务没写 ready.json，「已完成」里却写了合并提交：它自己合并了，没过门。合并不撤销，告诉用户。

@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -201,7 +203,8 @@ func TestRegressClockJumpBack(t *testing.T) {
 	ended := future
 	it := backlog.ParseBacklog("## 待做\n- [ ] 新条目 —— x\n")[0]
 	st.Jobs = append(st.Jobs, &Job{ID: "old", Project: "alpha", ProjectDir: dir, Item: it.Text, Title: it.Title, Fingerprint: it.Fingerprint, Status: state.StatusFailed, StartedAt: future, EndedAt: &ended})
-	st.BreakerUntil, st.CooldownUntil = future, future
+	st.BreakerUntil = future
+	st.ExtendCooldown("", future)
 	st.ItemHold = map[string]time.Time{"x": future}
 	if err := state.Save(filepath.Join(e.home, ".agentq", "state.json"), st); err != nil {
 		t.Fatal(err)
@@ -218,8 +221,8 @@ func TestRegressClockJumpBack(t *testing.T) {
 	}
 	waitExit(t, beta.PID, 15*time.Second)
 	st = e.state()
-	if st.BreakerUntil.After(time.Now().Add(5*time.Hour)) || st.CooldownUntil.After(time.Now().Add(9*24*time.Hour)) || st.ItemHold["x"].After(time.Now().Add(13*time.Hour)) {
-		t.Errorf("未来的时间要改回来：%+v %+v %+v", st.BreakerUntil, st.CooldownUntil, st.ItemHold)
+	if st.BreakerUntil.After(time.Now().Add(5*time.Hour)) || st.CooldownOf("").After(time.Now().Add(9*24*time.Hour)) || st.ItemHold["x"].After(time.Now().Add(13*time.Hour)) {
+		t.Errorf("未来的时间要改回来：%+v %+v %+v", st.BreakerUntil, st.CooldownOf(""), st.ItemHold)
 	}
 	for _, j := range st.Jobs {
 		if j.ID == "old" && j.EndedAt.After(time.Now().Add(time.Hour)) {
@@ -311,6 +314,77 @@ func TestRegressMainLockWithoutPid(t *testing.T) {
 	}
 	if _, err := a.Backlog.LockMain("x-main", 300*time.Millisecond); err == nil {
 		t.Fatal("刚建的锁不能抢")
+	}
+}
+
+// 旧锁的持有进程已经死了，几个等锁的同时看到：只能由一个清掉它，不能先后删掉别人刚占上的新锁（11-12 审计：3 个同时等，40 轮里 22 轮两个同时持锁）。
+func TestRegressMainLockStaleReapSerial(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	a := wireApp(&App{Env: &env.Env{Home: home, Now: time.Now, Out: &bytes.Buffer{}}})
+	dir := filepath.Join(home, ".claude", "state", "locks", "x-main")
+	dead := exec.Command("true")
+	if err := dead.Run(); err != nil {
+		t.Fatal(err)
+	}
+	for round := range 20 {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "pid"), []byte(strconv.Itoa(dead.Process.Pid)+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var held, overlap atomic.Int32
+		var wg sync.WaitGroup
+		for range 3 {
+			wg.Go(func() {
+				unlock, err := a.Backlog.LockMain("x-main", 10*time.Second)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if held.Add(1) > 1 {
+					overlap.Add(1)
+				}
+				time.Sleep(5 * time.Millisecond)
+				held.Add(-1)
+				unlock()
+			})
+		}
+		wg.Wait()
+		if n := overlap.Load(); n > 0 {
+			t.Fatalf("第 %d 轮有 %d 次两个同时持锁", round+1, n)
+		}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Fatalf("第 %d 轮都释放了锁还在：%v", round+1, err)
+		}
+	}
+}
+
+// 释放只删自己的锁：锁已经被当成旧锁清掉、别人又占上了，原来的持有者再释放不能把别人的删了。
+func TestRegressMainLockReleaseOnlyOwn(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	a := wireApp(&App{Env: &env.Env{Home: home, Now: time.Now, Out: &bytes.Buffer{}}})
+	dir := filepath.Join(home, ".claude", "state", "locks", "x-main")
+	unlock, err := a.Backlog.LockMain("x-main", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for f, v := range map[string]string{"pid": strconv.Itoa(os.Getpid()), "owner": "someone-else"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte(v+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unlock()
+	if b, err := os.ReadFile(filepath.Join(dir, "owner")); err != nil || strings.TrimSpace(string(b)) != "someone-else" {
+		t.Fatalf("别人的锁被删了：%q %v", b, err)
 	}
 }
 

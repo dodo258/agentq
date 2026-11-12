@@ -25,6 +25,7 @@ import (
 // 自我进化把它当 agentq 自己的问题：自己长大开着时写进 self_project 的待做去升级（internal/evolve）。
 const (
 	vulnEvery   = 7 * 24 * time.Hour
+	vulnRetry   = 24 * time.Hour // 上次没查成（没装、没网）：隔一天就再试，装上了不用等一周
 	vulnTimeout = 5 * time.Minute
 	vulnCheck   = "vuln"
 	vulnInstall = "go install golang.org/x/vuln/cmd/govulncheck@latest"
@@ -150,10 +151,10 @@ func runVulncheck(ctx context.Context, home string) ([]VulnFinding, string) {
 	return found, ""
 }
 
-// checkVuln：离上次满一周（或时钟往回拨过）就跑一次 govulncheck；按存下的结果每次都报。
+// checkVuln：离上次满一周（上次没查成是满一天，或时钟往回拨过）就跑一次 govulncheck；按存下的结果每次都报。
 func (a *Service) checkVuln(ps *PatrolState, now time.Time) []PatrolIssue {
 	v := ps.Vuln
-	if v == nil || now.Before(v.Run) || now.Sub(v.Run) >= vulnEvery {
+	if v == nil || now.Before(v.Run) || now.Sub(v.Run) >= vulnEvery || (v.Note != "" && now.Sub(v.Run) >= vulnRetry) {
 		found, note := runVulncheck(context.Background(), a.Home)
 		next := &VulnState{Run: now, Note: note, Findings: found}
 		if note != "" { // 一周说一次，status 的巡逻那一行也带着

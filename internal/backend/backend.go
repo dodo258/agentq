@@ -272,4 +272,6 @@ type Options struct {
 	Home string
 	// Path 是配置里写的 CLI 路径，已展开 ~。
 	Path string
+	// Model 是配置里给这个后端的模型（config.ForBackend 算出的），空的是跟随 CLI。登录检查要按它查对应的来源。
+	Model string
 }

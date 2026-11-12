@@ -186,7 +186,7 @@ func (a *Service) Tick(after string) error {
 			a.Logf("%s：写状态文件失败：%v", name, err)
 		}
 	case st.AllCooling(a.Cfg, now):
-		note = "用量冷却中，到 " + textfmt.WhenCN(st.CooldownUntil) + " 前不启动"
+		note = "用量冷却中，到 " + textfmt.WhenCN(st.CooldownOf(a.Cfg.Backend)) + " 前不启动"
 	case now.Before(st.BreakerUntil):
 		note = "连环失败熔断中，到 " + textfmt.WhenCN(st.BreakerUntil) + " 前不启动"
 	default:
@@ -252,10 +252,6 @@ func (a *Service) clampClock(st *state.State) {
 	now := a.Now()
 	var fixed []string
 	limit := now.Add(max(8*24*time.Hour, a.Cfg.LimitCooldown.Duration) + time.Hour)
-	if st.CooldownUntil.After(limit) {
-		st.CooldownUntil = now.Add(a.Cfg.LimitCooldown.Duration)
-		fixed = append(fixed, "用量冷却")
-	}
 	for name, l := range st.BackendLimits {
 		if l.CooldownUntil.After(limit) {
 			l.CooldownUntil = now.Add(a.Cfg.LimitCooldown.Duration)
@@ -345,7 +341,7 @@ func (a *Service) recoverState(cause error) (*state.State, error) {
 		}
 		st.Jobs = append(st.Jobs, &j)
 		if j.LimitHit && j.EndedAt != nil {
-			st.ExtendCooldown(j.Backend, a.Cfg.Backend, j.EndedAt.Add(a.Cfg.LimitCooldown.Duration))
+			st.ExtendCooldown(j.Backend, j.EndedAt.Add(a.Cfg.LimitCooldown.Duration))
 		}
 	}
 	sort.SliceStable(st.Jobs, func(i, k int) bool { return st.Jobs[i].StartedAt.Before(st.Jobs[k].StartedAt) })
@@ -439,7 +435,7 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob, manualOn
 		seen, checked := blocked[name]
 		if !checked {
 			seen = false
-			if until := st.CooldownOf(name, def); a.Now().Before(until) {
+			if until := st.CooldownOf(name); a.Now().Before(until) {
 				seen = true
 				notes = append(notes, "后端 "+name+" 用量冷却中，到 "+textfmt.WhenCN(until)+" 前不启动")
 			} else if ok, why := a.Runner.CheckLoginOn(name); !ok {
@@ -451,7 +447,7 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob, manualOn
 					seen = true
 					notes = append(notes, whose+backend.UsageGateNote(lvl, until, why))
 				case lvl == backend.UsageUnknown:
-					notes = append(notes, whose+"额度未知，照常启动："+textfmt.OneLine(st.UsageOf(name, def).Err, 120))
+					notes = append(notes, whose+"额度未知，照常启动："+textfmt.OneLine(st.UsageOf(name).Err, 120))
 				}
 			}
 			blocked[name] = seen

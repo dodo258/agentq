@@ -45,7 +45,7 @@ func (a *Service) Usage(st *state.State) *backend.UsageInfo { return a.UsageOn(s
 // 记日志并在当天汇总写一行。name 空是 Claude（和 Job.Backend 一样）。
 func (a *Service) UsageOn(st *state.State, name string) *backend.UsageInfo {
 	now := a.Now()
-	old := st.UsageOf(name, a.Cfg.Backend)
+	old := st.UsageOf(name)
 	if !old.Stale(now) {
 		return old
 	}
@@ -55,7 +55,7 @@ func (a *Service) UsageOn(st *state.State, name string) *backend.UsageInfo {
 		prevLevel, prevDay = old.NotedLevel, old.NotedDay
 	}
 	u.NotedLevel, u.NotedDay = prevLevel, prevDay
-	st.SetUsageOf(name, a.Cfg.Backend, u)
+	st.SetUsageOf(name, u)
 	pol := a.Cfg.ForBackend(name).UsagePolicy()
 	lvl, until, why := backend.UsageLevel(u, now, pol)
 	day := now.Format("2006-01-02")
@@ -89,7 +89,7 @@ func (a *Service) modelWindowStop(st *state.State, j *state.Job, model, main str
 	if model == "" || model == main {
 		return ""
 	}
-	u := st.UsageOf(j.Backend, a.Cfg.Backend) // 只看缓存：Telegram 路由这类对延迟敏感的不等现读；tick 挑活前刚读过
+	u := st.UsageOf(j.Backend) // 只看缓存：Telegram 路由这类对延迟敏感的不等现读；tick 挑活前刚读过
 	if u == nil || u.Err != "" {
 		return ""
 	}

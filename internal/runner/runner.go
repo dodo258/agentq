@@ -65,7 +65,7 @@ type RunResult struct {
 // RunProject 是 run 本身（调用方拿着 tick.lock）：遵守上限、用量冷却和登录检查，额度 ≥usageRefuseAt 时拒绝。
 func (a *Service) RunProject(st *state.State, project, keyword string) (RunResult, error) {
 	name := a.Cfg.ProjectBackend(project)
-	if until := st.CooldownOf(name, a.Cfg.Backend); a.Now().Before(until) {
+	if until := st.CooldownOf(name); a.Now().Before(until) {
 		return RunResult{}, fmt.Errorf("用量冷却中，到 %s 前不启动", textfmt.WhenCN(until))
 	}
 	dir := a.ProjectDir(project)
@@ -582,10 +582,10 @@ func (a *Service) ReportStarted(st *state.State, r RunResult, cmd string) {
 }
 
 // RoutineBlocked：夜班、复盘启动前的检查（用量冷却、projects_root、登录、订阅额度 ≥limit），不能启动时返回原因。
-// 读到的额度存进 st.Usage，调用方负责保存状态。
+// 读到的额度存进 st，调用方负责保存状态。
 func (a *Service) RoutineBlocked(st *state.State, limit int) string {
-	if now := a.Now(); now.Before(st.CooldownUntil) {
-		return "用量冷却中，到 " + textfmt.WhenCN(st.CooldownUntil)
+	if until := st.CooldownOf(a.Cfg.Backend); a.Now().Before(until) {
+		return "用量冷却中，到 " + textfmt.WhenCN(until)
 	}
 	dir := a.ProjectsRoot()
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
@@ -630,11 +630,12 @@ func (a *Service) schedNote(st *state.State, stErr error, now time.Time, ulvl in
 		return fmt.Sprintf("状态文件读不出，tick 不会启动新任务：%v", stErr)
 	case a.Cfg.Paused:
 		return "已暂停（paused=true），tick 只收尾不启动；agentq resume 恢复"
-	case now.Before(st.CooldownUntil):
+	case now.Before(st.CooldownOf(a.Cfg.Backend)):
+		when := textfmt.WhenCN(st.CooldownOf(a.Cfg.Backend))
 		if len(a.Cfg.BackendsInUse()) > 1 { // 混用时说清楚是谁：别的后端的项目还在接活
-			return "后端 " + a.DefaultBackend().Name() + " 用量冷却中，到 " + textfmt.WhenCN(st.CooldownUntil)
+			return "后端 " + a.DefaultBackend().Name() + " 用量冷却中，到 " + when
 		}
-		return "用量冷却中，到 " + textfmt.WhenCN(st.CooldownUntil)
+		return "用量冷却中，到 " + when
 	case ulvl >= backend.UsageStop:
 		return backend.UsageGateNote(ulvl, uuntil, uwhy)
 	case now.Before(st.BreakerUntil):

@@ -95,39 +95,43 @@
       }
     }
   ],
-  "cooldown_until": "2026-03-19T08:00:00Z",
-  "breaker_until": "2026-03-19T09:00:00Z",
-  "fail_streak": 96,
-  "breaker_level": 97,
+  "breaker_until": "2026-03-19T08:00:00Z",
+  "fail_streak": 95,
+  "breaker_level": 96,
   "item_hold": {
-    "State.ItemHold.key-99": "2026-03-19T14:00:00Z"
+    "State.ItemHold.key-98": "2026-03-19T13:00:00Z"
   },
   "branch_blocked": {
-    "State.BranchBlocked.key-102": "State.BranchBlocked.value-103"
+    "State.BranchBlocked.key-101": "State.BranchBlocked.value-102"
   },
-  "usage": {
-    "checked_at": "2026-03-19T20:00:00Z",
-    "windows": [
-      {
-        "label": "State.Usage.Windows[].Label-109",
-        "scope": "State.Usage.Windows[].Scope-110",
-        "used": 111.5,
-        "resets_at": "2026-03-20T03:00:00Z"
+  "backend_limits": {
+    "State.BackendLimits.key-104": {
+      "cooldown_until": "2026-03-19T21:00:00Z",
+      "usage": {
+        "checked_at": "2026-03-20T00:00:00Z",
+        "windows": [
+          {
+            "label": "State.BackendLimits.value.Usage.Windows[].Label-113",
+            "scope": "State.BackendLimits.value.Usage.Windows[].Scope-114",
+            "used": 115.5,
+            "resets_at": "2026-03-20T07:00:00Z"
+          }
+        ],
+        "err": "State.BackendLimits.value.Usage.Err-118",
+        "noted_day": "State.BackendLimits.value.Usage.NotedDay-119",
+        "noted_level": 120
       }
-    ],
-    "err": "State.Usage.Err-114",
-    "noted_day": "State.Usage.NotedDay-115",
-    "noted_level": 116
+    }
   },
   "routine_marks": {
-    "State.RoutineMarks.key-118": {
-      "job_id": "State.RoutineMarks.value.JobID-121",
-      "at": "2026-03-20T12:00:00Z",
+    "State.RoutineMarks.key-122": {
+      "job_id": "State.RoutineMarks.value.JobID-125",
+      "at": "2026-03-20T16:00:00Z",
       "heads": {
-        "State.RoutineMarks.value.Heads.key-124": "State.RoutineMarks.value.Heads.value-125"
+        "State.RoutineMarks.value.Heads.key-128": "State.RoutineMarks.value.Heads.value-129"
       },
       "issues": {
-        "State.RoutineMarks.value.Issues.key-127": "State.RoutineMarks.value.Issues.value-128"
+        "State.RoutineMarks.value.Issues.key-131": "State.RoutineMarks.value.Issues.value-132"
       }
     }
   }

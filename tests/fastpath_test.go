@@ -59,7 +59,7 @@ func TestFastPauseResume(t *testing.T) {
 		t.Errorf("%s", got)
 	}
 	// 恢复：写明下次 tick 接活；还在冷却要说
-	e.st.CooldownUntil = e.now.Add(time.Hour)
+	e.st.ExtendCooldown("", e.now.Add(time.Hour))
 	e.tg.msg(3, ownerChat, 13, "恢复", "")
 	e.flush()
 	got2 := e.tg.sentLast().Get("text")
@@ -100,7 +100,7 @@ func TestFastUsage(t *testing.T) {
 		calls++
 		return "Current session: 91% used · resets 3:45pm\nCurrent week (all models): 40% used", nil
 	}
-	e.st.Usage = &backend.UsageInfo{CheckedAt: e.now, Windows: []backend.UsageWindow{{Label: "session", Used: 12}}}
+	e.st.SetUsageOf("", &backend.UsageInfo{CheckedAt: e.now, Windows: []backend.UsageWindow{{Label: "session", Used: 12}}})
 	e.tg.msg(1, ownerChat, 11, "额度", "")
 	e.flush()
 	got := e.tg.sentLast().Get("text")
@@ -302,7 +302,7 @@ func TestFastStopBypassesQueue(t *testing.T) {
 	e.mustRun("tick")
 	job := e.jobByTitle("甲")
 	st := e.state()
-	st.CooldownUntil = time.Now().Add(time.Hour)
+	st.ExtendCooldown("", time.Now().Add(time.Hour))
 	if err := state.Save(filepath.Join(e.home, ".agentq", "state.json"), st); err != nil {
 		t.Fatal(err)
 	}

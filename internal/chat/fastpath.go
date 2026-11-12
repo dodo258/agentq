@@ -97,7 +97,7 @@ func (a *Service) fastPaused(paused bool) string {
 	lines := []string{"下次 tick 起接活，最多等 5 分钟"}
 	if stErr == nil {
 		now := a.Now()
-		lvl, until, why := backend.UsageLevel(st.Usage, now, a.Cfg.UsagePolicy())
+		lvl, until, why := backend.UsageLevel(st.UsageOf(a.Cfg.Backend), now, a.Cfg.UsagePolicy())
 		if note := a.Runner.SchedNote(st, nil, now, lvl, until, why); note != "正常" {
 			lines = append(lines, "不过现在："+note)
 		}
@@ -110,7 +110,7 @@ func (a *Service) usageDigest() string {
 	now := a.Now()
 	var u *backend.UsageInfo
 	if st, err := state.Load(a.StatePath()); err == nil {
-		u = st.Usage
+		u = st.UsageOf(a.Cfg.Backend)
 	}
 	if u.Stale(now) {
 		u = a.Runner.ReadUsage(now)

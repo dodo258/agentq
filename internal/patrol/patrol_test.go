@@ -241,11 +241,11 @@ func TestPatrolNoIssues(t *testing.T) {
 	tr := filepath.Join(e.a.Home, ".claude", "projects", "-x", "s-busy.jsonl")
 	e.write(tr, "{}\n")
 	os.Chtimes(tr, n.Add(-time.Minute), n.Add(-time.Minute))
-	e.st.Usage = &backend.UsageInfo{CheckedAt: n.Add(-time.Hour), Windows: []backend.UsageWindow{
+	e.st.SetUsageOf("", &backend.UsageInfo{CheckedAt: n.Add(-time.Hour), Windows: []backend.UsageWindow{
 		{Label: "session", Used: 50},
 		{Label: "week", Used: 95, ResetsAt: patrolAgo(n, time.Hour)}, // 已经过了重置时刻
 		{Label: "week (Fable)", Scope: "Fable", Used: 99},            // 只限别的模型
-	}}
+	}})
 	proj := filepath.Join(e.root, "p")
 	os.MkdirAll(filepath.Join(proj, ".git"), 0o755)
 	e.write(filepath.Join(proj, "docs", "BACKLOG.md"), "# 待办\n\n## 待做\n\n- [ ] 甲 —— 等用户决定的事写在下面\n\n## 等用户决定\n\n<!-- - [ ] 注释里的模板 -->\n\n## 已完成\n\n- [x] 乙\n")
@@ -271,7 +271,7 @@ func TestPatrolNoIssues(t *testing.T) {
 	// 08:00 前不查早报、夜班报告；开关关着的不查
 	os.Remove(e.nightlyFile(""))
 	os.Remove(e.nightlyFile("-night"))
-	e.st.Jobs, e.st.Usage = nil, nil // 时间往前拨了，免得它们变成 24 小时内的
+	e.st.Jobs, e.st.BackendLimits = nil, nil // 时间往前拨了，免得它们变成 24 小时内的
 	os.Remove(filepath.Join(e.a.Home, ".claude", "state", "autopush.log"))
 	e.now = time.Date(2026, 10, 11, 7, 59, 0, 0, time.Local)
 	if r := e.patrol(); len(r.New) != 0 {
@@ -317,9 +317,9 @@ func TestPatrolFindsEachCheck(t *testing.T) {
 		{ID: "r1", Kind: config.KindReview, Project: "复盘", Title: "agentq review", Status: state.StatusInterrupted, Summary: "正常退出但没写出报告", StartedAt: n.Add(-5 * time.Hour), EndedAt: patrolAgo(n, 4*time.Hour)},
 		{ID: "s1", Project: "p", Title: "卡住的", Status: state.StatusRunning, SessionID: "s-stall", StartedAt: n.Add(-2 * time.Hour), PID: 4242},
 	}
-	e.st.Usage = &backend.UsageInfo{CheckedAt: n.Add(-5 * time.Minute), Windows: []backend.UsageWindow{
+	e.st.SetUsageOf("", &backend.UsageInfo{CheckedAt: n.Add(-5 * time.Minute), Windows: []backend.UsageWindow{
 		{Label: "session", Used: 20}, {Label: "week", Used: 93, ResetsAt: func() *time.Time { t := n.Add(48 * time.Hour); return &t }()},
-	}}
+	}})
 	proj := filepath.Join(e.root, "p")
 	os.MkdirAll(filepath.Join(proj, ".git"), 0o755)
 	e.write(filepath.Join(proj, "docs", "BACKLOG.md"), "# 待办\n\n## 待做\n\n## 等用户决定\n\n- [ ] 要不要改写历史 —— A 不改写；B 改写；推荐 A；分支 agent/x\n\n## 已完成\n")
@@ -537,11 +537,11 @@ func TestPatrolAnalyzeLimits(t *testing.T) {
 	}{
 		{"patrol_enabled=false", func() { e.a.Cfg.PatrolEnabled = false }, func() { e.a.Cfg.PatrolEnabled = true }},
 		{"已暂停", func() { e.a.Cfg.Paused = true }, func() { e.a.Cfg.Paused = false }},
-		{"用量冷却中", func() { e.st.CooldownUntil = e.now.Add(2 * time.Hour) }, func() { e.st.CooldownUntil = time.Time{} }},
+		{"用量冷却中", func() { e.st.ExtendCooldown("", e.now.Add(2*time.Hour)) }, func() { delete(e.st.BackendLimits, "claude") }},
 		{"连环失败熔断中", func() { e.st.BreakerUntil = e.now.Add(2 * time.Hour) }, func() { e.st.BreakerUntil = time.Time{} }},
 		{"订阅额度到了后台上限", func() {
-			e.st.Usage = &backend.UsageInfo{CheckedAt: e.now, Windows: []backend.UsageWindow{{Label: "session", Used: 91}}}
-		}, func() { e.st.Usage = nil }},
+			e.st.SetUsageOf("", &backend.UsageInfo{CheckedAt: e.now, Windows: []backend.UsageWindow{{Label: "session", Used: 91}}})
+		}, func() { e.st.SetUsageOf("", nil) }},
 		{"上一次分析还在跑", func() {
 			e.st.Jobs = []*state.Job{{ID: "pa", Kind: state.KindPatrol, Status: state.StatusRunning, StartedAt: e.now}}
 		}, func() { e.st.Jobs = nil }},
@@ -560,6 +560,32 @@ func TestPatrolAnalyzeLimits(t *testing.T) {
 	}
 	if ps, _ := e.a.LoadPatrol(); ps.AnalysisCount != 1 {
 		t.Errorf("启动失败不计次数：%d", ps.AnalysisCount)
+	}
+}
+
+// 新项目第一版被门退回（会话在 projects_root，续跑不了）：tick 下次直接接手，巡逻不写接手待做——
+// 写了反而挡住：第一版只挑第一条，孤儿扫描见到接手待做也让开（11-12 repo-tidy 因此卡住）。
+func TestPatrolTakeOverTodoLeavesFirstVersionToTick(t *testing.T) {
+	e := newPatrolFixture(t)
+	home := e.a.Home
+	proj := filepath.Join(e.root, "p")
+	os.MkdirAll(filepath.Join(proj, "docs"), 0o755)
+	testkit.GitT(t, home, proj, "init", "-q", "-b", "main")
+	orig := "第一条 —— 要什么；验收：看 README"
+	backlog := "# 待办\n\n## 待做\n\n- [ ] " + orig + "（进行中：agent/1112-first 11-12 16:49）（方向：用户定：随便）\n- [ ] 第二条\n\n## 已完成\n"
+	e.write(filepath.Join(proj, "docs", "BACKLOG.md"), backlog)
+	testkit.GitT(t, home, proj, "add", ".")
+	testkit.GitT(t, home, proj, "commit", "-q", "-m", "init")
+	j := &state.Job{ID: "1112-164509-新项目", Project: "p", ProjectDir: proj, Title: "第一条", Fingerprint: bl.Fingerprint("- [ ] " + orig + "（方向：用户定：随便）"),
+		Status: state.StatusInterrupted, NewReport: &state.NewReport{Root: e.root}, Summary: "门没过，退回第 1 轮",
+		StartedAt: e.now.Add(-time.Hour), EndedAt: patrolAgo(e.now, 10*time.Minute)}
+	e.st.Jobs = []*state.Job{j}
+	is := patrolFind(t, e.patrol().New, "job:"+j.ID)
+	if !strings.Contains(is.Action, "下一次 tick 直接接手") {
+		t.Fatalf("处理：%s", is.Action)
+	}
+	if b, _ := os.ReadFile(filepath.Join(proj, "docs", "BACKLOG.md")); string(b) != backlog {
+		t.Fatalf("不该写接手待做：\n%s", b)
 	}
 }
 
@@ -831,10 +857,10 @@ func TestPatrolGoneEdges(t *testing.T) {
 	e.write(push, b.String())
 	os.Remove(e.nightlyFile(""))
 	e.launchd += "-\t1\t" + LaunchdPrefix + "backup\n-\t1\t" + LaunchdPrefix + "gone\n"
-	e.st.Usage = &backend.UsageInfo{CheckedAt: start.Add(29 * time.Hour), Windows: []backend.UsageWindow{
+	e.st.SetUsageOf("", &backend.UsageInfo{CheckedAt: start.Add(29 * time.Hour), Windows: []backend.UsageWindow{
 		{Label: "session", Used: 95, ResetsAt: func() *time.Time { t := start.Add(30*time.Hour + 30*time.Minute); return &t }()},
 		{Label: "week", Used: 92, ResetsAt: func() *time.Time { t := start.Add(100 * time.Hour); return &t }()},
-	}}
+	}})
 	e.now = start.Add(30 * time.Hour) // 10-11 12:00
 	r := e.patrol()
 	want := "autopush:/p/a/.git@2026-10-10T06:00:00,launchd:" + LaunchdPrefix + "backup,launchd:" + LaunchdPrefix + "gone,report:review:2026-10-11,usage:session@2026-10-11T12:30:week@2026-10-14T10:00"

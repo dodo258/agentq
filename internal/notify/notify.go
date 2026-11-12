@@ -760,7 +760,7 @@ func doneTitles(titles []string) string {
 
 // UsageSection：推送和 Telegram「状态」末尾的额度段，进度条等宽对齐；别的后端的额度跟在后面。
 func UsageSection(cfg config.Config, st *state.State, now time.Time) MsgSection {
-	return MsgSection{Emoji: "📊", Head: "额度", Pre: true, Lines: append(backend.UsageBars(st.Usage, now, cfg.UsagePolicy()), st.OtherUsageLines(cfg, now)...)}
+	return MsgSection{Emoji: "📊", Head: "额度", Pre: true, Lines: append(backend.UsageBars(st.UsageOf(cfg.Backend), now, cfg.UsagePolicy()), st.OtherUsageLines(cfg, now)...)}
 }
 
 // saveFullText 把超长消息的全文存到 ~/.agentq/notify/<时间>-<类别>.txt，返回给人看的路径（~ 开头）；存不了返回说明。

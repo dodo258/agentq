@@ -110,7 +110,8 @@ const newPromptTemplate = "你在无人值守模式下工作，用户不在场�
 	NewIdeaBegin + "\n%s\n" + NewIdeaEnd + "\n\n" +
 	"步骤：\n" +
 	"1. 完整读 ~/.claude/skills/new-project/SKILL.md 并照做。项目根目录就是当前工作目录 %s（技能里的 AGENTQ_PROJECTS_ROOT 取这个值），新项目是它下面一层的目录，起一个简短、小写、连字符的英文名。目标已存在就换个名字（这一点优先于技能），不碰任何已有目录。\n" +
-	"2. 开工前本来要问用户的大方向问题（想要什么感觉、有没有喜欢的参考、给谁用）全部用默认答案，不问；补的细节写进方案的「假设」一节。\n" +
+	"2. 开工前本来要问用户的大方向问题（想要什么感觉、有没有喜欢的参考、给谁用、用法）全部用默认答案，不问。定默认之前照下面三条做（只读看，这一步不改任何已有的东西）：\n" + discuss.LookFirst +
+	"补的细节和默认答案（连依据）写进方案的「假设」一节。\n" +
 	"3. 按 ~/.claude/skills/prior-art/SKILL.md 搜罗同类、写清差异化；有界面的按 ~/.claude/skills/no-ai-look/SKILL.md 定设计语言，做完按它的审查表自查。\n" +
 	"4. 把需求拆成 docs/BACKLOG.md「待做」里的条目，提交到 main。你已经是调度器启动的执行者：亲自把第一条按 ~/.claude/skills/agent-task/SKILL.md 做到分支可合并（包括它要求的验证），不用 dispatch 或 agentq run 把活派回队列。第一条的进行中标记写上任务分支。门的脚本在任务分支上提交，都要有可执行权限：.agentq/verify（一条命令跑全部检查）、.agentq/smoke（检查构建产物在、能启动，退出码 0 算过）；有界面的再加 .agentq/ui（把截图写进 $AGENTQ_ARTIFACTS，退出码 0 算过，示例在 ${AGENTQ_SHARE_DIR:-$HOME/.local/share/agentq}/templates/gates/）。最后写 ready.json 提交到任务分支就结束。不自己合并，不写「已完成」和 PROGRESS：第一条和别的条目一样，引擎过门后合并。其余条目留在「待做」，第一版合并后由调度器接着做。\n" +
 	"5. 远程仓库只在用户层规则明确授权时建，而且只建私有的。不公开发布、不付款、不删除任何已有的东西。\n\n" +
@@ -244,8 +245,8 @@ func (a *Service) Enter(st *state.State, rawIdea, direction string) (r runner.Ru
 	}
 	if strings.TrimSpace(direction) == "" {
 		if a.Discuss.CanAsk() { // 生成问题也要调模型
-			if now := a.Now(); now.Before(st.CooldownUntil) {
-				return runner.RunResult{}, "", fmt.Errorf("用量冷却中，到 %s 前不启动", textfmt.WhenCN(st.CooldownUntil))
+			if until := st.CooldownOf(a.Cfg.Backend); a.Now().Before(until) {
+				return runner.RunResult{}, "", fmt.Errorf("用量冷却中，到 %s 前不启动", textfmt.WhenCN(until))
 			}
 			if _, err := a.Runner.ManualGate(st); err != nil {
 				return runner.RunResult{}, "", err
@@ -271,8 +272,8 @@ func (a *Service) StartDirected(st *state.State, rawIdea, direction string) (run
 	if err != nil {
 		return runner.RunResult{}, err
 	}
-	if now := a.Now(); now.Before(st.CooldownUntil) {
-		return runner.RunResult{}, fmt.Errorf("用量冷却中，到 %s 前不启动", textfmt.WhenCN(st.CooldownUntil))
+	if until := st.CooldownOf(a.Cfg.Backend); a.Now().Before(until) {
+		return runner.RunResult{}, fmt.Errorf("用量冷却中，到 %s 前不启动", textfmt.WhenCN(until))
 	}
 	root := a.ProjectsRoot()
 	entries, err := os.ReadDir(root)

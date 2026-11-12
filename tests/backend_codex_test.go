@@ -416,8 +416,8 @@ func TestCodexLimitThenResumes(t *testing.T) {
 	if j.Status != state.StatusInterrupted || !j.LimitHit || !j.ResumePending || j.SessionID == "" {
 		t.Fatalf("%s limit=%v resume=%v session=%q：%s", j.Status, j.LimitHit, j.ResumePending, j.SessionID, j.Summary)
 	}
-	if st := e.state(); !st.CooldownUntil.After(j.StartedAt) {
-		t.Errorf("要进冷却：%v", st.CooldownUntil)
+	if st := e.state(); !st.CooldownOf("codex").After(j.StartedAt) {
+		t.Errorf("要进冷却：%v", st.CooldownOf("codex"))
 	}
 	session := j.SessionID
 	time.Sleep(1100 * time.Millisecond)

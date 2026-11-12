@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -757,7 +758,8 @@ func EditTodoLine(text, fp, want string, fn func(line string) string) (string, b
 }
 
 // MarkerAtEnd：标记在行尾才算（agent-task 写在条目后面）。正文里顺带提到「（进行中）」的条目不当孤儿，不去改正文。
-var MarkerAtEnd = regexp.MustCompile(`（进行中[^）]*）[\s。.；;，,！!]*$`)
+// 引擎写在行尾的（方向：…）跟在后面也算：认领时标记常插在它前面（11-12 新项目第一条被门退回后因此等了 24 小时）。
+var MarkerAtEnd = regexp.MustCompile(`（进行中[^）]*）(（方向：[^）]*）)?[\s。.；;，,！!]*$`)
 
 func DropMarker(line string) string {
 	return strings.TrimRight(InProgressRe.ReplaceAllString(line, ""), " \t")
@@ -946,39 +948,68 @@ func BacklogRepoPath(p Project) (string, error) {
 	return rel, nil
 }
 
-// LockMain 按 with-lock.sh 的约定占锁：目录 <LocksDir>/<名字>，里面 pid 文件写持有进程，
-// 持有进程不在了算旧锁、清掉重来。最多等 wait，返回释放函数。
+// LockMain 按 with-lock.sh 的约定占锁：目录 <LocksDir>/<名字>，里面 pid 写持有进程、owner 写这次占锁的令牌。
+// 旧锁（持有进程不在了，或建了很久还没有 pid）只由建出 .<名字>.reap 的那一个清理者在里面重看一遍、仍是旧锁才删，
+// 免得几个等锁的都看到旧锁、先后删掉别人刚占上的新锁。释放只删 owner 还是自己的锁。最多等 wait，返回释放函数。
 func (a *Service) LockMain(name string, wait time.Duration) (func(), error) {
-	dir := filepath.Join(a.LocksDir(), name)
-	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+	locks := a.LocksDir()
+	dir := filepath.Join(locks, name)
+	reap := filepath.Join(locks, "."+name+".reap")
+	if err := os.MkdirAll(locks, 0o755); err != nil {
 		return nil, err
 	}
+	owner := fmt.Sprintf("%d.%d.%d", os.Getpid(), rand.Uint64(), time.Now().UnixNano())
 	deadline := time.Now().Add(wait)
 	for {
 		err := os.Mkdir(dir, 0o755)
 		if err == nil {
 			_ = os.WriteFile(filepath.Join(dir, "pid"), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644)
-			return func() { os.RemoveAll(dir) }, nil
+			_ = os.WriteFile(filepath.Join(dir, "owner"), []byte(owner+"\n"), 0o644)
+			return func() {
+				if b, _ := os.ReadFile(filepath.Join(dir, "owner")); strings.TrimSpace(string(b)) == owner {
+					os.RemoveAll(dir)
+				}
+			}, nil
 		}
 		if !errors.Is(err, fs.ErrExist) {
 			return nil, err
 		}
-		b, _ := os.ReadFile(filepath.Join(dir, "pid"))
-		pid, perr := strconv.Atoi(strings.TrimSpace(string(b)))
-		if perr == nil && pid > 0 && errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
-			os.RemoveAll(dir)
-			continue
-		}
-		// 没有 pid：占锁的进程在建目录和写 pid 之间被杀了，再没有人会释放（写 pid 只要一瞬间，这么久还没有就是没了）
-		if fi, err := os.Stat(dir); perr != nil && err == nil && time.Since(fi.ModTime()) > MainLockNoPidStale {
-			os.RemoveAll(dir)
+		stale, holder := staleLock(dir)
+		if stale && reapLock(dir, reap) {
 			continue
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("等了 %s 还拿不到锁 %s（持有进程 %s）", wait, dir, strings.TrimSpace(string(b)))
+			return nil, fmt.Errorf("等了 %s 还拿不到锁 %s（持有进程 %s）", wait, dir, holder)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+// staleLock：持有进程不在了；或者没有 pid（占锁的进程在建目录和写 pid 之间被杀了，写 pid 只要一瞬间，这么久还没有就是没了）。
+func staleLock(dir string) (stale bool, holder string) {
+	b, _ := os.ReadFile(filepath.Join(dir, "pid"))
+	holder = strings.TrimSpace(string(b))
+	if pid, err := strconv.Atoi(holder); err == nil {
+		return pid > 0 && errors.Is(syscall.Kill(pid, 0), syscall.ESRCH), holder
+	}
+	fi, err := os.Stat(dir)
+	return err == nil && time.Since(fi.ModTime()) > MainLockNoPidStale, holder
+}
+
+// reapLock：建出 reap 目录才有清理权，在里面重看一遍，仍是旧锁才删；拿不到清理权返回 false。
+// 清理者在建 reap 和删 reap 之间被杀会留下它，旧过 MainLockNoPidStale 就删掉，下一轮再抢。
+func reapLock(dir, reap string) bool {
+	if err := os.Mkdir(reap, 0o755); err != nil {
+		if fi, serr := os.Stat(reap); serr == nil && time.Since(fi.ModTime()) > MainLockNoPidStale {
+			_ = os.Remove(reap)
+		}
+		return false
+	}
+	defer os.Remove(reap)
+	if stale, _ := staleLock(dir); stale {
+		os.RemoveAll(dir)
+	}
+	return true
 }
 
 // CommentStates 逐行给出：skip 这一行整行在 HTML 注释里；open 处理完这一行后仍在一个没关的注释里。

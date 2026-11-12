@@ -94,7 +94,7 @@ func TestPatrolVulnWeekly(t *testing.T) {
 	}
 }
 
-// 没装 govulncheck：跳过、说明怎么装，status 带上，一周只说一次；跑不成时上次的结果照旧算。
+// 没装 govulncheck：跳过、说明怎么装，status 带上，一天只说一次，装上后隔天就查；跑不成时上次的结果照旧算。
 func TestPatrolVulnSkipAndFail(t *testing.T) {
 	e := newPatrolFixture(t)
 	path := os.Getenv("PATH")
@@ -107,7 +107,14 @@ func TestPatrolVulnSkipAndFail(t *testing.T) {
 	e.now = e.now.Add(time.Hour)
 	e.patrol()
 	if n := strings.Count(e.out.String(), "没装 govulncheck"); n != 1 {
-		t.Fatalf("一周只说一次：%d\n%s", n, e.out)
+		t.Fatalf("一天内只说一次：%d\n%s", n, e.out)
+	}
+	calls := fakeVulncheck(t, "echo '{\"config\":{}}'\n")
+	e.now = e.now.Add(24 * time.Hour)
+	e.patrol()
+	ps, _ = e.a.LoadPatrol()
+	if countCalls(calls) != 1 || ps.Vuln.Note != "" {
+		t.Fatalf("装上后隔一天就重查，不等一周：调用 %d 次，%+v", countCalls(calls), ps.Vuln)
 	}
 
 	t.Setenv("PATH", path)

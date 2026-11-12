@@ -364,6 +364,9 @@ func (a *Service) TakeOverTodo(st *state.State, j *state.Job) (string, bool) {
 	if !ok {
 		return "BACKLOG 里这一条已不在进行中，不用接手；原因看 agentq logs " + j.ID, false
 	}
+	if a.Runner.TakeoverNow(j) { // 再写一条接手待做反而挡住 tick 的接手：新项目第一版只挑第一条，孤儿扫描见到接手待做也让开
+		return "续跑不了，下一次 tick 直接接手这一条，不另写接手待做；原因看 agentq logs " + j.ID, true
+	}
 	for _, o := range st.Jobs {
 		if o == j || !state.SameItem(o, j.Project, j.Fingerprint) {
 			continue
@@ -389,7 +392,7 @@ func (a *Service) TakeOverTodo(st *state.State, j *state.Job) (string, bool) {
 
 // checkUsage：state 里缓存的订阅额度（tick 领活前读的，巡逻不另读）到了 usageStopAt。
 func (a *Service) checkUsage(st *state.State, now time.Time) []PatrolIssue {
-	u := st.Usage
+	u := st.UsageOf(a.Cfg.Backend)
 	lvl, until, why := backend.UsageLevel(u, now, a.Cfg.UsagePolicy())
 	if lvl < backend.UsageStop {
 		return nil

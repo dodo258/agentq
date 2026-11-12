@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"agentq/internal/backend"
 	"agentq/internal/state"
 	"agentq/internal/testkit"
 )
@@ -43,7 +44,7 @@ func projectJob(e *testEnv, project string) *Job {
 	return nil
 }
 
-// Codex 撞限只停 Codex 的项目：Claude 的项目照常接活，冷却记在 backend_limits，全局那个键不动。
+// Codex 撞限只停 Codex 的项目：Claude 的项目照常接活，冷却记在 Codex 名下。
 func TestLimitOnOtherBackendDoesNotStopDefault(t *testing.T) {
 	e := mixedClaudeDefault(t, nil)
 	gateRepo(t, e, "cx", codexItem("aaa", "limitmid"))
@@ -53,8 +54,8 @@ func TestLimitOnOtherBackendDoesNotStopDefault(t *testing.T) {
 		t.Fatalf("应撞限：%s %s", j.Status, j.Summary)
 	}
 	st := e.state()
-	if !st.CooldownUntil.IsZero() {
-		t.Fatalf("默认后端不该冷却：%v", st.CooldownUntil)
+	if !st.CooldownOf("").IsZero() {
+		t.Fatalf("默认后端不该冷却：%v", st.CooldownOf(""))
 	}
 	l := st.BackendLimits["codex"]
 	if l == nil || !l.CooldownUntil.After(time.Now()) {
@@ -84,8 +85,8 @@ func TestLimitOnClaudeProjectDoesNotStopCodexDefault(t *testing.T) {
 		t.Fatalf("应撞限：%s %s", j.Status, j.Summary)
 	}
 	st := e.state()
-	if !st.CooldownUntil.IsZero() || st.BackendLimits["claude"] == nil || !st.BackendLimits["claude"].CooldownUntil.After(time.Now()) {
-		t.Fatalf("冷却记错后端：%v %+v", st.CooldownUntil, st.BackendLimits)
+	if !st.CooldownOf("codex").IsZero() || !st.CooldownOf("claude").After(time.Now()) {
+		t.Fatalf("冷却记错后端：%+v", st.BackendLimits)
 	}
 	gateRepo(t, e, "cx", codexItem("bbb", "slow"))
 	out := e.mustRun("tick")
@@ -112,8 +113,8 @@ func TestUsageGatePerBackend(t *testing.T) {
 	if st.BackendLimits["claude"] == nil || st.BackendLimits["claude"].Usage == nil {
 		t.Fatalf("Claude 的额度该记在 backend_limits：%+v", st.BackendLimits)
 	}
-	if st.Usage == nil || st.Usage.Err == "" {
-		t.Fatalf("默认后端 Codex 读不了额度，记未知：%+v", st.Usage)
+	if u := st.UsageOf("codex"); u == nil || u.Err == "" {
+		t.Fatalf("默认后端 Codex 读不了额度，记未知：%+v", u)
 	}
 	testkit.AssertContains(t, e.mustRun("status"), "额度（claude）：")
 	if out, code := e.run("run", "cl"); code == 0 || !strings.Contains(out, "额度") {
@@ -121,7 +122,7 @@ func TestUsageGatePerBackend(t *testing.T) {
 	}
 }
 
-// 老 state.json 只有 cooldown_until：读出来是默认后端的。别的后端的项目照常接活。
+// 老 state.json 只有顶层 cooldown_until：迁到写它时的默认后端（Claude）名下，别的后端的项目照常接活；存回去是新格式。
 func TestOldStateCooldownBelongsToDefault(t *testing.T) {
 	e := mixedClaudeDefault(t, nil)
 	until := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
@@ -139,8 +140,42 @@ func TestOldStateCooldownBelongsToDefault(t *testing.T) {
 		t.Fatalf("Codex 不受默认后端冷却影响：\n%s", out)
 	}
 	testkit.AssertContains(t, out, "后端 claude 用量冷却中")
-	if !e.state().CooldownOf("codex", "").IsZero() {
+	if !e.state().CooldownOf("codex").IsZero() {
 		t.Fatal("老文件的冷却不算到 Codex 头上")
+	}
+	assertNoTopLimits(t, testkit.ReadBytes(t, filepath.Join(e.home, ".agentq", "state.json")))
+	if got := e.state().CooldownOf("claude"); got.UTC().Format(time.RFC3339) != until {
+		t.Fatalf("迁过去的冷却不对：%v", got)
+	}
+}
+
+// 换默认后端前后，冷却跟着原后端走：Claude 撞限后把默认换成 Codex，Codex 照常接活；还指定 Claude 的项目继续冷却，不再撞一次。
+func TestCooldownFollowsBackendAcrossDefaultSwitch(t *testing.T) {
+	e := newEnv(t, map[string]any{"max_parallel": 5,
+		"backends": map[string]any{"codex": map[string]any{"path": codexFake(t), "permission": "danger-full-access"}, "claude": map[string]any{"permission": "bypassPermissions"}}})
+	testkit.MkProject(t, e.root, "cl", "- [ ] 撞上限 —— LIMIT\n- [ ] 乙 —— 正常\n")
+	e.mustRun("tick")
+	j := e.tickUntilEnded(func() *Job { return projectJob(e, "cl") })
+	if !j.LimitHit {
+		t.Fatalf("应撞限：%s %s", j.Status, j.Summary)
+	}
+	if !e.state().CooldownOf("claude").After(time.Now()) {
+		t.Fatalf("Claude 该冷却：%+v", e.state().BackendLimits)
+	}
+	e.mergeConfig(map[string]any{"backend": "codex", "permission_mode": "danger-full-access", "project_backends": map[string]any{"cl": "claude"}})
+	gateRepo(t, e, "cx", codexItem("ggg", "slow"))
+	out := e.mustRun("tick")
+	if projectJob(e, "cx") == nil {
+		t.Fatalf("换成默认 Codex 后不该被 Claude 的冷却挡住：\n%s", out)
+	}
+	for _, x := range e.state().Jobs {
+		if x.Project == "cl" && x.ID != j.ID {
+			t.Fatalf("还指定 Claude 的项目应继续冷却，不再撞一次：%s %s", x.ID, x.Title)
+		}
+	}
+	testkit.AssertContains(t, out, "后端 claude 用量冷却中")
+	if st := e.state(); !st.CooldownOf("codex").IsZero() || !st.CooldownOf("claude").After(time.Now()) {
+		t.Fatalf("冷却该还在 Claude 名下：%+v", st.BackendLimits)
 	}
 }
 
@@ -155,8 +190,9 @@ func TestBackendLimitsRoundTrip(t *testing.T) {
 	}
 	st := &state.State{}
 	until := time.Now().Add(time.Hour).Truncate(time.Second)
-	st.ExtendCooldown("codex", "", until)
-	st.ExtendCooldown("codex", "", until.Add(-time.Minute)) // 只往后推
+	st.ExtendCooldown("codex", until)
+	st.ExtendCooldown("codex", until.Add(-time.Minute)) // 只往后推
+	st.ExtendCooldown("", until.Add(time.Minute))       // 空名是 Claude
 	b, err = json.Marshal(st)
 	if err != nil {
 		t.Fatal(err)
@@ -165,12 +201,10 @@ func TestBackendLimitsRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(b, &back); err != nil {
 		t.Fatal(err)
 	}
-	if !back.CooldownOf("codex", "").Equal(until) || !back.CooldownOf("", "").IsZero() || !back.CooldownOf("claude", "codex").IsZero() {
+	if !back.CooldownOf("codex").Equal(until) || !back.CooldownOf("claude").Equal(until.Add(time.Minute)) || !back.CooldownOf("pi").IsZero() {
 		t.Fatalf("读回不对：%s", b)
 	}
-	if !back.CooldownOf("codex", "codex").IsZero() {
-		t.Fatalf("默认后端的冷却看 cooldown_until：%s", b)
-	}
+	assertNoTopLimits(t, b)
 }
 
 // 全都冷却时不起任务；时钟跳回来后别的后端的冷却也要收拾。
@@ -178,8 +212,8 @@ func TestAllBackendsCoolingAndClamp(t *testing.T) {
 	e := mixedClaudeDefault(t, nil)
 	far := time.Now().Add(365 * 24 * time.Hour)
 	st := e.state()
-	st.CooldownUntil = time.Now().Add(time.Hour)
-	st.ExtendCooldown("codex", "", far)
+	st.ExtendCooldown("", time.Now().Add(time.Hour))
+	st.ExtendCooldown("codex", far)
 	if err := state.Save(filepath.Join(e.home, ".agentq", "state.json"), st); err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +235,7 @@ func TestGateNotHeldByOtherBackendCooldown(t *testing.T) {
 	gateRepo(t, e, "cx", codexItem("fff", "ok"))
 	e.mustRun("tick")
 	st := e.state()
-	st.CooldownUntil = time.Now().Add(time.Hour)
+	st.ExtendCooldown("", time.Now().Add(time.Hour))
 	if err := state.Save(filepath.Join(e.home, ".agentq", "state.json"), st); err != nil {
 		t.Fatal(err)
 	}
@@ -211,17 +245,36 @@ func TestGateNotHeldByOtherBackendCooldown(t *testing.T) {
 	}
 }
 
-// 只用一种后端：不会多读别的后端的额度，也不写新键。
+// 只用一种后端：不会多读别的后端的额度，backend_limits 里只有它自己。
 func TestSingleBackendNoOtherUsage(t *testing.T) {
 	e := newEnv(t, nil)
 	e.setUsage(usageLine("10"))
 	testkit.MkProject(t, e.root, "aa", "- [ ] 甲 —— 正常\n")
 	e.mustRun("tick")
 	b := testkit.ReadBytes(t, filepath.Join(e.home, ".agentq", "state.json"))
-	if strings.Contains(string(b), "backend_limits") {
-		t.Fatalf("只用一种后端不写这个键：\n%s", b)
+	if st := e.state(); len(st.BackendLimits) != 1 || st.UsageOf("claude") == nil {
+		t.Fatalf("只用一种后端只记它自己：\n%s", b)
 	}
 	if out := e.mustRun("status"); strings.Contains(out, "额度（") {
 		t.Fatalf("只有一个后端不多一行：\n%s", out)
 	}
+}
+
+// 新格式不写顶层的 cooldown_until、usage：都在 backend_limits 里。
+func assertNoTopLimits(t *testing.T, b []byte) {
+	t.Helper()
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(b, &top); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"cooldown_until", "usage"} {
+		if _, ok := top[k]; ok {
+			t.Fatalf("不该再写顶层 %s：%s", k, b)
+		}
+	}
+}
+
+// claudeLimit：只有默认后端 Claude 的冷却和额度，测试拼状态文件用。
+func claudeLimit(until time.Time, u *backend.UsageInfo) map[string]*state.BackendLimit {
+	return map[string]*state.BackendLimit{backend.Default: {CooldownUntil: until, Usage: u}}
 }

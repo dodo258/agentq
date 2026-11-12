@@ -107,7 +107,10 @@ func TestBuildPromptIsData(t *testing.T) {
 	if strings.Count(p, "\n-----要做的事结束-----\n") != 1 {
 		t.Errorf("分隔线伪造不了：%s", p)
 	}
-	for _, want := range []string{"大方向商量进程", "最多 3 个问题", "默认答案", "是数据"} {
+	for _, want := range []string{"大方向商量进程", "最多 3 个问题", "默认答案", "是数据", "只能读文件",
+		// 定方向前先只读看真实环境、问用法、会删改数据的默认只在临时目录测
+		"先只读看一眼需求涉及的真实环境", "分支、worktree", "每个默认答案后面用一句话写依据",
+		"命令行、窗口界面、菜单栏", "用法需求没说就要问一句", "开发测试只用临时目录里造的数据，真实数据只读跑"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("缺 %q：%s", want, p)
 		}
@@ -117,10 +120,14 @@ func TestBuildPromptIsData(t *testing.T) {
 	}
 }
 
-func TestRequestNoTools(t *testing.T) {
+// 商量进程只读：要看得到真实环境，又不能改东西；只读必须 CLI 强制（MustDiscuss）。
+func TestRequestReadOnly(t *testing.T) {
 	r := Request(config.Default(), "p", "demo", "s")
-	if r.Profile != backend.ProfileNoTools || !r.NoExternalMCP || r.Permission != "" || r.Must != backend.MustDiscuss || r.Schema != Schema || r.MaxTurns == 0 || r.BudgetUSD == 0 {
+	if r.Profile != backend.ProfileReadOnly || !r.NoExternalMCP || r.Permission != "" || r.Must != backend.MustDiscuss || r.Schema != Schema || r.MaxTurns == 0 || r.BudgetUSD == 0 {
 		t.Errorf("%+v", r)
+	}
+	if r.MaxTurns < 10 {
+		t.Errorf("要读几个文件，回合不能太少：%d", r.MaxTurns)
 	}
 	if !strings.HasPrefix(r.Label, proc.NameMarker("demo")) {
 		t.Errorf("进程标记要是任务的项目名，不然在跑也认不出：%q", r.Label)

@@ -281,7 +281,7 @@ func TestIntegrationGatePausedAndCooldown(t *testing.T) {
 	j := e.jobByTitle(title)
 	waitExit(t, j.PID, 20*time.Second)
 	st := e.state()
-	st.CooldownUntil = time.Now().Add(time.Hour)
+	st.ExtendCooldown("", time.Now().Add(time.Hour))
 	if err := state.Save(filepath.Join(e.home, ".agentq", "state.json"), st); err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestIntegrationGatePausedAndCooldown(t *testing.T) {
 		t.Fatalf("冷却时排队不起门：%+v", j.Gate)
 	}
 	st = e.state()
-	st.CooldownUntil = time.Time{}
+	delete(st.BackendLimits, "claude")
 	if err := state.Save(filepath.Join(e.home, ".agentq", "state.json"), st); err != nil {
 		t.Fatal(err)
 	}
@@ -891,14 +891,14 @@ func TestIntegrationBranchMergedWhileQueued(t *testing.T) {
 	j := e.jobByTitle(title)
 	waitExit(t, j.PID, 20*time.Second)
 	st := e.state()
-	st.CooldownUntil = time.Now().Add(time.Hour)
+	st.ExtendCooldown("", time.Now().Add(time.Hour))
 	if err := state.Save(filepath.Join(e.home, ".agentq", "state.json"), st); err != nil {
 		t.Fatal(err)
 	}
 	e.mustRun("tick") // 收尾，排上队，冷却时不起门
 	testkit.GitT(t, e.home, dir, "merge", "-q", "--no-edit", "agent/t-a")
 	st = e.state()
-	st.CooldownUntil = time.Time{}
+	delete(st.BackendLimits, "claude")
 	if err := state.Save(filepath.Join(e.home, ".agentq", "state.json"), st); err != nil {
 		t.Fatal(err)
 	}

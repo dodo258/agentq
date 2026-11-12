@@ -173,8 +173,8 @@ func TestFinishClassifiesAPIErrors(t *testing.T) {
 			if j.Status != c.want.status || j.Transient != c.want.transient || j.LimitHit != c.want.limit || st.FailStreak != c.want.streak {
 				t.Fatalf("status=%s transient=%v limit=%v streak=%d，应为 %+v；摘要：%s", j.Status, j.Transient, j.LimitHit, st.FailStreak, c.want, j.Summary)
 			}
-			if c.want.limit != !st.CooldownUntil.IsZero() {
-				t.Fatalf("冷却应%v：%v", c.want.limit, st.CooldownUntil)
+			if c.want.limit != !st.CooldownOf("").IsZero() {
+				t.Fatalf("冷却应%v：%v", c.want.limit, st.CooldownOf(""))
 			}
 			if !strings.Contains(j.Summary, c.want.summary) {
 				t.Fatalf("摘要应含 %q：%s", c.want.summary, j.Summary)

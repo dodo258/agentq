@@ -192,12 +192,13 @@ func TestDiffFlags(t *testing.T) {
 		{name: "pytest", files: add("test_a.py", "@pytest.mark.skip\ndef test_a(): pass\n"), want: "新增跳过"},
 		{name: "删测试文件", seed: add("a_test.go", "package a\n"), del: []string{"a_test.go"}, want: "删了测试文件 a_test.go"},
 		{name: "删用例", seed: add("a_test.go", "package a\nfunc TestGone(t *testing.T) {}\nfunc TestStay(t *testing.T) {}\n"), files: add("a_test.go", "package a\nfunc TestStay(t *testing.T) {}\n"), want: "删了测试用例 TestGone"},
+		{name: "改名用例", seed: add("a_test.go", "package a\nfunc TestOld(t *testing.T) {}\n"), files: add("a_test.go", "package a\nfunc TestNew(t *testing.T) {}\n"), want: "删了测试用例 TestOld"},
 		{name: "删 python 用例", seed: add("test_a.py", "def test_gone(): pass\n"), files: add("test_a.py", "x = 1\n"), want: "删了测试用例 test_gone"},
 		{name: "改 gates.json", files: add(gate.GatesFile, "{\"levels\":{}}\n"), want: "改了 " + gate.GatesFile},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			run := func(note string) gate.RunResult {
+			run := func(note string) (gate.RunResult, []string) {
 				f := newFix(t, fixBacklog)
 				for p, text := range c.seed {
 					os.WriteFile(filepath.Join(f.dir, p), []byte(text), 0o644)
@@ -215,20 +216,45 @@ func TestDiffFlags(t *testing.T) {
 				}
 				f.commit(wt, nil, ready("agent/x"))
 				testkit.GitT(t, f.home, wt, "commit", "-q", "--allow-empty", "-m", msg)
-				return f.run(j)
+				// 进门前的预检和门用同一段判断：门会因为缺说明退回的，预检先查出来
+				missing := f.a.NoteMissing(j, testkit.GitT(t, f.home, wt, "rev-parse", "HEAD"))
+				return f.run(j), missing
 			}
-			res := run("")
+			res, missing := run("")
 			r := testResult(t, res)
 			if res.Outcome != "fail" || !strings.Contains(strings.Join(r.Evidence, "；"), c.want) || !strings.Contains(r.Summary, gate.NoteMark) {
 				t.Fatalf("没说明要失败：%+v", res)
 			}
-			res = run("这个用例依赖外网，先跳过")
+			if !strings.Contains(strings.Join(missing, "；"), c.want) {
+				t.Fatalf("进门前要查出缺说明：%q", missing)
+			}
+			res, missing = run("这个用例依赖外网，先跳过")
 			r = testResult(t, res)
 			ev := strings.Join(r.Evidence, "；")
 			if res.Outcome != "merged" || !strings.Contains(ev, c.want) || !strings.Contains(ev, "依赖外网") {
 				t.Fatalf("写了说明交给审查门：%+v", res)
 			}
+			if len(missing) > 0 {
+				t.Fatalf("写了说明进门前不拦：%q", missing)
+			}
 		})
+	}
+}
+
+// 测试门不是 error 档时缺说明也挡不住合并：进门前不要回补，照常进门。
+func TestNoteMissingFollowsTestLevel(t *testing.T) {
+	f := newFix(t, fixBacklog)
+	os.MkdirAll(filepath.Join(f.dir, ".agentq"), 0o755)
+	os.WriteFile(filepath.Join(f.dir, gate.GatesFile), []byte(`{"levels":{"test":"warn"}}`), 0o644)
+	os.WriteFile(filepath.Join(f.dir, "a_test.go"), []byte("package a\n"), 0o644)
+	f.git("add", "-A")
+	f.git("commit", "-q", "-m", "种子")
+	j := f.claim("做事", "agent/x", nil, gate.Ready{})
+	wt := filepath.Join(f.dir, ".claude", "worktrees", "x")
+	testkit.GitT(t, f.home, wt, "rm", "-q", "a_test.go")
+	f.commit(wt, nil, ready("agent/x"))
+	if got := f.a.NoteMissing(j, testkit.GitT(t, f.home, wt, "rev-parse", "HEAD")); len(got) > 0 {
+		t.Fatalf("warn 档不要回补：%q", got)
 	}
 }
 

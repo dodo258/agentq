@@ -106,8 +106,8 @@ func TestTickRecoversCorruptState(t *testing.T) {
 	if len(st.Jobs) != 2 || st.Jobs[0].ID != "1010-100000-alpha" || st.Jobs[1].ID != "1010-114000-alpha" {
 		t.Errorf("应按启动时间重建 2 个任务：%+v", st.Jobs)
 	}
-	if want := ended.Add(a.Cfg.LimitCooldown.Duration); !st.CooldownUntil.Equal(want) {
-		t.Errorf("用量冷却应估到 %v，实际 %v", want, st.CooldownUntil)
+	if want := ended.Add(a.Cfg.LimitCooldown.Duration); !st.CooldownOf("").Equal(want) {
+		t.Errorf("用量冷却应估到 %v，实际 %v", want, st.CooldownOf(""))
 	}
 	n, _ := os.ReadFile(a.NightlyPath(now))
 	if !strings.Contains(string(n), "状态文件损坏：") || !strings.Contains(string(n), "1 个任务的 meta.json 读不出，没算进去：1010-110000-alpha") {

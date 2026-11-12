@@ -26,7 +26,6 @@
       "status": "running"
     }
   ],
-  "cooldown_until": "0001-01-01T00:00:00Z",
   "breaker_until": "2026-01-11T00:00:00Z",
   "fail_streak": 2,
   "item_hold": {

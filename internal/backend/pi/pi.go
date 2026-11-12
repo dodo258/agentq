@@ -191,11 +191,11 @@ func defaultProvider(dir string) string {
 	return s.DefaultProvider
 }
 
-// checkAuth 跑 pi auth check。ready 退 0、not_ready 退 1、invalid 退 2（cli.md），输出都是一个 JSON 对象。
-func checkAuth(ctx context.Context, path, dir string, env []string, provider string) (authResult, error) {
+// checkAuth 跑 pi auth check。target 是 --provider 或 --model 加它的值。ready 退 0、not_ready 退 1、invalid 退 2（cli.md），输出都是一个 JSON 对象。
+func checkAuth(ctx context.Context, path, dir string, env []string, target ...string) (authResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, authWait)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, path, "auth", "check", "--provider", provider, "--json")
+	cmd := exec.CommandContext(ctx, path, append(append([]string{"auth", "check"}, target...), "--json")...)
 	cmd.Dir, cmd.Env = dir, env
 	proc.BoundCmd(cmd)
 	defer proc.ClearLeftovers(cmd)
@@ -210,21 +210,38 @@ func checkAuth(ctx context.Context, path, dir string, env []string, provider str
 	return r, nil
 }
 
-// Auth：看默认模型来源的凭据在不在。只说明本地配了（API key 不验证），算 Unverified；没选过模型来源就查不了，照常启动。
-// backends.pi.model 换了别家来源时查的还是默认那家：实例里没有配置，401 由 Parse 认出来。
+// authTarget：查哪家的凭据。配置的模型写成「提供商/模型」时交给 pi 按模型认来源（auth check --model，和运行时一样解析，
+// 模型 ID 自己带斜杠的如 qwen/qwen3-coder 也认得到 openrouter）；只写模型名时模糊匹配查到的未必是运行时选的那家，查默认来源。
+func authTarget(model, dir string) []string {
+	if strings.Contains(model, "/") {
+		return []string{"--model", model}
+	}
+	if p := defaultProvider(dir); p != "" {
+		return []string{"--provider", p}
+	}
+	return nil
+}
+
+// Auth：看模型来源的凭据在不在。只说明本地配了（API key 不验证），算 Unverified；没选过模型来源就查不了，照常启动。
 func (b *Backend) Auth(ctx context.Context) backend.Auth {
-	provider := defaultProvider(agentDir(b.o.Home))
-	if provider == "" {
+	target := authTarget(b.o.Model, agentDir(b.o.Home))
+	if target == nil {
 		return backend.Auth{State: backend.AuthUnknown}
 	}
-	r, err := checkAuth(ctx, b.path(), "", proc.BackendEnv(envKeep), provider)
+	r, err := checkAuth(ctx, b.path(), "", proc.BackendEnv(envKeep), target...)
 	switch {
 	case err != nil:
 		return backend.Auth{State: backend.AuthError, Detail: "确认 pi 的登录状态失败，不启动：" + err.Error()}
 	case r.Status == "ready":
 		return backend.Auth{State: backend.AuthIn, Unverified: true}
 	}
-	return backend.Auth{State: backend.AuthOut, Detail: fmt.Sprintf("pi 的模型来源 %s 没有可用的凭据（pi auth check：%s %s），不启动；运行 pi auth login %s", provider, r.Status, r.Reason, provider)}
+	if target[0] == "--model" {
+		if r.Status == "invalid" {
+			return backend.Auth{State: backend.AuthOut, Detail: fmt.Sprintf("pi 认不出配置的模型 %s（pi auth check：%s %s），不启动；改 backends.pi.model", target[1], r.Status, r.Reason)}
+		}
+		return backend.Auth{State: backend.AuthOut, Detail: fmt.Sprintf("pi 的模型 %s 的来源 %s 没有可用的凭据（pi auth check：%s %s），不启动；运行 pi auth login %s", target[1], r.Provider, r.Status, r.Reason, r.Provider)}
+	}
+	return backend.Auth{State: backend.AuthOut, Detail: fmt.Sprintf("pi 的模型来源 %s 没有可用的凭据（pi auth check：%s %s），不启动；运行 pi auth login %s", target[1], r.Status, r.Reason, target[1])}
 }
 
 // versionRe：pi --version 只打版本号。
@@ -261,7 +278,7 @@ func (b *Backend) Probe(ctx context.Context, env backend.ProbeEnv) (backend.Prob
 	if provider == "" {
 		return r, fmt.Errorf("pi has no default model provider (defaultProvider in %s); run pi once and pick a model, or %s: %w", filepath.Join(dir, "settings.json"), loginCommand, backend.ErrNotLoggedIn)
 	}
-	a, err := checkAuth(ctx, p, env.Home, env.Env, provider)
+	a, err := checkAuth(ctx, p, env.Home, env.Env, "--provider", provider)
 	if err == nil && a.Status == "ready" {
 		r.Authenticated, r.AuthMethod = true, provider
 		return r, nil

@@ -534,8 +534,8 @@ func TestMorningConditions(t *testing.T) {
 		t.Fatal(err)
 	}
 	reset := e.now.Add(48 * time.Hour)
-	e.st.Usage = &backend.UsageInfo{CheckedAt: e.now.Add(2 * time.Hour), Windows: []backend.UsageWindow{
-		{Label: "session", Used: 44, ResetsAt: &reset}, {Label: "week (Fable)", Scope: "Fable", Used: 100, ResetsAt: &reset}}}
+	e.st.SetUsageOf("", &backend.UsageInfo{CheckedAt: e.now.Add(2 * time.Hour), Windows: []backend.UsageWindow{
+		{Label: "session", Used: 44, ResetsAt: &reset}, {Label: "week (Fable)", Scope: "Fable", Used: 100, ResetsAt: &reset}}})
 	e.at(7, 0)
 	e.report(e.now, "早报第一行\n")
 	e.flush()
@@ -757,7 +757,7 @@ func TestTelegramChatJob(t *testing.T) {
 func TestTelegramChatRefused(t *testing.T) {
 	t.Parallel()
 	e := newNotifyEnv(t, true)
-	e.st.CooldownUntil = e.now.Add(time.Hour)
+	e.st.ExtendCooldown("", e.now.Add(time.Hour))
 	e.tg.msg(30, ownerChat, 4, "帮我查查 my-app 昨天的崩溃", "")
 	e.flush()
 	got := e.tg.texts()

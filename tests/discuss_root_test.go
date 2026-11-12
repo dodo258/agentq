@@ -356,7 +356,7 @@ func TestDiscussNoSpend(t *testing.T) {
 		gateRepo(t, e, "demo", discussItem)
 		e.editState(func(st *State) {
 			y, m, d := time.Now().Date()
-			st.Usage = &backend.UsageInfo{CheckedAt: time.Date(y, m, d, 12, 0, 0, 0, time.Local), Windows: []backend.UsageWindow{{Label: "session", Used: 99}}}
+			st.SetUsageOf("", &backend.UsageInfo{CheckedAt: time.Date(y, m, d, 12, 0, 0, 0, time.Local), Windows: []backend.UsageWindow{{Label: "session", Used: 99}}})
 		})
 		e.mustRun("tick")
 		if n := len(discussJobs(e)); n != 0 || len(discussRecords(t, e)) != 0 {
@@ -539,8 +539,8 @@ func TestDiscussNew(t *testing.T) {
 		if j.Kind != state.KindNew || j.Direction != "" {
 			t.Fatalf("%+v", j)
 		}
-		if p := promptOf(t, e, j); strings.Contains(p, "开工前定的大方向") {
-			t.Errorf("提示词和以前一样：%s", p)
+		if p := promptOf(t, e, j); strings.Contains(p, "开工前定的大方向") || !strings.Contains(p, "先只读看一眼需求涉及的真实环境") {
+			t.Errorf("没商量：不带方向，但第 2 步要先只读看环境再定默认：%s", p)
 		}
 		if !strings.Contains(e.nightly(), "用了默认（没配 Telegram") {
 			t.Errorf("%s", e.nightly())
@@ -660,4 +660,88 @@ func TestDiscussNewDirectedSettlesWaiting(t *testing.T) {
 	if out := e.mustRun("discuss"); strings.Contains(out, "等你回") {
 		t.Errorf("不再等回答：%s", out)
 	}
+}
+
+// messyRepo 在 projects_root 下建一个带多余分支和 worktree 的仓库（11-12 实测里真正乱的地方）。
+func messyRepo(t *testing.T, e *testEnv, name string, extra int) string {
+	t.Helper()
+	os.WriteFile(filepath.Join(e.home, ".gitconfig"), []byte("[user]\n\tname = t\n\temail = t@t\n[commit]\n\tgpgsign = false\n"), 0o644)
+	dir := filepath.Join(e.root, name)
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte(name+"\n"), 0o644)
+	testkit.GitT(t, e.home, dir, "init", "-q", "-b", "main")
+	testkit.GitT(t, e.home, dir, "add", "-A")
+	testkit.GitT(t, e.home, dir, "commit", "-q", "-m", "init")
+	for i := range extra {
+		b := "agent/old-" + string(rune('a'+i))
+		testkit.GitT(t, e.home, dir, "worktree", "add", "-q", filepath.Join(dir, ".claude", "worktrees", b[len("agent/"):]), "-b", b)
+	}
+	return dir
+}
+
+// 开工前先只读看真实环境：商量进程只读（CLI 强制）、在项目根目录跑、提示词有三条；看到的事实进卡片，没回按默认时进新项目的合同，合同第 2 步也要先看环境。
+func TestDiscussLooksAtRealEnv(t *testing.T) {
+	t.Parallel()
+	t.Run("agentq new", func(t *testing.T) {
+		e, tg := discussEnv(t, nil)
+		messyRepo(t, e, "messy", 3)
+		messyRepo(t, e, "tidy", 0)
+		e.mustRun("new", "NEWOK REPOTIDY 做个仓库体检工具，能清的清掉")
+		jobs := discussJobs(e)
+		if len(jobs) != 1 {
+			t.Fatalf("%+v", e.state().Jobs)
+		}
+		waitExit(t, jobs[0].PID, 20*time.Second)
+		log := e.fakeLogOf(jobs[0])
+		if !strings.Contains(log, "ARG[--tools]\nARG[Read,Grep,Glob]\n") || strings.Contains(log, "--permission-mode") || !strings.Contains(log, "ARG[--strict-mcp-config]") {
+			t.Errorf("商量进程要只读、不传权限模式、不接 MCP：\n%s", log)
+		}
+		if root, _ := filepath.EvalSymlinks(e.root); !strings.Contains(log, "PWD["+root+"]") {
+			t.Errorf("agentq new 的商量在项目根目录跑，才看得到各仓库：\n%s", log)
+		}
+		p := promptOf(t, e, jobs[0])
+		for _, want := range []string{"先只读看一眼需求涉及的真实环境", "命令行、窗口界面、菜单栏", "开发测试只用临时目录里造的数据，真实数据只读跑"} {
+			if !strings.Contains(p, want) {
+				t.Errorf("商量提示词缺 %q", want)
+			}
+		}
+		e.mustRun("tick")
+		sent := strings.Join(tg.texts(), "\n")
+		for _, want := range []string{"命令行还是窗口界面", "messy 有 4 个 worktree、4 个分支", "tidy 有 1 个 worktree、1 个分支", "真实数据只读跑"} {
+			if !strings.Contains(sent, want) {
+				t.Errorf("卡片缺 %q：\n%s", want, sent)
+			}
+		}
+		e.later(2*time.Hour + time.Minute)
+		e.mustRun("tick")
+		var news []*Job
+		for _, j := range e.state().Jobs {
+			if j.Kind == state.KindNew || j.NewReport != nil {
+				news = append(news, j)
+			}
+		}
+		if len(news) != 1 {
+			t.Fatalf("到点要开工：%+v\n%s", e.state().Jobs, e.launchdLog())
+		}
+		np := promptOf(t, e, news[0])
+		for _, want := range []string{"messy 有 4 个 worktree", "能清的指什么 → 多余的 worktree", "先只读看一眼需求涉及的真实环境", "开发测试只用临时目录里造的数据，真实数据只读跑"} {
+			if !strings.Contains(np, want) {
+				t.Errorf("新项目合同缺 %q：\n%s", want, np)
+			}
+		}
+	})
+	t.Run("条目", func(t *testing.T) {
+		e, _ := discussEnv(t, nil)
+		dir := gateRepo(t, e, "demo", discussItem)
+		e.mustRun("tick")
+		jobs := discussJobs(e)
+		if len(jobs) != 1 {
+			t.Fatalf("%+v", e.state().Jobs)
+		}
+		waitExit(t, jobs[0].PID, 20*time.Second)
+		log := e.fakeLogOf(jobs[0])
+		if real, _ := filepath.EvalSymlinks(dir); !strings.Contains(log, "ARG[Read,Grep,Glob]") || !strings.Contains(log, "PWD["+real+"]") {
+			t.Errorf("条目的商量在项目目录只读跑：\n%s", log)
+		}
+	})
 }

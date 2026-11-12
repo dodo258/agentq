@@ -15,6 +15,7 @@ import (
 	"agentq/internal/backlog"
 	"agentq/internal/config"
 	"agentq/internal/fsx"
+	"agentq/internal/gate"
 	"agentq/internal/proc"
 	"agentq/internal/state"
 	"agentq/internal/textfmt"
@@ -270,6 +271,9 @@ func (a *Service) LaunchResume(st *state.State, orig *state.Job) (*state.Job, er
 	if orig.BudgetHit {
 		extra = budgetResumeNote
 	}
+	if len(orig.NoteAsk) > 0 && orig.Gate == nil {
+		extra = gate.NoteAskNote(orig.NoteAsk)
+	}
 	if orig.Gate != nil && orig.Gate.State == state.GateReturned {
 		extra = a.Gate.ReturnNote(orig)
 	}
@@ -324,8 +328,9 @@ func carryGate(j, orig *state.Job) {
 		return
 	}
 	j.GateRound, j.GateScope, j.GateScopeFrom = orig.GateRound, nil, ""
-	if orig.Gate == nil { // 这一轮做到一半中断的续跑：范围照旧。卡在门上的（用户去掉卡住标记重做）不再限定
+	if orig.Gate == nil { // 这一轮做到一半中断的续跑：范围照旧，进门前要过的门说明也算要过了。卡在门上的（用户去掉卡住标记重做）不再限定
 		j.GateScope, j.GateScopeFrom = slices.Clone(orig.GateScope), orig.GateScopeFrom
+		j.NoteAsk = slices.Clone(orig.NoteAsk)
 	}
 }
 

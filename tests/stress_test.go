@@ -2060,8 +2060,10 @@ func scenarioEnv(t *testing.T, rng *rand.Rand) {
 		// 冷却、熔断可以有（跳回来之后撞的也是正常撞的），但不能超过正常的上限
 		if st, err := e.state(); err == nil {
 			now := time.Now()
-			if st.CooldownUntil.After(now.Add(8*24*time.Hour + 2*time.Hour)) {
-				e.violate("时钟跳回来后用量冷却卡到 %s", st.CooldownUntil)
+			for name, l := range st.BackendLimits {
+				if l.CooldownUntil.After(now.Add(8*24*time.Hour + 2*time.Hour)) {
+					e.violate("时钟跳回来后 %s 的用量冷却卡到 %s", name, l.CooldownUntil)
+				}
 			}
 			if st.BreakerUntil.After(now.Add(5 * time.Hour)) {
 				e.violate("时钟跳回来后熔断卡到 %s", st.BreakerUntil)

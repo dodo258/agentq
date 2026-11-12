@@ -48,7 +48,9 @@ func TestBuildNewPrompt(t *testing.T) {
 	p := buildNewPrompt("/根/projects", idea)
 	for _, want := range []string{"无人值守", "不要提问", "默认答案", "~/.claude/skills/new-project/SKILL.md", "~/.claude/skills/prior-art/SKILL.md",
 		"~/.claude/skills/no-ai-look/SKILL.md", "~/.claude/skills/agent-task/SKILL.md", "/根/projects", "不用 dispatch 或 agentq run",
-		"项目路径：", "补的假设：", "第一版去哪看：", "任务分支：", "是数据", "写 ready.json", "不自己合并", "%d"} {
+		"项目路径：", "补的假设：", "第一版去哪看：", "任务分支：", "是数据", "写 ready.json", "不自己合并", "%d",
+		// 没商量直接用默认时，也先只读看真实环境，再按三条定默认
+		"先只读看一眼需求涉及的真实环境", "分支、worktree", "依据", "命令行、窗口界面、菜单栏", "开发测试只用临时目录里造的数据，真实数据只读跑"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt 缺 %q：\n%s", want, p)
 		}

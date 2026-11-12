@@ -36,8 +36,8 @@ var goldenTime = time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)
 type filler struct{ n int }
 
 // goldenOptional 是老文件没有的键：为空时省略，黄金文件要证明老用户的字节不变，所以不填它们。写出来的样子由 TestGoldenBackendField 查。
-var goldenOptional = map[string]bool{"AutopushLog": true, "BackendLimits": true, "Backend": true, "Jobs[].Backend": true, "ProjectBackends": true, "Backends": true, "Usage.CostUnknown": true, "Jobs[].Usage.CostUnknown": true,
-	"Gate": true, "Jobs[].Gate": true, "GateRound": true, "Jobs[].GateRound": true, "GateScope": true, "Jobs[].GateScope": true, "GateScopeFrom": true, "Jobs[].GateScopeFrom": true, "GateContract": true, "Jobs[].GateContract": true, "Pending[].Card.GateJob": true, "Cards.value.GateJob": true,
+var goldenOptional = map[string]bool{"AutopushLog": true, "Backend": true, "Jobs[].Backend": true, "ProjectBackends": true, "Backends": true, "Usage.CostUnknown": true, "Jobs[].Usage.CostUnknown": true,
+	"Gate": true, "Jobs[].Gate": true, "GateRound": true, "Jobs[].GateRound": true, "GateScope": true, "Jobs[].GateScope": true, "GateScopeFrom": true, "Jobs[].GateScopeFrom": true, "NoteAsk": true, "Jobs[].NoteAsk": true, "GateContract": true, "Jobs[].GateContract": true, "Pending[].Card.GateJob": true, "Cards.value.GateJob": true,
 	"DiscussKey": true, "Jobs[].DiscussKey": true, "Direction": true, "Jobs[].Direction": true, "Pending[].Card.DiscussKey": true, "Cards.value.DiscussKey": true}
 
 func goldenSkip(path string) bool {
@@ -495,7 +495,7 @@ func TestGoldenStatus(t *testing.T) {
 			{ID: "0315-050000-demo", Project: "demo", ProjectDir: filepath.Join(e.root, "demo"), Title: "修登录", Item: "- [ ] 修登录", StartedAt: started, EndedAt: &ended, Status: state.StatusDone, Summary: "做完了"},
 			{ID: "0315-060000-demo", Project: "demo", ProjectDir: filepath.Join(e.root, "demo"), Title: "失败的", Item: "- [ ] 失败的", StartedAt: started, EndedAt: &ended, Status: state.StatusFailed, Summary: "出错了"},
 		},
-		Usage: &backend.UsageInfo{CheckedAt: goldenTime},
+		BackendLimits: map[string]*state.BackendLimit{backend.Default: {Usage: &backend.UsageInfo{CheckedAt: goldenTime}}},
 	}
 	if err := state.Save(filepath.Join(e.home, ".agentq", "state.json"), st); err != nil {
 		t.Fatal(err)

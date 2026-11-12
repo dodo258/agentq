@@ -248,7 +248,7 @@ func (a *Service) handleOrphan(st *state.State, p backlog.Project, it backlog.It
 		active = *last.EndedAt
 	}
 	// 上一个任务中断了又续跑不了（后端不能续跑，或者是新项目的第一版，会话在 projects_root）：接手就是它的续跑，不用等没人在做的窗口
-	noResume := last != nil && last.EndedAt != nil && last.Status == state.StatusInterrupted && (!a.BackendFor(last.Backend).Caps().Resume || last.SessionInRoot())
+	noResume := a.Runner.TakeoverNow(last)
 	if now.Sub(active) < orphanIdle && !noResume {
 		return OrphanJob{}, false
 	}

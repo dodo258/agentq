@@ -644,29 +644,18 @@ func ReadInstallConfig(home string) (config.Config, bool, error) {
 	return c, true, c.Validate()
 }
 
+// InstallerIdle：换安装前没有任务在跑、没有门在跑（_gate 跑完会接着 tick 接新活）。排队的门不挡：它要等 tick 才起。
+// 状态读不了或损坏（和调度器同一套判断）当未知，不换。
 func InstallerIdle(home string) error {
-	b, e := os.ReadFile(filepath.Join(home, ".agentq", "state.json"))
-	if errors.Is(e, os.ErrNotExist) {
-		return nil
-	}
+	st, e := state.Load(filepath.Join(home, ".agentq", "state.json"))
 	if e != nil {
-		return e
-	}
-	var object map[string]json.RawMessage
-	if json.Unmarshal(b, &object) != nil || object == nil {
-		return errors.New("state unknown: expected object")
-	}
-	var st state.State
-	if e = json.Unmarshal(b, &st); e != nil {
 		return fmt.Errorf("state unknown: %w", e)
 	}
-	for _, j := range st.Jobs {
-		if j == nil {
-			return errors.New("state unknown: null job")
-		}
-		if j.Status == "running" {
-			return errors.New("jobs still running; wait for completion before replacing installation")
-		}
+	if len(st.Running()) > 0 {
+		return errors.New("jobs still running; wait for completion before replacing installation")
+	}
+	if len(st.Gating()) > 0 {
+		return errors.New("gates still running; wait for completion before replacing installation")
 	}
 	return nil
 }

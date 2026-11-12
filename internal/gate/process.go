@@ -652,16 +652,26 @@ func (a *Service) integrate(ctx context.Context, dir string, p Plan, c Candidate
 	}
 	// 这一步跑用户的钩子：它是真的合并。不碰和这次改动没重叠的未提交改动，有重叠 git 会拒绝。
 	out, err := a.Gitx.Git(p.ProjectDir, "merge", "--ff-only", "--quiet", c.Merge)
-	if err != nil && a.onBranch(p.ProjectDir, def, c.Merge) { // 默认分支已经前进，报错的是合并之后的钩子（比如跑超时）：合并算数
-		a.Logf("门：任务 %s 已经进 %s，合并命令报错：%s", p.JobID, def, textfmt.OneLine(err.Error()+" "+out, 300))
-		err = nil
-	}
-	if err != nil {
+	// 进没进默认分支只看结果：报错的可能是合并之后的钩子（比如跑超时），合并算数；
+	// 没报错也可能合到了别的分支（上面查过之后主目录被切走），不算。
+	if a.onBranch(p.ProjectDir, def, c.Merge) {
+		if err != nil {
+			a.Logf("门：任务 %s 已经进 %s，合并命令报错：%s", p.JobID, def, textfmt.OneLine(err.Error()+" "+out, 300))
+		}
+	} else {
 		if rerr := os.Remove(intentPath(dir)); rerr != nil {
 			a.Logf("门：任务 %s 的合并记录删不掉：%v", p.JobID, rerr)
 		}
 		if now, nerr := a.git(ctx, p.ProjectDir, "rev-parse", "--verify", "refs/heads/"+def); nerr == nil && now != c.Base {
 			return RunResult{}, true // 不走锁的提交抢在前面了
+		}
+		if err == nil {
+			br, berr := a.git(ctx, p.ProjectDir, "symbolic-ref", "--short", "HEAD")
+			if berr != nil {
+				br = "别处"
+			}
+			a.Logf("门：任务 %s 合并时主目录被切到 %s，提交 %s 没进 %s，不算合并", p.JobID, textfmt.OneLine(br, 60), textfmt.TruncRunes(c.Merge, 12), def)
+			return RunResult{Outcome: outWait, WaitBranch: def, Reason: "合并时主目录被切到 " + textfmt.OneLine(br, 60) + "，没进 " + def}, false
 		}
 		return RunResult{Outcome: outWait, WaitChanges: a.dirtyOverlap(ctx, p.ProjectDir, c.Files), Reason: "主目录挡着合并：" + textfmt.OneLine(out, 300)}, false
 	}

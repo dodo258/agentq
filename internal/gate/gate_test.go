@@ -905,11 +905,11 @@ func TestStartQueuedRules(t *testing.T) {
 	for _, j := range []*state.Job{a2, c1} { // 冷却按任务的后端看：这里的 cooldown_until 是默认后端的
 		j.Backend = f.a.Cfg.Backend
 	}
-	f.st.CooldownUntil = now.Add(time.Hour)
+	f.st.ExtendCooldown(f.a.Cfg.Backend, now.Add(time.Hour))
 	if got := f.a.StartQueued(f.st); got != 0 {
 		t.Errorf("冷却时不起：%d", got)
 	}
-	f.st.CooldownUntil = time.Time{}
+	delete(f.st.BackendLimits, f.a.Cfg.Backend)
 	a2.Gate.NotBefore = now.Add(time.Minute)
 	c1.Gate.NotBefore = now.Add(time.Minute)
 	if got := f.a.StartQueued(f.st); got != 0 {
@@ -988,8 +988,8 @@ func TestDeferOnLimit(t *testing.T) {
 	j.Backend = f.a.Cfg.Backend // 冷却按任务的后端记：这里的 cooldown_until 是默认后端的
 	reset := f.a.Now().Add(2 * time.Hour)
 	f.collect(j, gate.RunResult{Outcome: "defer", Reason: "审查撞了上限", Results: []gate.Result{{Gate: "review", Outcome: gate.Unknown, Defer: "撞了上限", Limit: true, ResetAt: reset}}})
-	if j.Gate.State != state.GateQueued || !j.Gate.NotBefore.IsZero() || !f.st.CooldownUntil.Equal(reset) || j.Status != state.StatusDone {
-		t.Fatalf("%+v %v", j.Gate, f.st.CooldownUntil)
+	if j.Gate.State != state.GateQueued || !j.Gate.NotBefore.IsZero() || !f.st.CooldownOf(f.a.Cfg.Backend).Equal(reset) || j.Status != state.StatusDone {
+		t.Fatalf("%+v %v", j.Gate, f.st.CooldownOf(f.a.Cfg.Backend))
 	}
 }
 
@@ -1290,6 +1290,47 @@ func TestOverrideConflictGoesStuck(t *testing.T) {
 	}
 }
 
+// 用户的决定先存进 state.json 再删决定文件：存不下（等同存之前 tick 被杀）时决定留着，下次 tick 照样落上。
+func TestDecisionKeptUntilStateSaved(t *testing.T) {
+	f := newFix(t, fixBacklog)
+	j := f.claim("做事", "agent/x", map[string]string{"a.txt": "a"}, ready("agent/x"))
+	f.collect(j, gate.RunResult{Outcome: "unknown", Reason: "判不了", Head: j.Gate.Head})
+	f.k.Runner.RetryStuckMarks(f.st)
+	if j.Gate.State != state.GateStuck {
+		t.Fatalf("%+v", j.Gate)
+	}
+	if err := f.a.Decide(j.ID, gate.DecidePass, "我看过了"); err != nil {
+		t.Fatal(err)
+	}
+	decision := filepath.Join(f.a.Dir(j.ID), "decision.json")
+	// state.json 的位置是个目录：存不下
+	testkit.WriteInstall(t, filepath.Join(f.a.StatePath(), "x"), "", 0o644)
+	f.a.Collect(f.st)
+	if _, err := os.Stat(decision); err != nil {
+		t.Fatalf("状态没存下，决定不能删：%v", err)
+	}
+	// 下一个 tick 读的还是存盘的旧状态：仍卡着
+	j.Gate.State = state.GateStuck
+	if err := os.RemoveAll(f.a.StatePath()); err != nil {
+		t.Fatal(err)
+	}
+	f.a.Collect(f.st)
+	if _, err := os.Stat(decision); err == nil {
+		t.Error("存下之后决定文件要删")
+	}
+	saved, err := state.Load(f.a.StatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sj, err := saved.Find(j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g := sj.Gate; g == nil || g.State != state.GateQueued || g.Override != "我看过了" {
+		t.Fatalf("放行要落进 state.json：%+v", g)
+	}
+}
+
 // 放行只合用户看到的那个提交：卡住之后分支上多出来的不带，审计写提交号，摘要不再说门没过。
 func TestPassPinsHead(t *testing.T) {
 	f := newFix(t, fixBacklog)
@@ -1467,7 +1508,7 @@ func TestAuthFailureNotifiesAndPauses(t *testing.T) {
 	if len(s.Pending) != 1 || !strings.Contains(s.Pending[0].Text, "认证失败") {
 		t.Fatalf("要通知：%+v", s.Pending)
 	}
-	if st := f.st.CooldownUntil; !st.IsZero() {
+	if st := f.st.CooldownOf(f.a.Cfg.Backend); !st.IsZero() {
 		t.Errorf("认证失败不走全局冷却：%v", st)
 	}
 }

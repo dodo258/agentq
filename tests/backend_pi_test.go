@@ -228,6 +228,20 @@ func TestPiNotLoggedInRefuses(t *testing.T) {
 	}
 }
 
+// backends.pi.model 写了「提供商/模型」：启动前按这个模型查登录，不查默认来源。
+func TestPiAuthChecksConfiguredModel(t *testing.T) {
+	e := piEnv(t, map[string]any{"backends": map[string]any{"pi": map[string]any{"path": codexFake(t), "model": "otherp/m1"}}})
+	gateRepo(t, e, "demo", codexItem("mmm", "ok"))
+	writeFakeMode(t, e, "authmode", "out")
+	if out, code := e.run("run", "demo"); code == 0 {
+		t.Fatalf("%d %s", code, out)
+	}
+	calls := authCalls(e)
+	if len(calls) == 0 || !strings.Contains(calls[0], "auth check --model otherp/m1 --json") {
+		t.Fatalf("%v", calls)
+	}
+}
+
 // 没确认过：不起任务，写明要设什么。pi 本来就不问，permission_mode=full 只记用户确认过。
 func TestPiPermissionMissingRefuses(t *testing.T) {
 	e := newEnv(t, map[string]any{"backend": "pi", "backends": map[string]any{"pi": map[string]any{"path": codexFake(t)}}})

@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -177,7 +178,7 @@ func (a *Service) StartQueued(st *state.State) int {
 	sort.SliceStable(queue, func(i, k int) bool { return queue[i].Gate.QueuedAt.Before(queue[k].Gate.QueuedAt) })
 	started := 0
 	for _, j := range queue {
-		if now.Before(st.CooldownOf(j.Backend, a.Cfg.Backend)) { // 审查用任务的后端，别的后端在冷却不挡它
+		if now.Before(st.CooldownOf(j.Backend)) { // 审查用任务的后端，别的后端在冷却不挡它
 			continue
 		}
 		// 时钟跳回来之后 NotBefore 还在很远的未来：不让它一直等
@@ -228,8 +229,11 @@ func readResult(dir string) (RunResult, bool) {
 
 // Collect 是 tick 里的一步：先落用户的决定，再收门进程的结果，补写之前没写上的收尾。没有过门记录的任务什么都不做。
 func (a *Service) Collect(st *state.State) {
+	decided := map[string][]byte{}
 	for _, j := range st.Jobs {
-		a.applyDecision(st, j) // 放弃能处理没有过门记录的任务
+		if b := a.applyDecision(st, j); b != nil { // 放弃能处理没有过门记录的任务
+			decided[decisionPath(a.Dir(j.ID))] = b
+		}
 		if j.Gate == nil {
 			continue
 		}
@@ -240,6 +244,27 @@ func (a *Service) Collect(st *state.State) {
 			a.retryWrap(j)
 		}
 		a.retryClean(j)
+	}
+	a.dropDecisions(st, decided)
+}
+
+// dropDecisions 先把落了决定的状态存下，再删决定文件：中间被杀，下次 tick 照着决定再落一遍，用户点过的不丢。
+// 落的这会儿用户又点了别的（文件内容变了），留给下次 tick。
+func (a *Service) dropDecisions(st *state.State, done map[string][]byte) {
+	if len(done) == 0 {
+		return
+	}
+	if err := state.Save(a.StatePath(), st); err != nil {
+		a.Logf("门：写状态文件失败，用户的决定留着下次 tick 再落：%v", err)
+		return
+	}
+	for p, was := range done {
+		if now, err := os.ReadFile(p); err != nil || !bytes.Equal(now, was) {
+			continue
+		}
+		if err := os.Remove(p); err != nil {
+			a.Logf("门：决定文件 %s 删不掉：%v", p, err)
+		}
 	}
 }
 
@@ -523,7 +548,7 @@ func (a *Service) deferRun(st *state.State, j *state.Job, res RunResult) {
 	}
 	g.State, g.QueuedAt = state.GateQueued, now
 	if limit { // 撞限走这个后端的冷却，不用自己等：提示的重置时间可能在几天后
-		st.ExtendCooldown(j.Backend, a.Cfg.Backend, until)
+		st.ExtendCooldown(j.Backend, until)
 	} else {
 		g.NotBefore = until
 	}
@@ -708,53 +733,45 @@ func (a *Service) Decide(id, action, reason string) error {
 	if err != nil {
 		return err
 	}
-	return fsx.WriteFileAtomic(filepath.Join(a.Dir(id), "decision.json"), b)
+	return fsx.WriteFileAtomic(decisionPath(a.Dir(id)), b)
 }
 
-func (a *Service) applyDecision(st *state.State, j *state.Job) {
-	path := filepath.Join(a.Dir(j.ID), "decision.json")
-	b, err := os.ReadFile(path)
+func decisionPath(dir string) string { return filepath.Join(dir, "decision.json") }
+
+// applyDecision 落用户的决定，只改 st。决定处理完了（落了或不生效）返回读到的决定文件内容，状态存下之后删；没有决定或要留到下次 tick 返回 nil。
+func (a *Service) applyDecision(st *state.State, j *state.Job) []byte {
+	b, err := os.ReadFile(decisionPath(a.Dir(j.ID)))
 	if err != nil {
-		return
-	}
-	drop := func() {
-		if err := os.Remove(path); err != nil {
-			a.Logf("门：任务 %s 的决定文件删不掉：%v", j.ID, err)
-		}
+		return nil
 	}
 	var d decision
 	if err := json.Unmarshal(b, &d); err != nil {
 		a.Logf("门：任务 %s 的决定读不了，丢掉：%v", j.ID, err)
-		drop()
-		return
+		return b
 	}
 	if d.Action == DecideAbandon {
 		if why := abandonRefusal(st, j); why != "" {
 			a.Logf("门：任务 %s：%s，放弃不生效", j.ID, why)
-			drop()
-			return
+			return b
 		}
 		if err := a.abandon(st, j); err != nil { // 主目录不在默认分支、BACKLOG 有改动：决定留着，下次 tick 再做。用户已经看到「已定」了，不能丢
 			a.Logf("门：任务 %s 放弃还没做成，下次 tick 再试：%s", j.ID, textfmt.OneLine(err.Error(), 200))
-			return
+			return nil
 		}
-		drop()
 		a.Ledger.WriteMeta(j)
-		return
+		return b
 	}
 	g := j.Gate
 	if g == nil || (g.State != state.GateStuck && g.State != state.GateAbandoned) {
 		a.Logf("门：任务 %s 已经%s，决定 %s 不生效", j.ID, state.JobLabel(j), d.Action)
-		drop()
-		return
+		return b
 	}
 	title := textfmt.TruncRunes(j.Title, 40)
 	switch d.Action {
 	case DecidePass:
 		if why := passRefusal(j); why != "" { // 比如放弃时才造的门记录：没人看过要合哪个提交
 			a.Logf("门：任务 %s：%s，放行不生效", j.ID, why)
-			drop()
-			return
+			return b
 		}
 		g.State, g.Override, g.QueuedAt, g.Crashes = state.GateQueued, d.Reason, a.Now(), 0
 		g.NotBefore, g.Upstream = time.Time{}, 0
@@ -768,8 +785,7 @@ func (a *Service) applyDecision(st *state.State, j *state.Job) {
 			a.Logf("门：任务 %s：%s，再审不生效", j.ID, why)
 			a.Notify.Notify(notify.Notice{Cat: "alert", Key: "gate-rerun:" + j.ID, JobID: j.ID, Text: j.Project + "「" + textfmt.TruncRunes(j.Title, 30) + "」没有再审：" + why,
 				Lines: []string{"还能放行、退回或放弃；详情 agentq gate report " + j.ID}})
-			drop()
-			return
+			return b
 		}
 		if g.RerunHead != g.Head {
 			g.RerunHead, g.Reruns = g.Head, 0
@@ -787,7 +803,7 @@ func (a *Service) applyDecision(st *state.State, j *state.Job) {
 				a.Logf("门：任务 %s 退回还没做成，下次 tick 再试：%s", j.ID, msg)
 				a.Ledger.WriteMeta(j)
 			}
-			return
+			return nil
 		}
 		g.DecideErr, g.ReturnWhy = "", d.Reason
 		g.State = state.GateReturned
@@ -800,11 +816,10 @@ func (a *Service) applyDecision(st *state.State, j *state.Job) {
 		a.audit(audit)
 	default:
 		a.Logf("门：任务 %s 的决定 %q 不认识，丢掉", j.ID, d.Action)
-		drop()
-		return
+		return b
 	}
-	drop()
 	a.Ledger.WriteMeta(j)
+	return b
 }
 
 // abandonRefusal：这个任务现在放弃不了的原因，能放弃是空。卡在门上的都能放弃；新项目第一版的任务，门记录没有、任务已经被别的接手都能放弃，放弃的是这个项目的第一版。

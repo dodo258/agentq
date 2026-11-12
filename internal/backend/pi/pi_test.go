@@ -382,6 +382,38 @@ func TestAuth(t *testing.T) {
 	}
 }
 
+// backends.pi.model 写成「提供商/模型」：查的是这个模型的来源，交给 pi 按模型认；只写模型名还查默认来源。
+func TestAuthFollowsConfiguredModel(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+	home := t.TempDir()
+	ctx := context.Background()
+	writeSettings(t, home, `{"defaultProvider":"magpie","defaultModel":"m"}`)
+	out := fakePi(t, `{"status":"not_ready","provider":"openrouter","reason":"credentials_not_configured"}`, 1)
+	a := New(backend.Options{Home: home, Path: out, Model: "qwen/qwen3-coder"}).Auth(ctx)
+	if a.State != backend.AuthOut || !strings.Contains(a.Detail, "qwen/qwen3-coder") || !strings.Contains(a.Detail, "pi auth login openrouter") {
+		t.Errorf("%+v", a)
+	}
+	if b, _ := os.ReadFile(out + ".calls"); strings.TrimSpace(string(b)) != "auth check --model qwen/qwen3-coder --json" {
+		t.Errorf("要按配置的模型查：%s", b)
+	}
+	ready := fakePi(t, `{"status":"ready","provider":"magpie","authType":"api_key"}`, 0)
+	if a := New(backend.Options{Home: home, Path: ready, Model: "sonnet"}).Auth(ctx); a.State != backend.AuthIn {
+		t.Errorf("%+v", a)
+	}
+	if b, _ := os.ReadFile(ready + ".calls"); strings.TrimSpace(string(b)) != "auth check --provider magpie --json" {
+		t.Errorf("只写模型名查默认来源：%s", b)
+	}
+	bad := fakePi(t, `{"status":"invalid","provider":"nosuch/x","reason":"invalid_state"}`, 2)
+	if a := New(backend.Options{Home: home, Path: bad, Model: "nosuch/x"}).Auth(ctx); a.State != backend.AuthOut || !strings.Contains(a.Detail, "认不出配置的模型 nosuch/x") {
+		t.Errorf("%+v", a)
+	}
+	// 没选过默认来源也能按配置的模型查
+	other := t.TempDir()
+	if a := New(backend.Options{Home: other, Path: ready, Model: "magpie/m"}).Auth(ctx); a.State != backend.AuthIn {
+		t.Errorf("%+v", a)
+	}
+}
+
 func TestProbe(t *testing.T) {
 	home := t.TempDir()
 	ready := fakePi(t, `{"status":"ready","provider":"magpie","authType":"api_key"}`, 0)

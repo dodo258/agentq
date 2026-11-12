@@ -342,7 +342,7 @@ func TestReviewDefers(t *testing.T) {
 			t.Fatalf("%+v %d", res, f.callCount())
 		}
 		f.collect(j, res)
-		if j.Gate.State != state.GateQueued || !f.st.CooldownUntil.After(f.a.Now()) || j.Gate.Round != 0 {
+		if j.Gate.State != state.GateQueued || !f.st.CooldownOf(f.a.Cfg.Backend).After(f.a.Now()) || j.Gate.Round != 0 {
 			t.Fatalf("%+v", j.Gate)
 		}
 	})
@@ -354,8 +354,8 @@ func TestReviewDefers(t *testing.T) {
 			t.Fatalf("%+v", res)
 		}
 		f.collect(j, res)
-		if j.Gate.State != state.GateQueued || !j.Gate.NotBefore.After(f.a.Now()) || !f.st.CooldownUntil.IsZero() {
-			t.Fatalf("认证不进全局冷却：%+v %v", j.Gate, f.st.CooldownUntil)
+		if j.Gate.State != state.GateQueued || !j.Gate.NotBefore.After(f.a.Now()) || !f.st.CooldownOf(f.a.Cfg.Backend).IsZero() {
+			t.Fatalf("认证不进全局冷却：%+v %v", j.Gate, f.st.CooldownOf(f.a.Cfg.Backend))
 		}
 	})
 }

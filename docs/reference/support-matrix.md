@@ -17,10 +17,10 @@
 
 | 能力 | 新安装默认 | 验证到哪一步 |
 | --- | --- | --- |
-| 一键安装 `install.sh`、回车启动、`init`、`add` | 手动运行一次 | 真机：官方 CLI 的安装和升级（老用户环境），配置逐字节不变，已有同名技能保留。GitHub Release：v0.1.0 已发布，macOS 和 Linux 的工作流都过了，匿名下载 `install.sh` 在临时 HOME 里一键安装成功（没有终端时只安装不启动）。其余路径用假 CLI、假服务管理器、本地假 Release 走通，CI 上跑过 Linux 的终端和 shell 配置用例。新用户环境（没有 CLI、没有登录）下脚本代装和登录不在这次真实验证的范围内 |
+| 一键安装 `install.sh`、回车启动、`init`、`add` | 手动运行一次 | 真机：官方 CLI 的安装和升级（老用户环境），配置逐字节不变，已有同名技能保留。GitHub Release：v0.2.0 已发布（2026-11-12），macOS 和 Linux 的工作流都过了，附件对过 `SHA256SUMS`，`releases/latest` 下的 `install.sh` 在临时 HOME 里加 `--paused` 一键安装成功。其余路径用假 CLI、假服务管理器、本地假 Release 走通，CI 上跑过 Linux 的终端和 shell 配置用例。新用户环境（没有 CLI、没有登录）下脚本代装和登录不在这次真实验证的范围内 |
 | Claude 桌面端派活 | 手动 | 真机：桌面端会话用 `dispatch` 写条目并启动，走到合并 |
 | 后端选择 `backend`、`project_backends`、`backends`，`install.sh --backend`，能力降级 | `claude` | 假后端，覆盖每条降级路径；`install.sh --backend` 用假 CLI 和本地假 Release 走通 |
-| 混用后端时撞限冷却和额度按后端分（`backend_limits`） | 只用一种后端时不写这个键 | 假 CLI 和暴力测试。真实两个后端同时跑、真实撞限没跑过 |
+| 撞限冷却和额度按后端分（`backend_limits`），换默认后端时跟着原后端走 | 一直开；老 state.json 顶层的冷却和额度迁到写它时的默认后端，迁不清楚就丢掉 | 假 CLI 和暴力测试。真实两个后端同时跑、真实撞限没跑过 |
 | Codex 后端 | 手动选 | codex-cli 0.166.0、macOS arm64、ChatGPT 登录、临时项目：真实跑通启动、分支提交、`ready.json`、测试门、审查门、引擎合并，SIGTERM 后同一会话续跑，走到合并。撞限只用按官方文字拼的样本测过，令牌失效没有真实样本（只测过没有凭据的 401），大方向商量和巡逻分析在 Codex 上不启动。Codex 桌面端派活没有真实验证。Linux 上只跑过假 CLI。后台服务（launchd）下的 ChatGPT 令牌刷新没验证 |
 | pi 后端 | 手动选 | pi 1.5.1、macOS arm64、本机 pi 配的 OpenAI 兼容模型来源（API key）、临时项目：真实跑通启动、分支提交、`ready.json`、测试门、审查门（同样是 pi，靠提示词要 JSON）、引擎合并，SIGTERM 后同一会话续跑，走到合并。401、429、500、截断、断流用真实 pi 对本地假接口录的样本测，真实撞限没跑过；OAuth 登录的来源（订阅）没验证。大方向商量、追问、巡逻分析在 pi 上不启动。Linux 上只跑过假 CLI，Linux 上进程认得出（环境读得到）没验证 |
 | 调度、并发、中断续跑、用量和额度、熔断 | 暂停，`agentq start` 打开 | macOS arm64 真实运行。真机：`agentq start` 装 launchd 服务，定时器和任务结束后的 tick 自己走到合并。真实撞限、令牌失效没跑过，这些故障路径用假 CLI 和暴力测试覆盖 |

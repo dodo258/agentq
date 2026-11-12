@@ -129,7 +129,7 @@ func (a *Env) RootMayBeAbsent() bool {
 
 // BackendFor 建名字对应的后端实例，空名字是默认后端（老任务记录没写后端就是它）。没注册过的名字也有实例，启动被拒绝、结果读不出，见 backend.Get。
 func (a *Env) BackendFor(name string) backend.Backend {
-	return backend.Get(name, backend.Options{Home: a.Home, Path: fsx.ExpandHome(a.Home, a.Cfg.BackendPath(name))})
+	return backend.Get(name, backend.Options{Home: a.Home, Path: fsx.ExpandHome(a.Home, a.Cfg.BackendPath(name)), Model: a.Cfg.ForBackend(name).Model})
 }
 
 // DefaultBackend 是新任务默认用的后端。

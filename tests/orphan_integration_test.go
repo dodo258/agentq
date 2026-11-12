@@ -247,7 +247,7 @@ func TestIntegrationOrphanStoppedLogOnceInCooldown(t *testing.T) {
 	jobID := "1104-000000-demo"
 	os.MkdirAll(filepath.Join(e.home, ".agentq", "jobs", jobID), 0o755)
 	fp := backlog.ParseBacklog(e.backlogOf(dir))[0].Fingerprint
-	st := &State{CooldownUntil: base.Add(24 * time.Hour), Jobs: []*Job{{ID: jobID, Project: "demo", ProjectDir: dir, Title: "甲", Fingerprint: fp, Status: state.StatusKilled, PID: 1, StartedAt: ended, EndedAt: &ended}}}
+	st := &State{BackendLimits: claudeLimit(base.Add(24*time.Hour), nil), Jobs: []*Job{{ID: jobID, Project: "demo", ProjectDir: dir, Title: "甲", Fingerprint: fp, Status: state.StatusKilled, PID: 1, StartedAt: ended, EndedAt: &ended}}}
 	if err := state.Save(filepath.Join(e.home, ".agentq", "state.json"), st); err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestIntegrationOrphanMergedWaits(t *testing.T) {
 		e := newEnv(t, nil)
 		dir := orphanRepo(t, e, "demo", "- [ ] 甲 —— 说明"+oldMarker("agent/gone")+"\n")
 		base := time.Now().Add(72 * time.Hour)
-		if err := state.Save(filepath.Join(e.home, ".agentq", "state.json"), &State{CooldownUntil: base.Add(time.Hour)}); err != nil {
+		if err := state.Save(filepath.Join(e.home, ".agentq", "state.json"), &State{BackendLimits: claudeLimit(base.Add(time.Hour), nil)}); err != nil {
 			t.Fatal(err)
 		}
 		e.tickAt(base, 0)
@@ -412,7 +412,7 @@ func TestIntegrationOrphanTakeoverLimits(t *testing.T) {
 	t.Run("用量冷却", func(t *testing.T) {
 		t.Parallel()
 		e, _ := setup(t, nil)
-		writeState(t, e, &State{CooldownUntil: base.Add(time.Hour)})
+		writeState(t, e, &State{BackendLimits: claudeLimit(base.Add(time.Hour), nil)})
 		if out := e.tickAt(base, 0); !strings.Contains(out, "用量冷却中") || len(e.state().Jobs) != 0 {
 			t.Fatalf("\n%s", out)
 		}
@@ -481,7 +481,7 @@ func TestIntegrationTransientRetry(t *testing.T) {
 	if !j.Transient || j.Status != state.StatusFailed || !strings.Contains(j.Summary, "15m 后重试") {
 		t.Fatalf("第一次：%+v", j)
 	}
-	if st := e.state(); st.FailStreak != 0 || !st.CooldownUntil.IsZero() {
+	if st := e.state(); st.FailStreak != 0 || !st.CooldownOf("").IsZero() {
 		t.Fatalf("不该计连环失败、不该冷却：%+v", st)
 	}
 	startedAt(14*time.Minute, 1)
@@ -511,7 +511,7 @@ func TestIntegrationAPIErrorsOther(t *testing.T) {
 		waitExit(t, e.jobByTitle("甲").PID, 10*time.Second)
 		e.tickAt(base, time.Minute)
 		j, st := e.jobByTitle("甲"), e.state()
-		if j.Transient || j.LimitHit || st.FailStreak != 1 || !st.CooldownUntil.IsZero() {
+		if j.Transient || j.LimitHit || st.FailStreak != 1 || !st.CooldownOf("").IsZero() {
 			t.Fatalf("%+v streak=%d", j, st.FailStreak)
 		}
 		e.tickAt(base, 20*time.Minute)
@@ -528,7 +528,7 @@ func TestIntegrationAPIErrorsOther(t *testing.T) {
 		waitExit(t, e.jobByTitle("甲").PID, 10*time.Second)
 		out := e.tickAt(base, time.Minute)
 		j, st := e.jobByTitle("甲"), e.state()
-		if !j.LimitHit || st.FailStreak != 0 || st.CooldownUntil.IsZero() || !strings.Contains(out, "用量冷却中") {
+		if !j.LimitHit || st.FailStreak != 0 || st.CooldownOf("").IsZero() || !strings.Contains(out, "用量冷却中") {
 			t.Fatalf("%+v %+v\n%s", j, st, out)
 		}
 	})

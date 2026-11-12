@@ -670,14 +670,14 @@ func TestIntegrationStuckReplyGates(t *testing.T) {
 	}
 	os.WriteFile(p, orig, 0o644)
 	// 用量冷却
-	e.editState(func(st *State) { st.CooldownUntil = noon.Add(time.Hour) })
+	e.editState(func(st *State) { st.ExtendCooldown("", noon.Add(time.Hour)) })
 	tg.replyMsg(2, 12, "接着做", id)
 	e.tickAt(noon, 33*time.Minute)
 	stuck()
 	if got := tg.sentLast().Get("text"); !strings.Contains(got, "用量冷却中") {
 		t.Errorf("%s", got)
 	}
-	e.editState(func(st *State) { st.CooldownUntil = time.Time{} })
+	e.editState(func(st *State) { delete(st.BackendLimits, "claude") })
 	// 没名额：回排队了，有名额再接
 	e.editState(func(st *State) {
 		st.Jobs = append(st.Jobs, &Job{ID: "占名额", Project: "other", Status: state.StatusRunning, PID: os.Getpid(), StartedAt: noon})

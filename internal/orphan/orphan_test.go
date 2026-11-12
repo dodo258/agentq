@@ -345,6 +345,14 @@ func TestScanOrphansTakeoverFacts(t *testing.T) {
 			t.Fatalf("应接手：%+v", got)
 		}
 	})
+	t.Run("标记后面跟着引擎写的方向", func(t *testing.T) {
+		e := newOrphanEnv(t, "")
+		e.branch("agent/x", true)
+		e.setTodo("- [ ] 甲" + e.marker("agent/x", 48) + "（方向：用户定：只删能证明安全的）")
+		if got := e.a.ScanOrphans(e.st); len(got) != 1 || got[0].Facts.Branch != "agent/x" {
+			t.Fatalf("（方向：…）在标记后面也要认出孤儿：%+v", got)
+		}
+	})
 	t.Run("分支在、worktree 已删", func(t *testing.T) {
 		e := newOrphanEnv(t, "")
 		wt := e.branch("agent/x", true)

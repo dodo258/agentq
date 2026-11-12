@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -300,6 +301,40 @@ func TestGateUsesRecordedBranch(t *testing.T) {
 	}
 	if f.isAncestor(res.Merge, "main") {
 		t.Error("合并提交不能进 main")
+	}
+}
+
+// 查过主目录在默认分支之后、git merge 之前主目录被切走：快进的是别的分支，不能记成已合并；切回来下次照常合。
+func TestGateMergeLandsOnOtherBranch(t *testing.T) {
+	f := newFix(t, fixBacklog)
+	j := f.claim("做事", "agent/x", map[string]string{"a.txt": "a"}, ready("agent/x"))
+	before := f.main()
+	f.git("branch", "旁支")
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 包一层 git：门真正合并那一下（git -C <主目录> merge --ff-only）之前先把主目录切到旁支
+	bin := t.TempDir()
+	script := "#!/bin/sh\nif [ \"$3\" = merge ] && [ \"$4\" = --ff-only ]; then '" + real + "' -C \"$2\" checkout -q 旁支 || exit 9; fi\nexec '" + real + "' \"$@\"\n"
+	testkit.WriteInstall(t, filepath.Join(bin, "git"), script, 0o755)
+	path := os.Getenv("PATH")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+path)
+	res := f.run(j)
+	if res.Outcome != "wait" || res.WaitBranch != "main" || !strings.Contains(res.Reason, "旁支") {
+		t.Fatalf("%+v", res)
+	}
+	if f.main() != before {
+		t.Fatal("main 不该动")
+	}
+	if _, err := os.Stat(filepath.Join(f.a.Dir(j.ID), "merging.json")); err == nil {
+		t.Error("没合进 main，合并记录要删")
+	}
+	t.Setenv("PATH", path)
+	f.git("checkout", "-q", "main")
+	res = f.run(j)
+	if res.Outcome != "merged" || !f.isAncestor(res.Merge, "main") {
+		t.Fatalf("切回来要合上：%+v", res)
 	}
 }
 

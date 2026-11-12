@@ -118,7 +118,7 @@ agentq 把活交给一个 CLI 去做。CLI 的差别都收在 `internal/backend.
 | 美元、回合上限 | 无 | 运行中读事件流里的用量（`UsageStream`），tick 超预算就停，最多滞后 5 分钟；回合上限只有超时兜底 |
 | 额度查询 | 无 | 只在撞限后冷却 |
 | 撞限 | 有。上游错误写成「状态码: 原文」（实测 429），只看错误通道，不看模型正文 | 别的写法认不出时落到普通失败和熔断 |
-| 认证 | `pi auth check --provider <默认来源> --json`，只说明本地配了凭据（API key 不验证），`Unverified`。401（实测）和没有凭据时的 `No API key found`（实测，退 1，只有 session 头）由 `Parse` 认出 | 暂停到 `limit_cooldown`，删暂停记录提前恢复。`backends.pi.model` 换了别家来源时查的还是默认那家 |
+| 认证 | `pi auth check --provider <默认来源> --json`；配置的模型写成 `提供商/模型` 时改查 `pi auth check --model <模型> --json`，由 pi 按模型认来源（实测 `qwen/qwen3-coder` 认成 openrouter）。只写模型名时模糊匹配查到的未必是运行时选的那家（实测 `sonnet` 查到 amazon-bedrock），仍查默认来源。只说明本地配了凭据（API key 不验证），`Unverified`。401（实测）和没有凭据时的 `No API key found`（实测，退 1，只有 session 头）由 `Parse` 认出 | 暂停到 `limit_cooldown`，删暂停记录提前恢复 |
 | 只读、无工具 | 无。`--tools read,grep,find,ls` 和 `--no-tools` 确实只给模型这些工具，但 `read` 能读工作目录外的任何文件（实测），读密钥挡不住 | 大方向商量不问、按默认开工，追问回退普通对话，巡逻不分析 |
 | 隔离 MCP | 没声明。要它的任务同时要只读工具，pi 给不了，声明了也用不上；`--no-mcp` 加 `--no-extensions` 能不能完全隔离没实测 | 同上 |
 | 图片输入 | 有。`@路径` 附在第一条消息上，路径带逗号也行（实测）。模型本身不收图片时看不到 | |

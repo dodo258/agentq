@@ -33,7 +33,7 @@ const (
 	MustMerge    = MustReview
 	MustFollowup = MustProfile | MustNoExternalMCP // 结构化输出能靠提示词补，见 ExtractJSON
 	MustPatrol   = MustProfile
-	MustDiscuss  = MustProfile | MustNoExternalMCP // 输入里有条目原文，生成问题不用任何工具；结构化输出能靠提示词补
+	MustDiscuss  = MustProfile | MustNoExternalMCP // 输入里有条目原文，生成问题前只读看环境，只读要 CLI 强制；结构化输出能靠提示词补
 )
 
 // CanReview：引擎能在这个后端上起独立审查进程。

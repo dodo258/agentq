@@ -164,10 +164,10 @@ func (a *Service) refuseMsgs(s *notify.State, c *telegram.TgCreds, msgs []notify
 
 // chatRefusal：现在不能启动对话任务的原因（用量冷却中、额度 ≥98%），能启动返回空。
 func (a *Service) chatRefusal(st *state.State, now time.Time) string {
-	if now.Before(st.CooldownUntil) {
-		return "用量冷却中，到 " + textfmt.WhenCN(st.CooldownUntil)
+	if until := st.CooldownOf(a.Cfg.Backend); now.Before(until) {
+		return "用量冷却中，到 " + textfmt.WhenCN(until)
 	}
-	if lvl, until, why := backend.UsageLevel(st.Usage, now, a.Cfg.UsagePolicy()); lvl >= backend.UsageRefuse {
+	if lvl, until, why := backend.UsageLevel(st.UsageOf(a.Cfg.Backend), now, a.Cfg.UsagePolicy()); lvl >= backend.UsageRefuse {
 		return backend.UsageGateNote(lvl, until, why)
 	}
 	return ""
@@ -490,7 +490,7 @@ func (a *Service) StatusDigest(st *state.State) string {
 		}
 		secs = append(secs, sec)
 	}
-	ulvl, uuntil, uwhy := backend.UsageLevel(st.Usage, now, a.Cfg.UsagePolicy())
+	ulvl, uuntil, uwhy := backend.UsageLevel(st.UsageOf(a.Cfg.Backend), now, a.Cfg.UsagePolicy())
 	secs = append(secs, notify.MsgSection{Emoji: "⚙️", Head: "调度　" + a.Runner.SchedNote(st, nil, now, ulvl, uuntil, uwhy)})
 	if lines := a.Discuss.StatusLines(); len(lines) > 0 {
 		secs = append(secs, notify.MsgSection{Emoji: "💬", Head: fmt.Sprintf("等商量　%d 条", len(lines)), Lines: lines})

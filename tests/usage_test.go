@@ -34,7 +34,7 @@ func TestUsageCacheAndNightly(t *testing.T) {
 
 	text = "Current session: 50% used · resets 2pm\nCurrent week (all models): 95% used · resets 12:30pm\n"
 	u := a.Runner.Usage(st)
-	if calls != 1 || st.Usage != u || u.Err != "" || len(u.Windows) != 2 {
+	if calls != 1 || st.UsageOf("") != u || u.Err != "" || len(u.Windows) != 2 {
 		t.Fatalf("第一次应读：calls=%d %+v", calls, u)
 	}
 	if n := nightly(); strings.Count(n, "额度：") != 1 || !strings.Contains(n, "本周 95%（10-11 周日 12:30 重置，后台上限 90%）") ||
@@ -51,7 +51,7 @@ func TestUsageCacheAndNightly(t *testing.T) {
 	// 12:30 重置、12:31 起算恢复：缓存还没到 10 分钟也重读；新读数正常 → 汇总写「已恢复」
 	now = time.Date(2026, 10, 11, 12, 31, 0, 0, time.Local)
 	text = "Current session: 50% used · resets 2pm\nCurrent week (all models): 1% used · resets Oct 18 at 12:30pm\n"
-	if !st.Usage.Stale(now) {
+	if !st.UsageOf("").Stale(now) {
 		t.Fatal("过了重置时刻应算过期")
 	}
 	u = a.Runner.Usage(st)
@@ -113,7 +113,7 @@ func (e *testEnv) usageCalls() []string {
 func (e *testEnv) expireUsage() {
 	e.t.Helper()
 	st := e.state()
-	st.Usage.CheckedAt = st.Usage.CheckedAt.Add(-time.Hour)
+	st.UsageOf("").CheckedAt = st.UsageOf("").CheckedAt.Add(-time.Hour)
 	if err := state.Save(filepath.Join(e.home, ".agentq", "state.json"), st); err != nil {
 		e.t.Fatal(err)
 	}
@@ -149,8 +149,8 @@ func TestIntegrationUsageGate(t *testing.T) {
 		t.Errorf("一次 tick 只读一次额度，在临时目录里、不读设置、不存会话：%q", calls)
 	}
 	st := e.state()
-	if st.Usage == nil || len(st.Usage.Windows) != 3 || st.Usage.Windows[0].Used != 69 {
-		t.Errorf("额度应写进 state：%+v", st.Usage)
+	if st.UsageOf("") == nil || len(st.UsageOf("").Windows) != 3 || st.UsageOf("").Windows[0].Used != 69 {
+		t.Errorf("额度应写进 state：%+v", st.UsageOf(""))
 	}
 	if n := e.nightly(); !strings.Contains(n, "额度：会话 69%") || !strings.Contains(n, "本周（Fable） 100%") || !strings.Contains(n, "不计入") {
 		t.Errorf("当天第一次读到应写汇总：\n%s", n)
@@ -233,8 +233,8 @@ func TestIntegrationUsageResetRecovers(t *testing.T) {
 	now := time.Now()
 	future, past := now.Add(5*time.Minute), now.Add(-2*time.Minute)
 	seed := func(reset time.Time) {
-		st := &State{Usage: &backend.UsageInfo{CheckedAt: now.Add(-5 * time.Minute), NotedLevel: backend.UsageRefuse, NotedDay: now.Format("2006-01-02"),
-			Windows: []backend.UsageWindow{{Label: "session", Used: 99, ResetsAt: &reset}}}}
+		st := &State{BackendLimits: claudeLimit(time.Time{}, &backend.UsageInfo{CheckedAt: now.Add(-5 * time.Minute), NotedLevel: backend.UsageRefuse, NotedDay: now.Format("2006-01-02"),
+			Windows: []backend.UsageWindow{{Label: "session", Used: 99, ResetsAt: &reset}}})}
 		if err := state.Save(statePath, st); err != nil {
 			t.Fatal(err)
 		}
@@ -283,8 +283,8 @@ func TestIntegrationUsageUnknown(t *testing.T) {
 				t.Fatalf("读不懂应照常启动：\n%s", out)
 			}
 			st := e.state()
-			if st.Usage == nil || st.Usage.Err == "" {
-				t.Errorf("state 应记下读失败：%+v", st.Usage)
+			if st.UsageOf("") == nil || st.UsageOf("").Err == "" {
+				t.Errorf("state 应记下读失败：%+v", st.UsageOf(""))
 			}
 			if out := e.mustRun("status"); !strings.Contains(out, "调度：正常") || !strings.Contains(out, "额度：未知（") {
 				t.Errorf("status 应标出未知：\n%s", out)

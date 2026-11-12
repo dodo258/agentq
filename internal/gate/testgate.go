@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"agentq/internal/state"
 	"agentq/internal/textfmt"
 )
 
@@ -55,13 +56,12 @@ func (g testGate) Run(ctx context.Context, c Candidate) Result {
 	if first {
 		evidence = append(evidence, note)
 	}
-	flags, newTests, firstScripts, err := g.scanDiff(ctx, c, first)
+	flags, reasons, newTests, firstScripts, err := g.checkNotes(ctx, c, first)
 	if err != nil {
 		return Result{Outcome: Unknown, Summary: "查不了改动：" + textfmt.OneLine(err.Error(), 200)}
 	}
 	evidence = append(evidence, firstScripts...)
 	if len(flags) > 0 {
-		reasons := g.notes(ctx, c)
 		if len(reasons) == 0 {
 			return Result{Outcome: Fail, Summary: "改了测试或门脚本，提交说明里没写原因（单写一行「" + NoteMark + "原因」）", Evidence: flags}
 		}
@@ -76,6 +76,56 @@ func (g testGate) Run(ctx context.Context, c Candidate) Result {
 		return res
 	}
 	return g.checkFix(ctx, c, first, newTests, res)
+}
+
+// checkNotes 是测试门里不跑测试的那段：查 diff 里要说明的事（删测试文件或用例、加跳过、动 .agentq/），有就读提交说明里的门说明。
+// 进门前的预检（NoteMissing）也走它，两处判断一致。
+func (g testGate) checkNotes(ctx context.Context, c Candidate, first bool) (flags, reasons []string, newTests bool, firstScripts []string, err error) {
+	flags, newTests, firstScripts, err = g.scanDiff(ctx, c, first)
+	if err != nil || len(flags) == 0 {
+		return flags, nil, newTests, firstScripts, err
+	}
+	return flags, g.notes(ctx, c), newTests, firstScripts, nil
+}
+
+// NoteMissing：任务交了 ready.json、进门之前，按测试门同一段判断查一遍。测试门会因为缺门说明退回时返回要说明的事；
+// 测试门不是 error 档、查不了、不缺时返回空，照常进门由门判。不建 worktree：diff 看分支和默认分支的分叉点到分支尖，和门在合并态上看到的任务改动一样。
+func (a *Service) NoteMissing(j *state.Job, head string) []string {
+	ctx := context.Background()
+	def, err := a.jobBranch(j)
+	if err != nil {
+		return nil
+	}
+	tip, err := a.git(ctx, j.ProjectDir, "rev-parse", "--verify", "refs/heads/"+def)
+	if err != nil {
+		return nil
+	}
+	if levels, _ := a.levelsAt(ctx, j.ProjectDir, tip); levelOf("test", levels) != LevelError {
+		return nil
+	}
+	base, err := a.git(ctx, j.ProjectDir, "merge-base", tip, head)
+	if err != nil {
+		return nil
+	}
+	g := testGate{a.deps()}
+	c := Candidate{ProjectDir: j.ProjectDir, Dir: j.ProjectDir, DefaultBranch: def, Base: base, Head: head, Merge: head}
+	first, _, err := locateScript(ctx, g.d, c, VerifyScript)
+	if err != nil {
+		return nil
+	}
+	flags, reasons, _, _, err := g.checkNotes(ctx, c, first)
+	if err != nil || len(reasons) > 0 {
+		return nil
+	}
+	return flags
+}
+
+// NoteAskNote：进门前查出缺门说明时，续跑那一轮接在提示词后面的话。
+func NoteAskNote(flags []string) string {
+	return "\n\n这次不是等通知退出的：你写了 ready.json，引擎进门前先按测试门查了一遍，下面这些改动要说明原因，提交说明里却没有「" + NoteMark + "」。" +
+		"这一轮只补说明，不进门、不算审查轮次：\n- " + strings.Join(flags, "\n- ") +
+		"\n在任务分支上追加一个提交（只补说明就用 git commit --allow-empty），提交说明里单写一行「" + NoteMark + "原因」；测试函数改名也算删用例。不 amend、不 rebase。" +
+		"其实是误删误改的，改回来就行，不用写门说明。ready.json 留在分支上就算再交了，不用重写。补完就结束；补了还缺照常进门，由测试门判。"
 }
 
 // runConfirmed 跑脚本。第一次失败连跑两次：两次都过标 flaky 放行（留痕），否则算失败。

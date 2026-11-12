@@ -38,3 +38,29 @@ func TestBackupRequiresExplicitVerifiedPrivateTarget(t *testing.T) {
 		t.Fatal("private target not backed up")
 	}
 }
+
+// 换安装前要等的：任务在跑、门在跑（任务记成 done 了，_gate 跑完还会 tick 接新活）。排队的门、已合并只差收尾的不挡；
+// 状态文件读不出或不是状态文件（{}、空任务记录）当未知，和调度器同一套判断。
+func TestInstallerIdleWaitsForRunningGate(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".agentq", "state.json")
+	if e := InstallerIdle(home); e != nil {
+		t.Fatalf("没有状态文件算空闲：%v", e)
+	}
+	for body, busy := range map[string]bool{
+		`{"jobs":[{"id":"a","status":"done","gate":{"state":"running","branch":"agent/a"}}]}`:               true,
+		`{"jobs":[{"id":"a","status":"running"}]}`:                                                          true,
+		`{"jobs":[{"id":"a","status":"done","gate":{"state":"queued","branch":"agent/a"}}]}`:                false,
+		`{"jobs":[{"id":"a","status":"done","gate":{"state":"merged","branch":"agent/a","wrap_err":"x"}}]}`: false,
+		`{"jobs":[]}`:     false,
+		`{}`:              true,
+		`null`:            true,
+		`{"jobs":[null]}`: true,
+		`{"jobs":`:        true,
+	} {
+		testkit.WriteInstall(t, path, body, 0o600)
+		if e := InstallerIdle(home); (e != nil) != busy {
+			t.Errorf("%s：要 busy=%v，得到 %v", body, busy, e)
+		}
+	}
+}

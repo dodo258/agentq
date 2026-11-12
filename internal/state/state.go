@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -230,6 +231,9 @@ type Job struct {
 	// GateScope、GateScopeFrom：这一轮是门退回限定了范围的：只该改 GateScope 里的文件，scope 门比较 GateScopeFrom（上一轮过门看的分支尖）之后的改动。不是退回的任务为空。
 	GateScope     []string `json:"gate_scope,omitempty"`
 	GateScopeFrom string   `json:"gate_scope_from,omitempty"`
+	// NoteAsk：交了 ready.json，进门前查出缺门说明（见 gate.NoteMissing），不进门、续一轮只让任务补提交说明，值是要说明的事。
+	// 这一轮里的续跑带着它：同一轮只要一次，补了还缺照常进门。退回开始下一轮时清掉。
+	NoteAsk []string `json:"note_ask,omitempty"`
 	// GateContract：按「任务只做到分支可合并」的合同启动的。升级前启动的任务没有，它们可能自己合并，收尾时不算绕过门。
 	GateContract bool `json:"gate_contract,omitempty"`
 	// DiscussKey：Kind=discuss 的任务在给哪一条生成问题，见 internal/discuss。
@@ -239,8 +243,7 @@ type Job struct {
 }
 
 type State struct {
-	Jobs          []*Job    `json:"jobs"`
-	CooldownUntil time.Time `json:"cooldown_until"`
+	Jobs []*Job `json:"jobs"`
 	// 连环失败熔断：BreakerUntil 前不启动新任务；FailStreak 是连续秒退的任务数；
 	// BreakerLevel 是熔断后还没有任务正常结束过的次数，大于 0 时再秒退一个就直接熔断，时长按它翻倍。
 	BreakerUntil time.Time `json:"breaker_until"`
@@ -250,9 +253,8 @@ type State struct {
 	ItemHold map[string]time.Time `json:"item_hold,omitempty"`
 	// BranchBlocked：「项目|任务记下的分支」（新任务时分支是空的）→ 现在接不了任务的原因（认不出默认分支、主目录不在要的分支）。同样的原因日志只记一次，好了就删。
 	BranchBlocked map[string]string `json:"branch_blocked,omitempty"`
-	// Usage 是最近一次读到的订阅额度（claude -p /usage），缓存 usageCacheFor。
-	Usage *backend.UsageInfo `json:"usage,omitempty"`
-	// BackendLimits：默认后端之外的后端的冷却和额度（后端名 → 记录）。默认后端的还在 cooldown_until、usage：老文件读出来就是默认后端的，只用一种后端时这个键不出现。
+	// BackendLimits：每个后端的用量冷却和最近读到的额度（后端名 → 记录），默认后端也在这里，换默认后端时冷却跟着原后端走。
+	// 老文件顶层的 cooldown_until、usage 由 Load 迁进来（见 migrateLegacyLimits）。
 	BackendLimits map[string]*BackendLimit `json:"backend_limits,omitempty"`
 	// RoutineMarks：夜班、复盘上次启动时看到的现状（kind → 记录，见 internal/routine/routine.go）。没有记录就照跑。
 	RoutineMarks map[string]*RoutineMark `json:"routine_marks,omitempty"`
@@ -264,7 +266,7 @@ type BackendLimit struct {
 	Usage         *backend.UsageInfo `json:"usage,omitempty"`
 }
 
-// limitName：后端名空是 Claude（和 Job.Backend 一样）。
+// limitName：后端名空是 Claude（和 Job.Backend、config 的 backend 一样）。
 func limitName(name string) string {
 	if name == "" {
 		return backend.Default
@@ -272,11 +274,8 @@ func limitName(name string) string {
 	return name
 }
 
-// CooldownOf 是这个后端的用量冷却，def 是配置的默认后端。
-func (s *State) CooldownOf(name, def string) time.Time {
-	if limitName(name) == limitName(def) {
-		return s.CooldownUntil
-	}
+// CooldownOf 是这个后端的用量冷却。
+func (s *State) CooldownOf(name string) time.Time {
 	if l := s.BackendLimits[limitName(name)]; l != nil {
 		return l.CooldownUntil
 	}
@@ -284,22 +283,14 @@ func (s *State) CooldownOf(name, def string) time.Time {
 }
 
 // ExtendCooldown 把这个后端的冷却推到 until，已经更晚就不动。
-func (s *State) ExtendCooldown(name, def string, until time.Time) {
-	if !until.After(s.CooldownOf(name, def)) {
-		return
+func (s *State) ExtendCooldown(name string, until time.Time) {
+	if until.After(s.CooldownOf(name)) {
+		s.backendLimit(name).CooldownUntil = until
 	}
-	if limitName(name) == limitName(def) {
-		s.CooldownUntil = until
-		return
-	}
-	s.backendLimit(name).CooldownUntil = until
 }
 
 // UsageOf 是这个后端最近读到的额度。
-func (s *State) UsageOf(name, def string) *backend.UsageInfo {
-	if limitName(name) == limitName(def) {
-		return s.Usage
-	}
+func (s *State) UsageOf(name string) *backend.UsageInfo {
 	if l := s.BackendLimits[limitName(name)]; l != nil {
 		return l.Usage
 	}
@@ -307,11 +298,7 @@ func (s *State) UsageOf(name, def string) *backend.UsageInfo {
 }
 
 // SetUsageOf 存这个后端读到的额度。
-func (s *State) SetUsageOf(name, def string, u *backend.UsageInfo) {
-	if limitName(name) == limitName(def) {
-		s.Usage = u
-		return
-	}
+func (s *State) SetUsageOf(name string, u *backend.UsageInfo) {
 	s.backendLimit(name).Usage = u
 }
 
@@ -330,7 +317,7 @@ func (s *State) backendLimit(name string) *BackendLimit {
 // AllCooling：配置用到的后端都在冷却，这次没有能接活的。
 func (s *State) AllCooling(cfg config.Config, now time.Time) bool {
 	for _, name := range cfg.BackendsInUse() {
-		if !now.Before(s.CooldownOf(name, cfg.Backend)) {
+		if !now.Before(s.CooldownOf(name)) {
 			return false
 		}
 	}
@@ -344,11 +331,11 @@ func (s *State) OtherLimitNotes(cfg config.Config, now time.Time) []string {
 		if name == limitName(cfg.Backend) {
 			continue
 		}
-		if until := s.CooldownOf(name, cfg.Backend); now.Before(until) {
+		if until := s.CooldownOf(name); now.Before(until) {
 			out = append(out, "后端 "+name+" 用量冷却中，到 "+textfmt.WhenCN(until))
 			continue
 		}
-		if lvl, until, why := backend.UsageLevel(s.UsageOf(name, cfg.Backend), now, cfg.ForBackend(name).UsagePolicy()); lvl >= backend.UsageStop {
+		if lvl, until, why := backend.UsageLevel(s.UsageOf(name), now, cfg.ForBackend(name).UsagePolicy()); lvl >= backend.UsageStop {
 			out = append(out, "后端 "+name+"："+backend.UsageGateNote(lvl, until, why))
 		}
 	}
@@ -360,7 +347,7 @@ func (s *State) OtherUsageLines(cfg config.Config, now time.Time) []string {
 	var out []string
 	for _, name := range cfg.BackendsInUse() {
 		if name != limitName(cfg.Backend) {
-			out = append(out, name+"："+backend.UsageDescribe(s.UsageOf(name, cfg.Backend), now, cfg.ForBackend(name).UsagePolicy()))
+			out = append(out, name+"："+backend.UsageDescribe(s.UsageOf(name), now, cfg.ForBackend(name).UsagePolicy()))
 		}
 	}
 	return out
@@ -393,7 +380,60 @@ func Load(path string) (*State, error) {
 	if err := json.Unmarshal(b, &keys); err != nil || keys["jobs"] == nil {
 		return nil, fmt.Errorf("%w：%s 里没有 jobs", ErrStateCorrupt, path)
 	}
+	if keys["cooldown_until"] != nil { // 老格式一定写这个键，新格式没有
+		if err := st.migrateLegacyLimits(path, b); err != nil {
+			return nil, fmt.Errorf("%w：%s 顶层的冷却、额度格式不对：%w", ErrStateCorrupt, path, err)
+		}
+	}
 	return &st, nil
+}
+
+// migrateLegacyLimits：老 state.json 的 cooldown_until、usage 在顶层，没记属于哪个后端，写的时候算配置的默认后端。
+// 迁到写这份文件时的默认后端名下（取代那个后端在 backend_limits 里的旧记录：老版本读默认后端只看顶层）。
+// 写文件时的默认后端取同目录 config.json 的 backend；config.json 读不出、或在 state.json 之后改过（可能换了默认后端），
+// 就迁不清楚，丢掉：最多再撞一次限。下次保存就是新格式，只迁一次。
+func (s *State) migrateLegacyLimits(path string, raw []byte) error {
+	var old struct {
+		CooldownUntil time.Time          `json:"cooldown_until"`
+		Usage         *backend.UsageInfo `json:"usage"`
+	}
+	if err := json.Unmarshal(raw, &old); err != nil {
+		return err
+	}
+	name, ok := writerBackend(path)
+	if !ok {
+		return nil
+	}
+	if old.CooldownUntil.IsZero() && old.Usage == nil {
+		delete(s.BackendLimits, name)
+		return nil
+	}
+	*s.backendLimit(name) = BackendLimit{CooldownUntil: old.CooldownUntil, Usage: old.Usage}
+	return nil
+}
+
+// writerBackend 是写 statePath 时配置的默认后端：config.json 和 state.json 放在同一目录（见 env.ConfigPath、env.StatePath）。
+func writerBackend(statePath string) (string, bool) {
+	cfgPath := filepath.Join(filepath.Dir(statePath), "config.json")
+	si, err := os.Stat(statePath)
+	if err != nil {
+		return "", false
+	}
+	ci, err := os.Stat(cfgPath)
+	if err != nil || ci.ModTime().After(si.ModTime()) {
+		return "", false
+	}
+	b, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return "", false
+	}
+	var c struct {
+		Backend string `json:"backend"`
+	}
+	if json.Unmarshal(b, &c) != nil {
+		return "", false
+	}
+	return limitName(c.Backend), true
 }
 
 func Save(path string, st *State) error {

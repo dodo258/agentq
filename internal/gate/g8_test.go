@@ -104,8 +104,8 @@ func TestUpstreamBackoff(t *testing.T) {
 		if d := j.Gate.NotBefore.Sub(base); d < wait-time.Minute || d > wait+time.Minute {
 			t.Errorf("第 %d 次要等 %s：%s", i+1, wait, d)
 		}
-		if st := f.st; !st.CooldownUntil.IsZero() {
-			t.Errorf("5xx 不是撞限，不停别的任务：%v", st.CooldownUntil)
+		if st := f.st; !st.CooldownOf(f.a.Cfg.Backend).IsZero() {
+			t.Errorf("5xx 不是撞限，不停别的任务：%v", st.CooldownOf(f.a.Cfg.Backend))
 		}
 	}
 	res := f.run(j)

@@ -443,7 +443,7 @@ func TestDegradeLimitSignal(t *testing.T) {
 	r := fakeApp(t, testkit.FakeOpts{}, nil)
 	body := r.job("", okResult("修好了 usage limit 的提示，已合并"))
 	r.a.Runner.FinishFromResult(r.st, body)
-	if body.LimitHit || !r.st.CooldownUntil.IsZero() {
+	if body.LimitHit || !r.st.CooldownOf(r.a.Cfg.Backend).IsZero() {
 		t.Errorf("模型正文不算撞限：%+v", body.Summary)
 	}
 	hit := r.job("")
@@ -453,8 +453,8 @@ func TestDegradeLimitSignal(t *testing.T) {
 		t.Fatalf("错误通道要认：%s", hit.Summary)
 	}
 	want := time.Now().Add(r.a.Cfg.LimitCooldown.Duration)
-	if d := want.Sub(r.st.CooldownUntil); d < -time.Minute || d > time.Minute {
-		t.Errorf("应按 limit_cooldown 冷却：%v", r.st.CooldownUntil)
+	if d := want.Sub(r.st.CooldownOf(r.a.Cfg.Backend)); d < -time.Minute || d > time.Minute {
+		t.Errorf("应按 limit_cooldown 冷却：%v", r.st.CooldownOf(r.a.Cfg.Backend))
 	}
 
 	none := fakeApp(t, testkit.FakeOpts{}, func(c *backend.Caps) { c.LimitSignal = false })

@@ -84,7 +84,7 @@ func (a *App) CmdStatus() error {
 	// 额度：缓存还新就用 state 里的；过期了现读一次（只显示，不写回 state，status 不拿锁）
 	var u *backend.UsageInfo
 	if st != nil {
-		u = st.Usage
+		u = st.UsageOf(a.Cfg.Backend)
 	}
 	if u.Stale(now) {
 		u = a.Runner.ReadUsage(now)
