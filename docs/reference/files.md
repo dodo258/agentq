@@ -30,6 +30,7 @@
 | `tick-guard.sh`、`guard-fails` | 服务调用的保护脚本和它记的连续失败次数，见[保护脚本](#保护脚本) | |
 | `inbox/` | 从 Telegram 收到、还没交给 claude 的附件 | |
 | `suggestions.json`、`suggestions.lock` | 「## 建议」的编号索引，见[建议](features.md#建议) | 备份，当空的 |
+| `pm.json` | 每个项目的产品经理调研记录：上次什么时候调研、调研时已经合并了哪些任务、上次写进「建议」的标题、一时写不进去的建议（留 3 天，每次 tick 再写） | 读不了或坏了这次 tick 不调研，日志说明；删掉等于都没调研过 |
 | `discuss/<编号>.json`、`discuss/<编号>.answer` | 一次大方向商量：问题、默认答案、到点时间、结果；用户的回答（下次 tick 收走）。保留 90 天，还在商量的不清 | 坏了就不再问，按默认开工 |
 | `gate/<任务id>/` | 过门的 `plan.json`、`result.json`（下次 tick 收走后改名 `last.json`）、`decision.json`（卡片和 `agentq gate pass` 的决定）、门的输出 `test*.log`（权限 600，每个最多 2MB）、`smoke.log`、`ui.log`、评测门的 `eval-build.log`、`eval.log` 和结论 `eval/verdict.json`、截图 `ui-artifacts/`、交付单 `delivery.md`、`review-<次>/`、`ui-review-<次>/`、进程组号 `pgid`、活着的锁 `lock`，跑的时候还有一次性 worktree `wt/` | |
 | `gate/reviews/<项目>/<tree>.json`、`gate/reviews/<项目>/ui/<tree>.json` | 审查门、界面门模型部分的结论，绑定 tree hash。保留 90 天，任务还在记录里（在跑、在过门、卡住的）不清 | 删了就重审 |

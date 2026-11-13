@@ -8,6 +8,7 @@ import (
 	_ "agentq/internal/backend/pi"
 	"agentq/internal/chat"
 	"agentq/internal/discuss"
+	"agentq/internal/pm"
 	"agentq/internal/runner"
 )
 
@@ -120,6 +121,13 @@ func Wire(a *App, assets Assets) *App {
 	a.Evolve.Notify = a.Notify
 	a.Evolve.Suggest = a.Suggest
 	a.Evolve.Evals = assets.Evals
+	a.PM = orNew(a.PM)
+	a.PM.Env = a.Env
+	a.PM.Backlog = a.Backlog
+	a.PM.Ledger = a.Ledger
+	a.PM.Notify = a.Notify
+	a.PM.Runner = a.Runner
+	a.PM.Suggest = a.Suggest
 	a.Sched = orNew(a.Sched)
 	a.Sched.Env = a.Env
 	a.Sched.Backlog = a.Backlog
@@ -132,6 +140,7 @@ func Wire(a *App, assets Assets) *App {
 	a.Sched.Notify = a.Notify
 	a.Sched.Orphan = a.Orphan
 	a.Sched.Patrol = a.Patrol
+	a.Sched.PM = a.PM
 	a.Sched.Routine = a.Routine
 	a.Sched.Runner = a.Runner
 	a.Sched.Telegram = a.Telegram
@@ -164,6 +173,7 @@ func (a *App) wiredHooks() runner.Hooks {
 		ChatFilesDir:    a.Chat.ChatFilesDir,
 		FollowupRequest: chat.FollowupRequest,
 		DiscussRequest:  discuss.Request,
+		PMRequest:       pm.Request,
 		ConstraintsNote: a.Evolve.ConstraintsNote,
 
 		MissingReport:  a.Routine.MissingReport,
@@ -176,5 +186,6 @@ func (a *App) wiredHooks() runner.Hooks {
 		ReplyChat:     a.Chat.ReplyChat,
 		NoticeNew:     a.Newproj.NoticeNew,
 		FinishDiscuss: a.Discuss.FinishJob,
+		FinishPM:      a.PM.FinishJob,
 	}
 }

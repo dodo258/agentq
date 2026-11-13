@@ -125,6 +125,12 @@ type RoutineMark struct {
 // KindDiscuss：开工前生成大方向问题的一次性任务（见 internal/discuss）。不占名额，只调一次模型。
 const KindDiscuss = "discuss"
 
+// KindPM：产品经理调研，做完一版后只读联网看同类，写下一步建议（见 internal/pm）。不占名额，不续跑。
+const KindPM = "pm"
+
+// SideKind：可有可无的后台活（商量大方向、产品经理调研）：失败不计连环失败，不报中断，结果文字里可能有外部内容，撞限只认结构化字段。
+func SideKind(kind string) bool { return kind == KindDiscuss || kind == KindPM }
+
 const (
 	StatusRunning = "running"
 	StatusDone    = "done"
@@ -491,7 +497,7 @@ func (st *State) Prune(now time.Time) {
 	}
 }
 
-// TakesSlot：占并发名额、算「在做的活」的任务：BACKLOG 待做和 new。夜班、复盘、巡逻分析、对话、商量大方向不算。
+// TakesSlot：占并发名额、算「在做的活」的任务：BACKLOG 待做和 new。夜班、复盘、巡逻分析、对话、商量大方向、产品经理调研不算。
 func TakesSlot(kind string) bool {
 	return kind == "" || kind == KindNew
 }

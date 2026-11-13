@@ -16,6 +16,7 @@ type Caps struct {
 	// 格式靠不住只会多判几次不了，放不过东西。别的要 MustSchema 的任务不算，它们靠强制的结构化输出防注入。
 	SchemaByPrompt bool
 	ToolProfiles   bool // CLI 强制只读、无工具
+	WebTools       bool // 只读档能再加联网搜索和抓网页，读文件的边界不变（Request.Web）
 	NoExternalMCP  bool // 能隔离用户配的 MCP
 	Usage          bool // 结束时给 token 用量
 	Cost           bool // 结束时给费用
@@ -33,7 +34,8 @@ const (
 	MustMerge    = MustReview
 	MustFollowup = MustProfile | MustNoExternalMCP // 结构化输出能靠提示词补，见 ExtractJSON
 	MustPatrol   = MustProfile
-	MustDiscuss  = MustProfile | MustNoExternalMCP // 输入里有条目原文，生成问题前只读看环境，只读要 CLI 强制；结构化输出能靠提示词补
+	MustDiscuss  = MustProfile | MustNoExternalMCP           // 输入里有条目原文，生成问题前只读看环境，只读要 CLI 强制；结构化输出能靠提示词补
+	MustPM       = MustProfile | MustNoExternalMCP | MustWeb // 产品经理调研：读项目、上网看同类，网页内容是外部输入，只读要 CLI 强制；结构化输出能靠提示词补
 )
 
 // CanReview：引擎能在这个后端上起独立审查进程。
@@ -56,6 +58,9 @@ func (c Caps) Lacks(m Must) []string {
 	}
 	if m&MustImages != 0 && !c.ImageInput {
 		why = append(why, "模型看不到本地图片，界面门的审查做不了")
+	}
+	if m&MustWeb != 0 && !(c.ToolProfiles && c.WebTools) {
+		why = append(why, "不能在只读的同时只放开联网搜索和抓网页")
 	}
 	return why
 }

@@ -47,10 +47,11 @@ var archAllowed = map[string]string{
 	"chat":           "textfmt fsx proc config env backend gitx state backlog telegram ledger service notify gate runner orphan discuss suggest",
 	"stats":          "textfmt config env backend state ledger",
 	"evolve":         "textfmt fsx proc config env backend state backlog ledger notify gate suggest",
-	"sched":          "textfmt fsx config env backend state backlog telegram ledger notify gate runner orphan discuss newproj routine patrol evolve chat",
+	"pm":             "textfmt fsx proc config env backend state backlog ledger notify runner suggest",
+	"sched":          "textfmt fsx config env backend state backlog telegram ledger notify gate runner orphan discuss newproj routine patrol evolve pm chat",
 	"setup":          "fsx proc config backend state service envlayer",
 	"onboard":        "textfmt fsx config env backend gitx state backlog telegram service envlayer runner sched setup",
-	"app":            "textfmt fsx proc config env backend backend/claude backend/codex backend/pi gitx state backlog telegram quality ledger service notify gate runner orphan discuss newproj suggest routine patrol chat stats sched setup onboard evolve",
+	"app":            "textfmt fsx proc config env backend backend/claude backend/codex backend/pi gitx state backlog telegram quality ledger service notify gate runner orphan discuss newproj suggest routine patrol chat stats sched setup onboard evolve pm",
 	// main 是根目录的产品代码：入口和编译进二进制的资产。
 	"main": "textfmt config env runner chat setup onboard app",
 	// testkit 只给测试 import。它 import backend/claude 是为了注册 Claude 后端，给测试看 argv。

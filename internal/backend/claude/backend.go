@@ -33,7 +33,7 @@ func (b *Backend) Name() string { return Name }
 
 func (b *Backend) Caps() backend.Caps {
 	return backend.Caps{
-		Resume: true, PresetSession: true, HardBudget: true, MaxTurns: true, Schema: true, ToolProfiles: true,
+		Resume: true, PresetSession: true, HardBudget: true, MaxTurns: true, Schema: true, ToolProfiles: true, WebTools: true,
 		NoExternalMCP: true, Usage: true, Cost: true, LimitSignal: true, AuthProbe: true, Skills: true, ReviewProfile: true, ImageInput: true, Monitor: true,
 	}
 }
@@ -95,7 +95,15 @@ func restrictedArgs(req backend.Request) []string {
 	if req.Profile == backend.ProfileReadOnly {
 		tools = "Read,Grep,Glob"
 	}
+	web := req.Profile == backend.ProfileReadOnly && req.Web
+	if web {
+		tools += ",WebSearch,WebFetch"
+	}
 	args = append(args, "--tools", tools)
+	if web {
+		// 默认权限模式下 -p 里联网两样要放行才用得上（不放行一律拒绝，实测 2.1.322）；只加这两条放行，读文件的边界不变（工作目录外照样拒绝，实测）
+		args = append(args, "--allowedTools", "WebSearch,WebFetch")
+	}
 	if req.NoExternalMCP {
 		args = append(args, "--strict-mcp-config")
 	}

@@ -431,8 +431,8 @@ func (a *Service) routineBusy(ctx context.Context, st *state.State, r config.Rou
 func (a *Service) RoutineKindBusy(st *state.State, r config.Routine, mark *state.RoutineMark) string {
 	if r.Kind == config.KindReview {
 		for _, j := range st.Jobs {
-			// 商量大方向不算：它不改代码，算的话复盘就跳不过
-			if j.Kind != config.KindReview && j.Kind != state.KindDiscuss && j.EndedAt != nil && j.EndedAt.After(mark.At) {
+			// 商量大方向、产品经理调研不算：它们不改代码，算的话复盘就跳不过
+			if j.Kind != config.KindReview && !state.SideKind(j.Kind) && j.EndedAt != nil && j.EndedAt.After(mark.At) {
 				return "上次复盘之后有任务结束（" + j.ID + "）"
 			}
 		}

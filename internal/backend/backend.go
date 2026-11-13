@@ -72,6 +72,7 @@ const (
 	MustNoExternalMCP                  // 不接用户配的 MCP
 	MustReview                         // 引擎能起独立审查进程（Schema、ReviewProfile）
 	MustImages                         // 模型看得到本地图片（界面门）
+	MustWeb                            // 只读档里加联网搜索和抓网页，且只多这两样（Request.Web）
 )
 
 // Request 是一次启动的意图，不是参数。字段留空表示不要求，后端不传对应参数。
@@ -86,8 +87,10 @@ type Request struct {
 	// Model、Effort 为空表示跟随 CLI 自己的设置。
 	Model, Effort string
 	// Permission 是权限模式，空表示用 CLI 默认（只读任务靠默认模式下的读文件边界，不能传）。
-	Permission    string
-	Profile       Profile
+	Permission string
+	Profile    Profile
+	// Web：只读档再给联网搜索和抓网页（ProfileReadOnly 才看）。要真生效写 MustWeb。
+	Web           bool
 	NoExternalMCP bool
 	// Schema 是结构化输出要满足的 JSON Schema。
 	Schema string

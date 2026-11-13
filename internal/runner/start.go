@@ -439,6 +439,8 @@ func (a *Service) Start(st *state.State, j *state.Job, prompt, resume string) (*
 		req = a.Hooks.FollowupRequest(bcfg, prompt, j.Project, j.Title, resume, files)
 	case state.KindDiscuss:
 		req = a.Hooks.DiscussRequest(bcfg, prompt, j.Project, session)
+	case state.KindPM:
+		req = a.Hooks.PMRequest(bcfg, prompt, j.Project, session)
 	}
 	req.Dir, req.WorkDir = j.ProjectDir, dir
 	if j.Kind == "" || j.Kind == state.KindNew { // 这两种要合并，合并前的独立审查是硬前提

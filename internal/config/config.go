@@ -82,6 +82,8 @@ type Config struct {
 	ExtraProjects []string `json:"extra_projects,omitempty"`
 	// 大方向商量（discuss_enabled，默认开）：标了（大方向）的条目和 agentq new 开工前问一次，等 2 小时没回就按默认（见 internal/discuss）。
 	DiscussEnabled bool `json:"discuss_enabled"`
+	// 产品经理调研（pm_enabled，默认开）：项目第一版合并后、之后待做清空时，只读联网调研同类，写 1–3 条下一步进「## 建议」，同一项目 14 天最多一次（见 internal/pm）。
+	PMEnabled bool `json:"pm_enabled"`
 	// Backend：用哪个 CLI 后端，不写就是 claude，已有配置不用动。写了不认识的名字不回退：任务不启动，status 和 doctor 说明。
 	Backend string `json:"backend,omitempty"`
 	// ProjectBackends：按项目换后端。放用户配置，不放项目仓库：项目文件可能来自别人，不能让它决定代码发给哪家。
@@ -119,6 +121,7 @@ type Config struct {
 	// 按活分配模型和强度（依据官方对各档模型的定位）：只在默认后端是 Claude、model 非空时用，
 	// 否则清空，照 model、effort（见 RolesApply）。都写别名，新模型出来自动跟上；审查不用 haiku 这一档。
 	DiscussModel     string `json:"-"`
+	PMModel          string `json:"-"` // 产品经理调研
 	ReviewModel      string `json:"-"` // 复盘
 	ReviewEffort     string `json:"-"`
 	PatrolModel      string `json:"-"`
@@ -300,7 +303,7 @@ func (c *Config) ApplyTestTuning(raw string) error {
 
 // clearRoleModels 清掉按活分配的模型和强度（照 model、effort）：model 跟随 CLI 时都跟随，别家后端不用 Claude 的别名。
 func (c *Config) clearRoleModels() {
-	c.DiscussModel, c.ReviewModel, c.ReviewEffort, c.PatrolModel, c.FollowupModel = "", "", "", "", ""
+	c.DiscussModel, c.ReviewModel, c.ReviewEffort, c.PatrolModel, c.FollowupModel, c.PMModel = "", "", "", "", "", ""
 	c.HeavyEffort, c.LowRiskModel, c.LowRiskEffort, c.LightReviewModel = "", "", "", ""
 }
 
@@ -327,7 +330,7 @@ func (c Config) PinnedModels() []string {
 // UsagePolicy：判断额度用的模型和后台上限。
 func (c Config) UsagePolicy() backend.UsagePolicy {
 	var also []string // 经任务启动的那些角色（门里的审查不算，它不受额度门管）
-	for _, m := range []string{c.LowRiskModel, c.ReviewModel, c.PatrolModel, c.FollowupModel, c.DiscussModel} {
+	for _, m := range []string{c.LowRiskModel, c.ReviewModel, c.PatrolModel, c.FollowupModel, c.DiscussModel, c.PMModel} {
 		if m != "" && m != c.Model && !slices.Contains(also, m) {
 			also = append(also, m)
 		}
@@ -384,6 +387,7 @@ func Default() Config {
 		UsageStopWeekPct:    90,
 
 		DiscussEnabled:  true,
+		PMEnabled:       true,
 		SelfGrowEnabled: true,
 
 		TickAfterJob:    true,
@@ -403,6 +407,7 @@ func Default() Config {
 		RetentionDays:   90,
 
 		DiscussModel:     "sonnet",
+		PMModel:          "sonnet",
 		ReviewModel:      "sonnet",
 		ReviewEffort:     "high",
 		PatrolModel:      "sonnet",

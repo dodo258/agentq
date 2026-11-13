@@ -241,6 +241,7 @@ type Hooks struct {
 	ChatFilesDir    func(id string) string
 	FollowupRequest func(cfg config.Config, prompt, project, title, session, filesDir string) backend.Request
 	DiscussRequest  func(cfg config.Config, prompt, project, session string) backend.Request
+	PMRequest       func(cfg config.Config, prompt, project, session string) backend.Request
 	// ConstraintsNote：这个项目学到的约束（门拦过、确认过的事），接在新任务合同末尾。没接或返回空时提示词一字不变。
 	ConstraintsNote func(project string) string
 
@@ -256,6 +257,7 @@ type Hooks struct {
 	ReplyChat     func(j *state.Job)
 	NoticeNew     func(j *state.Job)
 	FinishDiscuss func(st *state.State, j *state.Job)
+	FinishPM      func(st *state.State, j *state.Job)
 }
 
 // JobOnItem：任务做的是这一条。标题也比：agent 改过条目正文时指纹会变。
@@ -274,9 +276,12 @@ func LastTaskJob(st *state.State, p backlog.Project, it backlog.Item) *state.Job
 	return last
 }
 
-const patrolAnalyzeTimeout = 30 * time.Minute
+const (
+	patrolAnalyzeTimeout = 30 * time.Minute
+	pmTimeout            = 40 * time.Minute // 产品经理调研：读项目、搜几轮网页，回合和预算先收住，这里兜底
+)
 
-// JobTimeout：夜班、复盘用各自的超时（一跑就是几个小时），巡逻分析、Telegram 对话各有固定超时，待做任务用 timeout。
+// JobTimeout：夜班、复盘用各自的超时（一跑就是几个小时），巡逻分析、Telegram 对话、产品经理调研各有固定超时，待做任务用 timeout。
 func (a *Service) JobTimeout(j *state.Job) time.Duration {
 	switch j.Kind {
 	case state.KindDiscuss: // 靠回合上限收住，后端没有就用短超时
@@ -295,6 +300,8 @@ func (a *Service) JobTimeout(j *state.Job) time.Duration {
 		return chatTimeout
 	case state.KindDiscuss:
 		return noTurnsTimeout
+	case state.KindPM:
+		return pmTimeout
 	}
 	return a.Cfg.Timeout.Duration
 }
@@ -591,10 +598,19 @@ func (a *Service) RoutineBlocked(st *state.State, limit int) string {
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return fmt.Sprintf("projects_root %s 不是目录", dir)
 	}
-	if ok, why := a.CheckLogin(); !ok {
+	return a.BackendBlocked(st, a.Cfg.Backend, limit)
+}
+
+// BackendBlocked：这个后端现在不能起后台活的原因（用量冷却、登录、订阅额度 ≥limit），能起返回空。后端名空表示 Claude。
+// 读到的额度存进 st，调用方负责保存状态。
+func (a *Service) BackendBlocked(st *state.State, name string, limit int) string {
+	if until := st.CooldownOf(name); a.Now().Before(until) {
+		return "用量冷却中，到 " + textfmt.WhenCN(until)
+	}
+	if ok, why := a.CheckLoginOn(name); !ok {
 		return why
 	}
-	if lvl, until, why := backend.UsageLevel(a.Usage(st), a.Now(), a.Cfg.UsagePolicy()); lvl >= limit {
+	if lvl, until, why := backend.UsageLevel(a.UsageOn(st, name), a.Now(), a.Cfg.ForBackend(name).UsagePolicy()); lvl >= limit {
 		if err := state.Save(a.StatePath(), st); err != nil {
 			a.Logf("写状态文件失败（额度读数没存下）：%v", err)
 		}

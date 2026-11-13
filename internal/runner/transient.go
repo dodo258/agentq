@@ -12,9 +12,9 @@ import (
 // TransientMaxCostUSD：这次进程花的钱不到它才算「几乎没花钱」（真实历史里没开工的是 $0，做到一半出错的是 $14）。
 const TransientMaxCostUSD = 0.10
 
-// limitFromStructuredOnly：商量大方向的结果文字里可能有项目文件的内容：「rate limit」这种字样不能算撞上限，否则别人写一句话就能停掉全部任务。只认结构化字段。
+// limitFromStructuredOnly：商量大方向、产品经理调研的结果文字里可能有项目文件或网页的内容：「rate limit」这种字样不能算撞上限，否则别人写一句话就能停掉全部任务。只认结构化字段。
 func limitFromStructuredOnly(kind string) bool {
-	return kind == state.KindDiscuss
+	return state.SideKind(kind)
 }
 
 // jobHitLimit：这个任务是不是撞了用量上限。

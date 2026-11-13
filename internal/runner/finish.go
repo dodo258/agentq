@@ -225,7 +225,7 @@ func (a *Service) FinishFromResult(st *state.State, j *state.Job) {
 			}
 		}
 	}
-	if parsed && res.Stop == backend.StopMaxBudget && j.Kind != state.KindDiscuss && !state.IsChatKind(j.Kind) { // 回答类任务回「没答完」
+	if parsed && res.Stop == backend.StopMaxBudget && !state.SideKind(j.Kind) && !state.IsChatKind(j.Kind) { // 回答类任务回「没答完」，后台活下次再来
 		status, summary = a.budgetResult(st, j, summary)
 	}
 	if summary == "" && status == state.StatusFailed {
@@ -621,6 +621,8 @@ func (a *Service) Finish(st *state.State, j *state.Job, status, summary string) 
 		a.Hooks.NoticeNew(j)
 	case j.Kind == state.KindDiscuss:
 		a.Hooks.FinishDiscuss(st, j)
+	case j.Kind == state.KindPM:
+		a.Hooks.FinishPM(st, j)
 	}
 	if j.NewReport != nil { // 同时停掉过另一个 new 时，这个做成的项目可能被它算成多出的目录
 		a.Hooks.ReleaseHeld(st, filepath.Base(j.NewReport.Path))

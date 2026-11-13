@@ -66,6 +66,7 @@ func TestMain(m *testing.M) {
 // TGDISPATCH：Telegram 对话任务，往 demo 的 BACKLOG「待做」写一条，回一条已派出的消息。
 // ROUTERFILE：原样输出 $HOME/fake-router.json（Router 的各种结果由用例写）。
 // 「闲时找活」（找活提示词里的固定字样）：原样输出 $HOME/fake-suggest.json。
+// 「产品经理调研进程」：原样输出 $HOME/fake-pm.json，没有就给两条带出处的建议。
 // FUPREPLY、FUPTODO：只读续跑的结构化回答（FUPTODO 带 todo）；FUPBUDGET：撞预算。
 // NEWOK：agentq new 正常做完：在工作目录建真 git 项目 clip-tool，第一条做到分支可合并（不合并，待做里还有一条），结果最后一段是固定四行。
 // NEWFIRSTSTUCK：第一条门没过，接手（「第一条死活」）也做不成。NEWBADVERIFY、NEWBADSMOKE：同上，门脚本退出 1。NEWSELFMERGE：又自己合并了。NEWNOREADY：分支上没有 ready.json。NEWNOTREADY：结尾写第一条没做到可合并。「第一条活」：接手第一条，修好再交。
@@ -147,6 +148,9 @@ case "$prompt" in
       for g in */.git; do r=${g%/.git}; seen="$seen$r 有 $(git -C "$r" worktree list | wc -l | tr -d ' ') 个 worktree、$(git -C "$r" branch --list | wc -l | tr -d ' ') 个分支；"; done
       printf '{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"s-dc","structured_output":{"questions":[{"text":"命令行还是窗口界面","default":"命令行（依据：要扫的是 git 仓库）"},{"text":"能清的指什么","default":"多余的 worktree 和已合并分支（依据：%s）；开发测试只用临时目录里造的数据，真实数据只读跑"}],"directions":[]}}\n' "$seen"
     else printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"s-dc","structured_output":{"questions":[{"text":"想要什么感觉","default":"简洁"}],"directions":["纸墨风","终端风"]}}'; fi ;;
+  *产品经理调研进程*) # 产品经理调研：$HOME/fake-pm.json 在就原样输出，否则两条带出处的建议
+    if [ -f "$HOME/fake-pm.json" ]; then cat "$HOME/fake-pm.json"
+    else printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"s-pm","structured_output":{"suggestions":[{"title":"加导出 CSV","why":"同类工具都有，用户在 issue 里反复要","source":"https://github.com/example/clipper/issues/12"},{"title":"第一次打开放示例数据","why":"README 写的定位是给新手用，空白页留不住人","source":"README 写的定位：给新手用的小工具"}]}}'; fi ;;
   *界面门的独立审查进程*) # 界面门的审查进程：$HOME/fake-ui-review.json 在就原样输出，否则通过
     if [ -f "$HOME/fake-ui-review.json" ]; then cat "$HOME/fake-ui-review.json"
     else printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"看过了","session_id":"s-ui","structured_output":{"verdict":"pass","skill":"loaded","summary":"没问题","findings":[]}}'; fi ;;
@@ -348,8 +352,8 @@ func newEnv(t *testing.T, cfg map[string]any) *testEnv {
 	if err := os.WriteFile(e.fake, []byte(fakeClaude), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// 多数用例逐次手动 tick、断言每次的收尾/启动个数，所以默认关掉任务结束后的自动 tick、tick 里的巡逻和推送；测它们的用例显式打开。
-	full := map[string]any{"projects_root": e.root, "claude_path": e.fake, "tick_after_job": false, "patrol_enabled": false, "notify_enabled": false}
+	// 多数用例逐次手动 tick、断言每次的收尾/启动个数，所以默认关掉任务结束后的自动 tick、tick 里的巡逻、推送和产品经理调研；测它们的用例显式打开。
+	full := map[string]any{"projects_root": e.root, "claude_path": e.fake, "tick_after_job": false, "patrol_enabled": false, "notify_enabled": false, "pm_enabled": false}
 	for k, v := range cfg {
 		full[k] = v
 	}

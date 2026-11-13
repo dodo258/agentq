@@ -160,6 +160,7 @@ var statsKindNames = map[string]string{
 	state.KindFollowup: "追问",
 	state.KindNew:      "新项目",
 	state.KindDiscuss:  "商量大方向",
+	state.KindPM:       "产品经理调研",
 }
 
 func statsKindName(kind string) string {

@@ -225,6 +225,7 @@ func (a *Service) RunPatrol(st *state.State, ps *PatrolState) (*PatrolReport, er
 	now := a.Now()
 	r := &PatrolReport{At: now}
 	found, failed := a.patrolChecks(st, ps, now, r)
+	a.takeOverReturned(st, now)
 	prev := map[string]PatrolIssue{}
 	for _, is := range ps.Issues {
 		prev[is.Fingerprint] = is

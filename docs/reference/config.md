@@ -31,6 +31,7 @@
 | `exclude_projects` | 字符串数组 | 空 | 这些项目自动流程都不碰，写目录名。见下面「排除项目」 |
 | `retention_days` | 整数 | `90` | 任务记录这些运行数据留多少天，tick 每天清一次。`0` 表示不删。见[运行数据](files.md) |
 | `discuss_enabled` | 布尔 | `true` | 标了 `（大方向）` 的条目和 `agentq new` 开工前问一次。关掉就都按默认直接开工。见[大方向商量](features.md#大方向商量) |
+| `pm_enabled` | 布尔 | `true` | 项目第一版合并后、之后做完一批待做时，起一个只读联网的调研任务，写 1–3 条下一步进「## 建议」，同一项目 14 天最多一次。见[产品经理调研](features.md#产品经理调研) |
 | `backend` | 字符串 | 不写就是 `claude` | 用哪个 CLI 后端。写了不认识的名字不回退：任务不启动，`agentq status`、`agentq doctor` 说明。能力表用 `agentq doctor` 看，接新后端见[这里](../backends.md) |
 | `project_backends` | 对象 | 空 | 按项目换后端，键是项目目录名。放用户配置，不放项目仓库。续跑用任务原来的后端，不跟随之后的配置 |
 | `backends` | 对象 | 空 | 每个后端自己的配置，键是后端名，值可以有 `path`、`model`、`effort`、`permission`。顶层的 `model`、`effort`、`permission_mode` 只归默认后端，别的后端只看这里；空的不传，跟随 CLI。`permission` 和 `permission_mode` 的合法值由后端声明。默认后端不是 Claude，或项目用了默认以外的后端时，权限空着或是 `default` 任务不起，`status` 和 `doctor` 会说要写什么 |
@@ -48,6 +49,7 @@
 | 标题提到重写、重构、迁移，或标了 `（难撤回）` 的待做任务 | 模型照 `model`，强度 `xhigh` |
 | 复盘（写教训和早报） | `sonnet`、`high` |
 | 巡逻分析异常原因 | `sonnet`、`medium` |
+| 产品经理调研（看同类、写下一步建议） | `sonnet`、`high` |
 | Telegram 回复链里的只读答问；要动手改代码的对话照 `model` | `sonnet`、`medium` |
 | 小改动的审查和界面审查（不算测试和记录文件最多 3 个文件、60 行，不是 rewrite，没改指令文件和门脚本）。完整流程的审查用 `model`：局部改动 `medium`，影响面广、难撤回 `high` | `sonnet`、`medium` |
 
@@ -93,7 +95,7 @@
 
 ## 预算
 
-单次运行有美元上限，传给 `--max-budget-usd`，只防失控，不在配置里：待做和 `agentq new` 150，夜班 10，复盘 15，巡逻分析 2。
+单次运行有美元上限，传给 `--max-budget-usd`，只防失控，不在配置里：待做和 `agentq new` 150，夜班 10，复盘 15，巡逻分析 2，产品经理调研 3。
 
 ## 定点任务和巡逻
 

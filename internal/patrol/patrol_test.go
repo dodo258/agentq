@@ -589,6 +589,77 @@ func TestPatrolTakeOverTodoLeavesFirstVersionToTick(t *testing.T) {
 	}
 }
 
+// 被门退回而记成中断的任务（门记录 state=returned）是门正常打回、引擎接着做，不是故障：CheckJobs 不报、巡逻不起分析、不进 patrol.json；
+// 认的是门记录，不看 Summary 文字。接手待做照常：tick 会直接接手的不写，续跑不了又没人接的写一条，之后每次巡逻不重复写。
+// 真正中断（没有门退回记录，Summary 顺带提到「门没过，退回」也算）照旧报成异常、起分析。11-12 repo-tidy 第一版被退回时巡逻按「任务中断」报了一整天。
+func TestPatrolGateReturnedIsNotAnomaly(t *testing.T) {
+	e := newPatrolFixture(t)
+	home := e.a.Home
+	proj := filepath.Join(e.root, "p")
+	os.MkdirAll(filepath.Join(proj, "docs"), 0o755)
+	testkit.GitT(t, home, proj, "init", "-q", "-b", "main")
+	first, other := "第一条 —— 要什么；验收：看 README", "修登录页 —— 要什么"
+	backlog := "# 待办\n\n## 待做\n\n- [ ] " + first + "（进行中：agent/1112-first 11-12 16:49）\n- [ ] " + other + "（进行中：agent/1112-login 11-12 16:50）\n\n## 已完成\n"
+	e.write(filepath.Join(proj, "docs", "BACKLOG.md"), backlog)
+	testkit.GitT(t, home, proj, "add", ".")
+	testkit.GitT(t, home, proj, "commit", "-q", "-m", "init")
+	head := testkit.GitT(t, home, proj, "rev-parse", "HEAD")
+	returned := func(id, title, item string) *state.Job {
+		return &state.Job{ID: id, Project: "p", ProjectDir: proj, Title: title, Fingerprint: bl.Fingerprint("- [ ] " + item),
+			Status: state.StatusInterrupted, Gate: &state.GateRecord{State: state.GateReturned, Branch: "agent/x", Round: 0},
+			Summary: "门没过，退回第 1 轮：审查说少了测试", StartedAt: e.now.Add(-time.Hour), EndedAt: patrolAgo(e.now, 10*time.Minute)}
+	}
+	// 新项目第一版：会话在 projects_root，续跑不了，tick 直接接手
+	firstJob := returned("1112-164509-新项目", "第一条", first)
+	firstJob.NewReport = &state.NewReport{Root: e.root}
+	e.st.Jobs = []*state.Job{firstJob}
+	if got := e.a.CheckJobs(e.st, e.now); len(got) != 0 {
+		t.Fatalf("门退回的任务不该报：%+v", got)
+	}
+	r := e.patrol()
+	if len(r.New) != 0 || len(e.analyzed) != 0 || r.AnalysisJobID != "" {
+		t.Fatalf("门退回不该报、不该起分析：新问题 %+v，分析 %d 次", r.New, len(e.analyzed))
+	}
+	if got := testkit.GitT(t, home, proj, "rev-parse", "HEAD"); got != head {
+		t.Error("tick 会直接接手的，不该写接手待做")
+	}
+	if ps, _ := e.a.LoadPatrol(); len(ps.Issues) != 0 {
+		t.Errorf("patrol.json 不该留着门退回：%+v", ps.Issues)
+	}
+
+	// 用户在门上退回、会话号丢了（续跑不了，tick 也不直接接手）：接手待做照常写，下次巡逻不重复写
+	lost := returned("1112-165000-p", "修登录页", other)
+	e.st.Jobs = append(e.st.Jobs, lost)
+	if got := e.a.CheckJobs(e.st, e.now); len(got) != 0 {
+		t.Fatalf("门退回的任务不该报：%+v", got)
+	}
+	if r := e.patrol(); len(r.New) != 0 || len(e.analyzed) != 0 {
+		t.Fatalf("门退回不该报、不该起分析：新问题 %+v，分析 %d 次", r.New, len(e.analyzed))
+	}
+	b, _ := os.ReadFile(filepath.Join(proj, "docs", "BACKLOG.md"))
+	if items := bl.ParseBacklog(string(b)); len(items) != 3 || !strings.HasPrefix(items[2].Title, "接手中断的「修登录页」") || !strings.Contains(items[2].Text, lost.ID) {
+		t.Fatalf("续跑不了又没人接的门退回，接手待做要照常写：\n%s", b)
+	}
+	e.now = e.now.Add(time.Hour)
+	e.patrol()
+	if b2, _ := os.ReadFile(filepath.Join(proj, "docs", "BACKLOG.md")); string(b2) != string(b) {
+		t.Errorf("接手待做不该重复写：\n%s", b2)
+	}
+
+	// 真正中断（进程被杀，没有门退回记录）：Summary 里顺带写了「门没过，退回」也照旧报成异常、起分析
+	killed := &state.Job{ID: "1112-170000-p", Project: "p", ProjectDir: proj, Title: "修登录页", Fingerprint: bl.Fingerprint("- [ ] " + other),
+		Status: state.StatusInterrupted, Summary: "上一轮门没过，退回第 1 轮；这一轮进程被杀", StartedAt: e.now.Add(-time.Hour), EndedAt: patrolAgo(e.now, time.Minute)}
+	e.st.Jobs = append(e.st.Jobs, killed)
+	got := e.a.CheckJobs(e.st, e.now)
+	if len(got) != 1 || got[0].Fingerprint != "job:"+killed.ID || !got[0].Anomaly {
+		t.Fatalf("真正中断的要照旧报成异常：%+v", got)
+	}
+	patrolFind(t, e.patrol().New, "job:"+killed.ID)
+	if len(e.analyzed) != 1 {
+		t.Errorf("真正中断的要起分析：%d 次", len(e.analyzed))
+	}
+}
+
 // 中断/失败/超时的待做任务：BACKLOG 里那一条还标着进行中，就在「待做」末尾写一条接手的待做并提交；
 // 新条目自己能被挑中（不含进行中、卡住标记）；不重复写；有别的任务在接手、BACKLOG 有没提交的改动时不写。
 func TestPatrolTakeOverTodo(t *testing.T) {

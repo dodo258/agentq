@@ -17,6 +17,7 @@ import (
 	"agentq/internal/onboard"
 	"agentq/internal/orphan"
 	"agentq/internal/patrol"
+	"agentq/internal/pm"
 	"agentq/internal/quality"
 	"agentq/internal/routine"
 	"agentq/internal/runner"
@@ -49,6 +50,7 @@ type App struct {
 	Sched    *sched.Service
 	Onboard  *onboard.Service
 	Evolve   *evolve.Service
+	PM       *pm.Service
 }
 
 // GateProcToken 是过门后台进程的内部命令名。

@@ -19,5 +19,6 @@
   "usage_stop_week_pct": 90,
   "self_grow_enabled": true,
   "discuss_enabled": true,
+  "pm_enabled": true,
   "retention_days": 90
 }

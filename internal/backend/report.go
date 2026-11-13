@@ -29,6 +29,7 @@ func Rows(b Backend) []Row {
 		{"回合上限", c.MaxTurns, "短任务用短超时兜底"},
 		{"结构化输出", c.Schema, "追问靠提示词要 JSON 并校验，校验不过当没结果；其余要它的任务不启动"},
 		{"只读和无工具", c.ToolProfiles, "要它的任务不启动"},
+		{"只读联网", c.ToolProfiles && c.WebTools, "产品经理调研不起"},
 		{"隔离 MCP", c.NoExternalMCP, "要它的任务不启动"},
 		{"用量", c.Usage, "status 和当天汇总写未知，合计注明几个任务没有用量"},
 		{"费用", c.Cost, "只有 token 没有金额，美元预算上限查不了"},
@@ -65,6 +66,7 @@ var Tasks = []Task{
 	{"大方向商量", MustDiscuss, "不问，按默认开工"},
 	{"追问", MustFollowup, "回退成普通对话任务"},
 	{"巡逻分析", MustPatrol, "巡逻照常报，不起分析"},
+	{"产品经理调研", MustPM, "不起调研，不写下一步建议"},
 	{"界面门的模型部分", MustImages, "判不了，不放行"},
 }
 

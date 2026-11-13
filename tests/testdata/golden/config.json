@@ -27,5 +27,6 @@
     "Config.ExtraProjects[]-29"
   ],
   "discuss_enabled": true,
-  "retention_days": 53
+  "pm_enabled": true,
+  "retention_days": 54
 }

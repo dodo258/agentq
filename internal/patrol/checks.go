@@ -276,7 +276,7 @@ func (a *Service) checkBackupReport(now time.Time, fail func(prefix, note string
 	}}
 }
 
-// CheckJobs：最近 patrolWindow 里失败、超时、中断的任务（撞用量上限的、等着自动续跑或已经续跑的不算，巡逻分析、Telegram 对话和任务箱自己的不算），
+// CheckJobs：最近 patrolWindow 里失败、超时、中断的任务（见 endedUnfinished；门退回的不算，巡逻分析、Telegram 对话和任务箱自己的不算），
 // 和会话记录超过 Config.StallAfter 没增长的运行中任务。
 func (a *Service) CheckJobs(st *state.State, now time.Time) []PatrolIssue {
 	var res []PatrolIssue
@@ -287,7 +287,7 @@ func (a *Service) CheckJobs(st *state.State, now time.Time) []PatrolIssue {
 		if j.Kind == state.KindNew && j.Status != state.StatusRunning { // 结束时已经直接推了（noticeNew），在跑时照样看卡住
 			continue
 		}
-		if j.Kind == state.KindDiscuss && j.Status != state.StatusRunning { // 可有可无的后台活，结果已写进当天汇总；在跑时照样看卡住
+		if state.SideKind(j.Kind) && j.Status != state.StatusRunning { // 可有可无的后台活，结果已写进当天汇总；在跑时照样看卡住
 			continue
 		}
 		name := j.Project + "「" + textfmt.TruncRunes(j.Title, 40) + "」"
@@ -306,21 +306,7 @@ func (a *Service) CheckJobs(st *state.State, now time.Time) []PatrolIssue {
 			})
 			continue
 		}
-		if j.EndedAt == nil || now.Sub(*j.EndedAt) > patrolWindow {
-			continue
-		}
-		switch j.Status {
-		case state.StatusFailed, state.StatusTimeout, state.StatusInterrupted:
-		default:
-			continue
-		}
-		if j.LimitHit || j.ResumePending || j.ResumedBy != "" {
-			continue
-		}
-		if j.BudgetHit || j.AutoStop != "" { // 结束时已经推过用户，写了卡住或续跑，不再为它起分析
-			continue
-		}
-		if j.Transient && j.Kind == "" { // 上游瞬时错误，会自己按短退避重试；夜班、复盘、对话不重试，照报
+		if !endedUnfinished(j, now) || gateReturned(j) { // 门退回是门正常打回、引擎接着做，不是故障：不报、不分析（接手待做见 takeOverReturned）
 			continue
 		}
 		is := PatrolIssue{
@@ -337,6 +323,39 @@ func (a *Service) CheckJobs(st *state.State, now time.Time) []PatrolIssue {
 		res = append(res, is)
 	}
 	return res
+}
+
+// endedUnfinished：最近 patrolWindow 里失败、超时、中断，又没有别的路接着处理的任务（撞用量上限、等着或已经续跑、
+// 结束时已推过用户、上游瞬时错误会自己重试的都不算）。
+func endedUnfinished(j *state.Job, now time.Time) bool {
+	if j.Status == state.StatusRunning || j.EndedAt == nil || now.Sub(*j.EndedAt) > patrolWindow {
+		return false
+	}
+	switch j.Status {
+	case state.StatusFailed, state.StatusTimeout, state.StatusInterrupted:
+	default:
+		return false
+	}
+	if j.LimitHit || j.ResumePending || j.ResumedBy != "" {
+		return false
+	}
+	if j.BudgetHit || j.AutoStop != "" { // 结束时已经推过用户，写了卡住或续跑，不再为它起分析
+		return false
+	}
+	return !(j.Transient && j.Kind == "") // 上游瞬时错误，会自己按短退避重试；夜班、复盘、对话不重试，照报
+}
+
+// gateReturned：任务是被门退回才记成中断的（门记录的结构化状态，不看 Summary 文字）。
+func gateReturned(j *state.Job) bool { return j.Gate != nil && j.Gate.State == state.GateReturned }
+
+// takeOverReturned：门退回、续跑不了的待做任务不当问题报，接手待做照常看要不要写。不进 patrol.json，所以每次巡逻都看一遍：
+// TakeOverTodo 重复调用不出事（BACKLOG 里已经提到这个任务就不再写，已有任务在接手、tick 会直接接手的什么都不动）。
+func (a *Service) takeOverReturned(st *state.State, now time.Time) {
+	for _, j := range st.Jobs {
+		if j.Kind == "" && gateReturned(j) && endedUnfinished(j, now) {
+			a.TakeOverTodo(st, j)
+		}
+	}
 }
 
 // TakeOverTodo：中断/失败/超时的待做任务，BACKLOG 里那一条还标着进行中、也没有别的任务在接手时，

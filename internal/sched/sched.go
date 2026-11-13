@@ -27,6 +27,7 @@ import (
 	"agentq/internal/notify"
 	"agentq/internal/orphan"
 	"agentq/internal/patrol"
+	"agentq/internal/pm"
 	"agentq/internal/routine"
 	"agentq/internal/runner"
 	"agentq/internal/state"
@@ -47,6 +48,7 @@ type Service struct {
 	Notify   *notify.Service
 	Orphan   *orphan.Service
 	Patrol   *patrol.Service
+	PM       *pm.Service
 	Routine  *routine.Service
 	Runner   *runner.Service
 	Telegram *telegram.Service
@@ -86,7 +88,7 @@ func (a *Service) NotifyTick(st *state.State) {
 	a.Notify.SendQueuedFiles()
 }
 
-// Tick：①收尾 ②超时处理 ③补跑今天错过的夜班、复盘（见 internal/routine/routine.go）④挑活启动 ⑤离上次巡逻满一小时就巡逻一次（见 internal/patrol/patrol.go）⑥推送和收 Telegram 消息（见 internal/notify/notify.go）。
+// Tick：①收尾 ②超时处理 ③补跑今天错过的夜班、复盘（见 internal/routine/routine.go）④挑活启动，接完看要不要起产品经理调研（见 internal/pm）⑤离上次巡逻满一小时就巡逻一次（见 internal/patrol/patrol.go）⑥推送和收 Telegram 消息（见 internal/notify/notify.go）。
 // after 非空表示是任务外壳在该任务结束后触发的：拿不到锁时等一会儿（最多 cmdLockWait）而不是跳过，
 // 否则正在跑的那次 tick 已经收尾过、没看到这个任务结束，空出的位置要等下一次定时 tick。
 func (a *Service) Tick(after string) error {
@@ -191,6 +193,7 @@ func (a *Service) Tick(after string) error {
 		note = "连环失败熔断中，到 " + textfmt.WhenCN(st.BreakerUntil) + " 前不启动"
 	default:
 		started, note = a.schedule(st, orphans, false)
+		a.PM.StartIfDue(st) // 接完待做再看：产品经理调研不占名额，同时只跑一个，额度到后台上限不起
 		// 续跑会改被续跑任务的记录（ResumedBy、ResumePending），启动时只存了一次
 		if err := state.Save(a.StatePath(), st); err != nil {
 			a.Logf("%s：写状态文件失败：%v", name, err)

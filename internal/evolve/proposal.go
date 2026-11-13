@@ -103,84 +103,27 @@ func (s *Service) proposeToProject(props []proposal, now time.Time) []proposal {
 	if !ok {
 		return nil
 	}
-	if why := s.Suggest.SuggestUnwritable(p); why != "" {
-		s.Logf("自我进化：%s 的 BACKLOG 现在写不进（%s），%d 条提案下次再写", p.Name, why, len(props))
-		return []proposal{}
+	in := make([]suggest.Proposal, len(props))
+	for i, pr := range props {
+		in[i] = suggest.Proposal{Title: pr.title, Line: pr.line}
 	}
-	store, err := s.Suggest.LiveSuggestions(true)
-	if err != nil {
-		s.Logf("自我进化：读不了建议索引，%d 条提案下次再写：%v", len(props), err)
-		return []proposal{}
-	}
-	known := map[string]bool{}
-	for _, e := range store.Proposed(p.Name) {
-		known[backlog.TitleKey(e.Title)] = true
-	}
-	first, err := s.Suggest.ReserveSuggestNumbers(len(props))
-	if err != nil {
-		s.Logf("自我进化：建议编号没存下，%d 条提案下次再写：%v", len(props), err)
-		return []proposal{}
-	}
-	var done, settled []proposal
-	var entries []suggest.SuggestEntry
-	var written []string
-	err = s.Backlog.CommitBacklog(p, "待办：自我进化的提案", func(old string) (string, error) {
-		done, settled, entries, written = nil, nil, nil, nil
-		have := backlog.BacklogTitleKeys(old)
-		rejected := s.Suggest.NotDoingKeys(p)
-		var lines []string
-		next := first
-		for _, pr := range props {
-			k := backlog.TitleKey(pr.title)
-			switch {
-			case rejected[k]:
-				s.Logf("自我进化：「%s」在不做清单里，不提", pr.title)
-				settled = append(settled, pr)
-				continue
-			case have[k] || known[k]:
-				settled = append(settled, pr)
-				continue
-			}
-			have[k] = true
-			line := fmt.Sprintf("- [ ] %s（建议 %d）", pr.line, next)
-			lines = append(lines, line)
-			entries = append(entries, suggest.SuggestEntry{N: next, Project: p.Name, Fingerprint: backlog.Fingerprint(line), Title: pr.title, CreatedAt: now})
-			written = append(written, fmt.Sprintf("%d　%s　%s", next, p.Name, pr.title))
-			done = append(done, pr)
-			next++
-		}
-		if len(lines) == 0 {
-			return old, nil
-		}
-		text := suggest.InsertSuggestions(old, lines)
-		if err := suggest.VerifySuggestionPresent(text, lines); err != nil {
-			return "", err
-		}
-		return text, nil
-	})
+	written, settled, err := s.Suggest.Propose(p, "待办：自我进化的提案", in, now)
 	if err != nil {
 		s.Logf("自我进化：%d 条提案没写进 %s（%v），下次再写", len(props), p.Name, err)
 		return []proposal{}
 	}
-	if len(entries) > 0 {
-		if err := s.Suggest.WithSuggest(func(st *suggest.SuggestStore) error {
-			st.Items = append(st.Items, entries...)
-			st.Prune(now)
-			return nil
-		}); err != nil {
-			s.Logf("自我进化：提案写进了 %s 的 BACKLOG，但编号没存下（回「做 N」用不了，手动移也行）：%v", p.Name, err)
-		}
+	if len(written) > 0 {
 		for _, w := range written {
 			s.Ledger.AppendNightlyLine(now, "自我进化：提案写进「建议」："+w)
 		}
-		n := notify.Notice{Cat: "suggest", Key: "evolve-propose:" + now.Format("20060102-1504"), Text: fmt.Sprintf("自我进化：agentq 自己反复出的 %d 个问题写进 %s 的「建议」", len(written), p.Name)}
-		for _, w := range written {
-			n.Lines = append(n.Lines, "建议 "+textfmt.TruncRunes(w, 56))
-		}
-		n.Lines = append(n.Lines, "回复「做 "+strings.Join(suggest.SuggestNumbers(written, 2), " ")+"」移进待做，「不做 N」以后不再提")
-		s.Notify.Notify(n)
+		s.Notify.Notify(notify.Notice{Cat: "suggest", Key: "evolve-propose:" + now.Format("20060102-1504"),
+			Text: fmt.Sprintf("自我进化：agentq 自己反复出的 %d 个问题写进 %s 的「建议」", len(written), p.Name), Lines: suggest.SuggestNotice(written)})
 	}
-	return append(done, settled...)
+	out := []proposal{}
+	for _, i := range settled {
+		out = append(out, props[i])
+	}
+	return out
 }
 
 const proposalsHead = "# agentq 自我进化提案\n\n只提案，不改代码。配置 `self_project` 后提案写进那个项目 BACKLOG 的「## 建议」。\n\n"

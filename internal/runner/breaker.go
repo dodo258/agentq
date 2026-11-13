@@ -19,8 +19,8 @@ func RecordOutcome(st *state.State, cfg config.Config, j *state.Job, ran time.Du
 	if j.Status == state.StatusKilled || j.LimitHit || j.Rebooted || j.Transient || j.BudgetHit || j.AutoStop != "" {
 		return false, 0
 	}
-	// 商量大方向是可有可无的后台活：它失败不说明待做任务有问题，更不该因此停掉真正的活
-	if j.Kind == state.KindDiscuss {
+	// 商量大方向、产品经理调研是可有可无的后台活：它们失败不说明待做任务有问题，更不该因此停掉真正的活
+	if state.SideKind(j.Kind) {
 		return false, 0
 	}
 	// 夜班、复盘、new 只计秒退：它们跑完不说明待做任务的问题好了，不清零、不解除熔断

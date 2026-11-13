@@ -37,7 +37,7 @@ type FakeOpts struct {
 
 // AllCaps 是全部能力都有的 Caps。
 func AllCaps() backend.Caps {
-	return backend.Caps{Resume: true, PresetSession: true, HardBudget: true, MaxTurns: true, Schema: true, ToolProfiles: true,
+	return backend.Caps{Resume: true, PresetSession: true, HardBudget: true, MaxTurns: true, Schema: true, ToolProfiles: true, WebTools: true,
 		NoExternalMCP: true, Usage: true, Cost: true, LimitSignal: true, AuthProbe: true, Skills: true, ReviewProfile: true, ImageInput: true}
 }
 
