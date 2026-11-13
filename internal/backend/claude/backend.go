@@ -178,6 +178,7 @@ func (b *Backend) Parse(job backend.JobRef, exit backend.Exit) backend.Result {
 	out.SessionID = r.SessionID
 	out.Turns = r.NumTurns
 	out.HTTPStatus = r.ApiStatus()
+	out.GatewayChallenge = r.IsError && backend.GatewayChallenge(r.Result) // 报错结束时 result 是 CLI 给的 API 错误正文
 	out.Structured = r.StructuredOutput
 	out.Background = r.Origin.Kind == "task-notification" || r.ResultIndex > 0
 	selfLimit := strings.HasPrefix(r.Subtype, "error_max")
@@ -186,7 +187,7 @@ func (b *Backend) Parse(job backend.JobRef, exit backend.Exit) backend.Result {
 		out.Stop = backend.StopMaxBudget
 	case selfLimit:
 		out.Stop = backend.StopMaxTurns
-	case r.authFailed():
+	case r.authFailed() && !out.GatewayChallenge: // 挑战页的正文是「Failed to authenticate. API Error: 403 Attention Required! | Cloudflare」：不是令牌的事
 		out.Stop = backend.StopAuth
 	}
 	out.LimitStructured = r.ApiStatus() == 429

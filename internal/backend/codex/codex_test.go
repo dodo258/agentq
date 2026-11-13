@@ -377,6 +377,16 @@ func TestParse403IsNotAuth(t *testing.T) {
 	}
 }
 
+func TestParseGatewayChallenge(t *testing.T) {
+	r := New(backend.Options{}).Parse(writeResult(t, `{"type":"thread.started","thread_id":"t1"}
+{"type":"turn.started"}
+{"type":"turn.failed","error":{"message":"unexpected status 403 Forbidden: <title>Attention Required! | Cloudflare</title>"}}
+`, ""), backend.Exit{})
+	if !r.HaveTerminal || !r.Failed || r.Stop != backend.StopNone || r.HTTPStatus != 403 || !r.Upstream() {
+		t.Errorf("Cloudflare 拦截页算上游瞬时错误：%+v", r)
+	}
+}
+
 func TestToolEventsTooBig(t *testing.T) {
 	job := writeResult(t, `{"type":"thread.started","thread_id":"t1"}`+"\n", "")
 	if err := os.Truncate(filepath.Join(job.Dir, resultFile), maxToolLogBytes+1); err != nil {

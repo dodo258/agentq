@@ -232,8 +232,8 @@ func (a *Service) FinishFromResult(st *state.State, j *state.Job) {
 		summary = a.BackendFor(j.Backend).Name() + " 报错结束"
 	}
 	if parsed && status == state.StatusFailed && !j.LimitHit {
-		if note := a.noteTransient(st, j, res); note != "" {
-			summary = note + "；" + summary
+		if s, note := a.noteTransient(st, j, res); note != "" {
+			status, summary = s, note+"；"+summary
 		}
 	}
 	if _, routine := config.Routines[j.Kind]; status == state.StatusDone && !j.LimitHit && routine {

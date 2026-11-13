@@ -189,7 +189,7 @@ Telegram 是可选的。配好后可以给机器人发需求，也可以带截�
 | **Linux** | 需要 `systemd --user`。amd64 在 CI 上跑测试和真实 systemd 验收，没跑过真实任务。arm64 能交叉编译 |
 | **WSL、Windows** | WSL 未验证，Windows 不支持 |
 
-还没有真实验证的：真实撞限和令牌失效、Codex 桌面端派活、Linux 上的真实任务和暴力测试。门和裸 CLI 在真实项目上的对比也没有做过。每项详情见[支持矩阵](docs/reference/support-matrix.md)。
+还没有真实验证的：真实撞限和令牌失效、Linux 上的真实任务和暴力测试。门和裸 CLI 在真实项目上的对比也没有做过。每项详情见[支持矩阵](docs/reference/support-matrix.md)。
 
 后端现在支持 Claude Code、Codex 和 pi，其他 CLI 以后再加。安装时用 `--backend codex` 或 `--backend pi` 选（`... | sh -s -- --backend pi`），不写就是 Claude Code。接新工具的接口见 [docs/backends.md](docs/backends.md)。预编译程序只依赖 Git，源码构建只用 Go 标准库。
 

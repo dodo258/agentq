@@ -73,6 +73,8 @@ func TestMain(m *testing.M) {
 // NEWWAIT：建了半截项目，停在「继续等通知」；NEWOUTSIDE：固定四行但项目路径不在 projects_root 下。
 // USAGE：结果带 usage 和两个模型的 modelUsage（数字照真实 result.json 改的）；其余正常结果都没有用量字段。
 // RESETS：撞上限，提示里的重置时间是 2 小时后（UTC 写法）。RATEOK：做了 40 个回合、结果里提到 rate limit 的正常完成。
+// UPSTREAMMID：首次认领、开 worktree 写一个没提交的改动，做到一半撞 Cloudflare 拦截页（403，花了钱）；带 UPSTREAM502 的撞 502。
+// 用 -r 续跑时核对那个改动还在，提交并把条目勾掉、报已合并；prompt 里还有 AGAIN 就每次都撞。
 // APIERR403、APIERR422、APIERR429、APIERR529：报错结束，带 api_error_status（403、422 的文案来自真实 result.json），没花钱。
 // ORPHANDONE：接手任务做完：把条目勾掉、去掉进行中标记。
 // TERMCHILD：留一个不理 SIGTERM 的子进程。KILLTICK：把启动自己的 tick（外壳的父进程）SIGKILL 掉，这时 tick 还没写完状态。
@@ -306,6 +308,26 @@ case "$prompt" in
   *OLDDONE*) sedi '/^- \[ \] .*OLDDONE/ s/$/（卡住：agent\/t-old 两次没过）/' docs/BACKLOG.md; printf '%s\n' '- [x] 同名 —— 合并提交 9f8e7d6；以前做过的同名条目' >> docs/BACKLOG.md
     printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"两次换思路都没过，标了卡住，没合并。","session_id":"s-od"}' ;;
   *COMMITFIRST*) printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"已经合并，提交号 aaa1111（PR #1）。\n\n**做了什么**\n- 加了协议\n\n第二轮审查结论是可以合并。\n\n**怎么验收**\n看 PR #1。","session_id":"s-cf"}' ;;
+  *UPSTREAMMID*)
+    wt=$PWD/.claude/worktrees/t-um
+    if [ -z "$resume" ]; then
+      sedi '/^- \[ \] .*UPSTREAMMID/ s#$#（进行中：agent/t-um 2026-01-01 10:00）#' docs/BACKLOG.md
+      git add docs/BACKLOG.md; git -c user.name=t -c user.email=t commit -q -m "待办：认领"
+      git worktree add -q "$wt" -b agent/t-um main
+      echo half > "$wt/half.txt"
+    fi
+    case "$resume:$prompt" in
+      :*|*AGAIN*)
+        case "$prompt" in
+          *UPSTREAM502*) printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"api_error_status":502,"num_turns":40,"total_cost_usd":3.1,"result":"API Error: 502 Bad Gateway","session_id":"s-um"}' ;;
+          *) printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"api_error_status":403,"num_turns":73,"total_cost_usd":5.9,"result":"Failed to authenticate. API Error: 403 Attention Required! | Cloudflare","session_id":"s-um"}' ;;
+        esac ;;
+      *)
+        if [ ! -f "$wt/half.txt" ]; then printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"num_turns":3,"result":"上次的改动丢了","session_id":"s-um"}'; exit 0; fi
+        echo rest >> "$wt/half.txt"; git -C "$wt" add -A; git -C "$wt" -c user.name=t -c user.email=t commit -q -m 接着做完
+        sedi -e '/^- \[ \] .*UPSTREAMMID/ s/（进行中.*$//' -e '/^- \[ \] .*UPSTREAMMID/ s/^- \[ \]/- [x]/' docs/BACKLOG.md
+        printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":30,"result":"接着做完了。\n\n已合并，提交 fff6666；用户看 half.txt。","session_id":"s-um"}' ;;
+    esac ;;
   *APIERR403*) printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"api_error_status":403,"num_turns":1,"total_cost_usd":0,"result":"Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, or ask your admin to enable access","session_id":"s-403"}' ;;
   *APIERR422*) printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"api_error_status":422,"num_turns":1,"total_cost_usd":0,"result":"API Error: 422 格式转换错误: Responses upstream service_unavailable_error: Our servers are currently overloaded. Please try again later.","session_id":"s-422"}' ;;
   *APIERR429*) printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"num_turns":1,"total_cost_usd":0,"result":"Request rejected (429)","session_id":"s-429"}' ;;
@@ -1299,6 +1321,69 @@ func TestIntegrationLimitMidwayResumes(t *testing.T) {
 	if r := e.state().Jobs[1]; r.Status != state.StatusDone || !strings.Contains(r.Summary, "aaa1111") {
 		t.Errorf("续跑应跑完：%+v", r)
 	}
+}
+
+// 做到一半撞上游瞬时错误（Cloudflare 拦截页的 403、502）：记中断，下一次 tick 用同一会话续跑，worktree 里没提交的改动还在；
+// 一直撞的，续跑次数用完（TransientBackoff 的上限）按失败算，不再续跑。
+func TestIntegrationUpstreamMidwayResumes(t *testing.T) {
+	t.Parallel()
+	for _, kw := range []string{"UPSTREAMMID", "UPSTREAMMID UPSTREAM502"} {
+		t.Run(kw, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, nil)
+			dir := testkit.MkProject(t, e.root, "alpha", "- [ ] 半路上游出错 —— "+kw+"\n")
+			e.mustRun("tick")
+			waitExit(t, e.jobByTitle("半路上游出错").PID, 10*time.Second)
+			out := e.mustRun("tick")
+			j := e.state().Jobs[0]
+			if j.Status != state.StatusInterrupted || j.ResumedBy == "" || !j.Transient || j.LimitHit || j.SessionID != "s-um" ||
+				!strings.Contains(j.Summary, "做到一半") || !strings.Contains(j.Summary, "用同一会话续跑（第 1/2 次）") {
+				t.Fatalf("应记中断、等同一会话续跑：%+v\n%s", j, out)
+			}
+			if !strings.Contains(out, "续跑任务") || !strings.Contains(out, "启动 1") {
+				t.Fatalf("同一次 tick 收尾后应续跑：\n%s", out)
+			}
+			res := e.state().Jobs[1]
+			if res.ResumeOf != j.ID {
+				t.Fatalf("续跑任务应指向原任务：%+v", res)
+			}
+			waitExit(t, res.PID, 10*time.Second)
+			fakeLog, _ := os.ReadFile(filepath.Join(e.fakeLg, fmt.Sprintf("%d.txt", res.PID)))
+			if !strings.Contains(string(fakeLog), "ARG[-r]\nARG[s-um]") {
+				t.Errorf("续跑应用同一会话：\n%s", fakeLog)
+			}
+			e.mustRun("tick")
+			if r := e.state().Jobs[1]; r.Status != state.StatusDone || !strings.Contains(r.Summary, "fff6666") {
+				t.Fatalf("续跑应跑完：%+v", r)
+			}
+			b, err := os.ReadFile(filepath.Join(dir, ".claude", "worktrees", "t-um", "half.txt"))
+			if err != nil || string(b) != "half\nrest\n" {
+				t.Fatalf("中断前的改动应还在：%q %v", b, err)
+			}
+			if st := e.state(); st.FailStreak != 0 {
+				t.Errorf("不计连环失败：%d", st.FailStreak)
+			}
+		})
+	}
+	t.Run("一直撞", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, nil)
+		testkit.MkProject(t, e.root, "alpha", "- [ ] 一直出错 —— UPSTREAMMID AGAIN\n")
+		e.mustRun("tick")
+		for i := 0; i <= len(state.TransientBackoff); i++ {
+			jobs := e.state().Jobs
+			waitExit(t, jobs[len(jobs)-1].PID, 10*time.Second)
+			e.mustRun("tick")
+		}
+		jobs := e.state().Jobs
+		if len(jobs) != len(state.TransientBackoff)+1 {
+			t.Fatalf("原任务加 %d 次续跑，不再多：%d 个任务", len(state.TransientBackoff), len(jobs))
+		}
+		last := jobs[len(jobs)-1]
+		if last.Status != state.StatusFailed || last.ResumePending || last.Transient || !strings.Contains(last.Summary, "不再续跑") {
+			t.Fatalf("续跑用完应按失败算：%+v", last)
+		}
+	})
 }
 
 // 每个任务的用量：有 usage 的结果记进 meta、status、当天汇总，末尾小结列最费的任务和缓存命中率；缺 usage 的照常收尾、不显示用量。

@@ -2,6 +2,7 @@ package tests
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -308,5 +309,109 @@ func TestStateCompatNewFields(t *testing.T) {
 	st2, err := state.Load(p)
 	if err != nil || !st2.Jobs[0].Takeover || !st2.Jobs[0].Transient {
 		t.Fatalf("新字段应能存取：%v %+v", err, st2)
+	}
+}
+
+// 真实 result.json（任务 1113-180354-agentq，跑了 16 分钟、73 个回合后撞上 Cloudflare 拦截页）。
+const realCloudflareText = "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare"
+
+// midwayApp：条目已经标着进行中（任务做到一半）的项目。
+func midwayApp(t *testing.T) (*App, *time.Time, string, string) {
+	t.Helper()
+	a, now := transientApp(t)
+	dir := testkit.MkProject(t, t.TempDir(), "demo", "- [ ] 甲 —— 说明（进行中：agent/x 2026-11-04 10:00）\n")
+	items, _ := backlog.Project{Dir: dir}.Items()
+	return a, now, dir, items[0].Fingerprint
+}
+
+// 做到一半撞上游瞬时错误（Cloudflare 403、502）：记中断、等用同一会话续跑，不计连环失败、不暂停后端。
+func TestUpstreamMidwayResumes(t *testing.T) {
+	for name, result := range map[string]map[string]any{
+		"Cloudflare 403": {"is_error": true, "subtype": "success", "api_error_status": 403, "num_turns": 73, "total_cost_usd": 5.9, "result": realCloudflareText, "session_id": "s-mid"},
+		"502":            {"is_error": true, "subtype": "success", "api_error_status": 502, "num_turns": 40, "total_cost_usd": 3.1, "result": doc502Text, "session_id": "s-mid"},
+		"没花钱的 529":       {"is_error": true, "subtype": "success", "api_error_status": 529, "num_turns": 1, "total_cost_usd": 0, "result": doc529Text, "session_id": "s-mid"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a, _, dir, fp := midwayApp(t)
+			st := &State{}
+			j := finishResult(t, a, st, &Job{Project: "demo", ProjectDir: dir, Title: "甲", Fingerprint: fp}, result)
+			if j.Status != state.StatusInterrupted || !j.ResumePending || !j.Transient || j.LimitHit || j.SessionID != "s-mid" {
+				t.Fatalf("应记中断、等同一会话续跑：%+v", j)
+			}
+			if !strings.Contains(j.Summary, "做到一半") || !strings.Contains(j.Summary, "用同一会话续跑（第 1/2 次）") {
+				t.Fatalf("摘要：%s", j.Summary)
+			}
+			if st.FailStreak != 0 || !st.BreakerUntil.IsZero() || !st.CooldownOf("").IsZero() {
+				t.Fatalf("不计连环失败、不冷却：%+v", st)
+			}
+			if _, err := os.Stat(a.AuthPausePath("claude")); err == nil {
+				t.Fatal("上游瞬时错误不该暂停后端")
+			}
+			if got := st.PendingResumes(); len(got) != 1 || got[0] != j {
+				t.Fatalf("应排进续跑：%+v", got)
+			}
+		})
+	}
+}
+
+// 续跑次数沿用 TransientBackoff 的上限：用完那次照普通失败计数，不再续跑。
+func TestUpstreamMidwayResumeLimit(t *testing.T) {
+	a, now, dir, fp := midwayApp(t)
+	st := &State{}
+	prev := ""
+	for i := 0; i <= len(state.TransientBackoff); i++ {
+		*now = now.Add(time.Minute)
+		j := finishResult(t, a, st, &Job{ID: fmt.Sprintf("t-%d", i), Project: "demo", ProjectDir: dir, Title: "甲", Fingerprint: fp, ResumeOf: prev, SessionID: "s-mid"},
+			map[string]any{"is_error": true, "api_error_status": 403, "num_turns": 20, "total_cost_usd": 6.0 * float64(i+1), "result": realCloudflareText, "session_id": "s-mid"})
+		prev = j.ID
+		if i < len(state.TransientBackoff) {
+			if j.Status != state.StatusInterrupted || !j.ResumePending || !j.Transient {
+				t.Fatalf("第 %d 次应续跑：%+v", i+1, j)
+			}
+			continue
+		}
+		if j.Status != state.StatusFailed || j.ResumePending || j.Transient || !strings.Contains(j.Summary, "不再续跑") || st.FailStreak != 1 {
+			t.Fatalf("用完应按失败算：%+v streak=%d", j, st.FailStreak)
+		}
+	}
+}
+
+// 真正的认证失败（401、令牌失效）照旧暂停后端，不续跑；别的 403、接不回会话的照旧。
+func TestUpstreamMidwayNotForAuthOrUnresumable(t *testing.T) {
+	cases := []struct {
+		name   string
+		job    Job
+		result map[string]any
+		check  func(*Job) bool
+	}{
+		{"401", Job{}, map[string]any{"is_error": true, "api_error_status": 401, "num_turns": 30, "total_cost_usd": 4, "result": "Failed to authenticate. API Error: 401 authentication_error", "session_id": "s"},
+			func(j *Job) bool {
+				return j.Status == state.StatusFailed && j.LimitHit && strings.Contains(j.Summary, "认证失败")
+			}},
+		{"令牌失效", Job{}, map[string]any{"is_error": true, "num_turns": 30, "total_cost_usd": 4, "result": "OAuth token has expired. Please run /login", "session_id": "s"},
+			func(j *Job) bool {
+				return j.Status == state.StatusFailed && j.LimitHit && strings.Contains(j.Summary, "认证失败")
+			}},
+		{"组织关了订阅的 403", Job{}, map[string]any{"is_error": true, "api_error_status": 403, "num_turns": 30, "total_cost_usd": 4, "result": real403Text, "session_id": "s"},
+			func(j *Job) bool { return j.Status == state.StatusFailed && !j.Transient }},
+		{"没有会话 id", Job{}, map[string]any{"is_error": true, "api_error_status": 403, "num_turns": 30, "total_cost_usd": 4, "result": realCloudflareText},
+			func(j *Job) bool { return j.Status == state.StatusFailed && !j.Transient }},
+		{"夜班", Job{Kind: config.KindNight, Item: "x"}, map[string]any{"is_error": true, "api_error_status": 502, "num_turns": 30, "total_cost_usd": 4, "result": doc502Text, "session_id": "s"},
+			func(j *Job) bool { return j.Status == state.StatusFailed && !j.Transient }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a, _, dir, fp := midwayApp(t)
+			st := &State{}
+			j := c.job
+			j.Project, j.ProjectDir, j.Title = "demo", dir, "甲"
+			if j.Kind == "" {
+				j.Fingerprint = fp
+			}
+			finishResult(t, a, st, &j, c.result)
+			if j.ResumePending || !c.check(&j) {
+				t.Fatalf("不该续跑：%+v", j)
+			}
+		})
 	}
 }

@@ -306,6 +306,25 @@ func TestLastActivityAllProjectDirs(t *testing.T) {
 }
 
 // 认证失败要认得出来：门和任务才能暂停重试，不把一串任务都卡成要人点。只看报错结束的，模型正文提到不算。
+// Cloudflare 拦截页的 403 按结构化状态码加 API 错误正文认成上游瞬时错误；模型正文（is_error 为假）里提到不算。
+func TestParseGatewayChallenge(t *testing.T) {
+	b := New(backend.Options{})
+	for raw, want := range map[string]bool{
+		`{"is_error":true,"api_error_status":403,"num_turns":73,"total_cost_usd":5.9,"result":"Failed to authenticate. API Error: 403 Attention Required! | Cloudflare","session_id":"s"}`: true,
+		`{"is_error":true,"api_error_status":502,"result":"API Error: 502 Bad Gateway"}`:                                                                                                   true,
+		`{"is_error":true,"api_error_status":403,"result":"Your organization has disabled Claude subscription access for Claude Code"}`:                                                    false,
+		`{"is_error":false,"num_turns":40,"result":"修好了 Attention Required! | Cloudflare 的页面识别"}`:                                                                                          false,
+	} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "result.json"), []byte(raw), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := b.Parse(backend.JobRef{Dir: dir}, backend.Exit{}).Upstream(); got != want {
+			t.Errorf("%s：%v，要 %v", raw, got, want)
+		}
+	}
+}
+
 func TestParseAuthFailure(t *testing.T) {
 	b := New(backend.Options{})
 	for raw, want := range map[string]backend.Stop{
@@ -316,6 +335,9 @@ func TestParseAuthFailure(t *testing.T) {
 		`{"is_error":true,"api_error_status":500,"result":"boom"}`:                  backend.StopNone,
 		`{"is_error":true,"api_error_status":403,"result":"organization disabled"}`: backend.StopNone,
 		`{"is_error":true,"subtype":"error_max_turns","result":"x"}`:                backend.StopMaxTurns,
+		// 真实的 Cloudflare 拦截页：文字说 Failed to authenticate，但不是令牌失效，不能暂停后端
+		`{"is_error":true,"api_error_status":403,"result":"Failed to authenticate. API Error: 403 Attention Required! | Cloudflare"}`: backend.StopNone,
+		`{"is_error":true,"api_error_status":401,"result":"Failed to authenticate. API Error: 401 authentication_error"}`:             backend.StopAuth,
 	} {
 		dir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(dir, "result.json"), []byte(raw), 0o644); err != nil {

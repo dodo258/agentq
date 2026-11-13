@@ -23,6 +23,36 @@ func TestTransientStatus(t *testing.T) {
 	}
 }
 
+// 上游瞬时错误：5xx、422，和网关挑战页的 403；别的 403、401、429 不算。
+func TestUpstream(t *testing.T) {
+	cases := []struct {
+		r    Result
+		want bool
+	}{
+		{Result{HTTPStatus: 502}, true},
+		{Result{HTTPStatus: 403, GatewayChallenge: true}, true},
+		{Result{HTTPStatus: 403}, false},
+		{Result{HTTPStatus: 401, GatewayChallenge: true}, false},
+		{Result{HTTPStatus: 429}, false},
+		{Result{GatewayChallenge: true}, false},
+	}
+	for _, c := range cases {
+		if got := c.r.Upstream(); got != c.want {
+			t.Errorf("%+v：%v，要 %v", c.r, got, c.want)
+		}
+	}
+	for s, want := range map[string]bool{
+		"Failed to authenticate. API Error: 403 Attention Required! | Cloudflare": true, // 真实 result.json
+		"unexpected status 403 Forbidden: <title>Just a moment...</title>":        true,
+		"Your organization has disabled Claude subscription access":               false,
+		"unexpected status 403 Forbidden: model not available":                    false,
+	} {
+		if GatewayChallenge(s) != want {
+			t.Errorf("%q：要 %v", s, want)
+		}
+	}
+}
+
 // 给人看的时间带程序算好的星期。
 func TestWhenCN(t *testing.T) {
 	cases := map[string]time.Time{

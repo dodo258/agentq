@@ -165,11 +165,12 @@ func (b *Backend) Parse(job backend.JobRef, exit backend.Exit) backend.Result {
 		channel = r.last.ErrorMessage + "\n" + stderr
 	}
 	out.HTTPStatus = httpStatus(channel)
+	out.GatewayChallenge = backend.GatewayChallenge(channel)
 	switch {
 	case out.HTTPStatus == 429 || usageLimitRe.MatchString(channel):
 		out.LimitStructured = out.HTTPStatus == 429
 		out.LimitText = true
-	case out.HTTPStatus == 401 || authRe.MatchString(channel):
+	case (out.HTTPStatus == 401 || authRe.MatchString(channel)) && !out.GatewayChallenge:
 		out.Stop = backend.StopAuth
 	}
 	if !r.settled {

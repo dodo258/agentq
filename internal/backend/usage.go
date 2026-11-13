@@ -3,6 +3,7 @@ package backend
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -134,9 +135,20 @@ func JobUsageDetail(u JobUsage) string {
 }
 
 // TransientStatus：上游暂时出问题的状态码：5xx 和 422（真实历史里 422 是中转站转上游过载）。
-// 429 走用量上限；408、409 和 401、403 这类认证、权限错误走普通失败，不重试。
+// 429 走用量上限；408、409 和 401、403 这类认证、权限错误走普通失败，不重试（网关挑战页的 403 除外，见 Upstream）。
 func TransientStatus(code int) bool {
 	return code == 422 || (code >= 500 && code <= 599)
+}
+
+// gatewayChallengeRe：Cloudflare 拦截页、挑战页的标题（真实 result.json：「API Error: 403 Attention Required! | Cloudflare」）。
+var gatewayChallengeRe = regexp.MustCompile(`(?i)attention required!? \| cloudflare|just a moment\.\.\.`)
+
+// GatewayChallenge：API 错误正文是不是网关的拦截、挑战页。只给后端用来看错误通道，不能拿模型正文来认。
+func GatewayChallenge(errText string) bool { return gatewayChallengeRe.MatchString(errText) }
+
+// Upstream：上游暂时出问题：TransientStatus 的状态码，或网关挑战页的 403（不是认证、权限）。过一会儿再试多半就好。
+func (r Result) Upstream() bool {
+	return TransientStatus(r.HTTPStatus) || r.HTTPStatus == 403 && r.GatewayChallenge
 }
 
 // LimitScanTurns：回合数不超过这个的结果，才可能是一开始就撞了上限（瞬时错误判断「没开工」也用它）。

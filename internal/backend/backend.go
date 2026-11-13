@@ -151,6 +151,9 @@ type Result struct {
 	Turns int
 	// HTTPStatus 是上游错误码，0 表示没有。
 	HTTPStatus int
+	// GatewayChallenge：上游错误正文是网关的拦截、挑战页（Cloudflare 的 Attention Required、Just a moment...），
+	// 不是服务本身拒绝。后端只从 API 错误通道里认，不看模型正文。见 Upstream。
+	GatewayChallenge bool
 	// Structured 是结构化输出。
 	Structured json.RawMessage
 	// Background：最后一个回合是后台通知触发的，不是任务自己走完的。
