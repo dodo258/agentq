@@ -366,7 +366,7 @@ func TestIntegrationNewRefused(t *testing.T) {
 			t.Errorf("%v：%d\n%s", args, code, out)
 		}
 	}
-	for _, idea := range []string{"", "   \n ", strings.Repeat("字", newproj.NewIdeaMax+1), "--help"} {
+	for _, idea := range []string{"", "   \n ", strings.Repeat("字", newproj.NewIdeaMax+1), "--做个工具"} {
 		if out, code := e.run("new", idea); code == 0 || strings.Contains(out, "已启动") {
 			t.Errorf("%q：%d\n%s", idea, code, out)
 		}

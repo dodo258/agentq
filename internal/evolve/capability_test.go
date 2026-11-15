@@ -129,6 +129,7 @@ func TestCapabilityGapNotForNormalDomains(t *testing.T) {
 
 // 返工意见按领域记进账，和门没过一起算；没配 self_project 时写进 proposals.md。evolve signals 看得到按领域的账和缺口。
 func TestCapabilityGapFromReworkToFile(t *testing.T) {
+	withCaps(t, nil) // 看「还没有登记的能力」那一行，不跟仓库里登记了几项走
 	r := newSigRig(t, nil)
 	p := selfRepo(t, r, "site")
 	os.WriteFile(p.BacklogPath(), []byte("# 待办\n\n## 待做\n\n- [ ] 验收 首页 的意见 —— 配色像模板（范围：design/）\n- [ ] 验收 关于页 的意见 —— 图标难看（范围：design/）\n\n## 已完成\n"), 0o644)

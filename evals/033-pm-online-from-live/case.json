@@ -1,0 +1,9 @@
+{
+  "domain": "engine",
+  "kind": "program",
+  "requires": [
+    "python3",
+    "curl"
+  ],
+  "expect": {}
+}

@@ -96,3 +96,43 @@ func TestDue(t *testing.T) {
 		t.Errorf("什么都没合并：%q", got)
 	}
 }
+
+// 11-15：产品经理只读了过期的 PROGRESS.md（写 11-10 部署）就建议「发到线上」，线上 11-13 早已是新版。
+// 说到线上现状的建议，出处要是当场查过的线上地址；只有项目文档佐证的不写。
+func TestParseIdeasOnlineNeedsLiveSource(t *testing.T) {
+	ideas, err := ParseIdeas(result(`{"suggestions":[
+		{"title":"把官网对齐 v0.3.0 发到线上","why":"线上还是 v2","source":"PROGRESS.md 写 11-10 部署","online":"PROGRESS.md 写 11-10 部署"},
+		{"title":"发新版","why":"商店还是旧版","source":"CHANGELOG","online":"见 https://example.com 和文档"},
+		{"title":"交接文档和线上不一致，更新文档","why":"线上已是 v0.3.0，PROGRESS 还写 11-10 部署","source":"PROGRESS.md 写 11-10 部署","online":"https://site.example/"},
+		{"title":"加导出","why":"同类都有","source":"https://example.com/issues/1","online":""},
+		{"title":"对齐 Release","why":"Release 已是 v1.2","source":"https://github.com/x/y/releases/tag/v1.2","online":"https://github.com/x/y/releases/tag/v1.2"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var titles []string
+	for _, it := range ideas {
+		titles = append(titles, it.Title)
+	}
+	if strings.Join(titles, "|") != "交接文档和线上不一致，更新文档|加导出|对齐 Release" {
+		t.Fatalf("只有文档佐证的线上判断不要：%q", titles)
+	}
+	if ideas[0].Source != "https://site.example/；PROGRESS.md 写 11-10 部署" || ideas[0].Online != "https://site.example/" {
+		t.Errorf("查过的线上地址要进出处：%+v", ideas[0])
+	}
+	if ideas[1].Source != "https://example.com/issues/1" || ideas[2].Source != "https://github.com/x/y/releases/tag/v1.2" {
+		t.Errorf("不涉及线上、出处已含地址的，出处不变：%+v", ideas[1:])
+	}
+}
+
+func TestBuildPromptOnlineFromLive(t *testing.T) {
+	p := BuildPrompt("demo", TriggerEmpty, nil, nil)
+	for _, want := range []string{"已发布、已部署、商店里", "当场打开查的线上来源（网页、GitHub Release、商店页）", "PROGRESS.md", "只有文档佐证的不写成线上事实",
+		"「发到线上」", "「交接文档和线上不一致，更新文档」", "online（", "title、why、source、online"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("缺 %q：\n%s", want, p)
+		}
+	}
+	if !strings.Contains(Schema, `"online":{"type":"string"}`) {
+		t.Errorf("结果要有 online：%s", Schema)
+	}
+}

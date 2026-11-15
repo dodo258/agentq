@@ -152,6 +152,95 @@ func TestUpstreamWarnLevel(t *testing.T) {
 	}
 }
 
+// cloudflare403 是审查进程撞上 Cloudflare 拦截页的结果（真实 result.json 的正文，任务 1113-180354-agentq）。
+func cloudflare403() string {
+	b, _ := json.Marshal(testkit.FakeEvent{Type: "result", OK: false, Text: "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare", Status: 403})
+	return string(b) + "\n"
+}
+
+// 审查撞上 Cloudflare 挑战页（403）：和 5xx 一样排回去退避重跑，不当场重试、不占退回轮数、不暂停后端；
+// 第二次正常时按审查结论走：通过就合并，有证据的问题照常退回。
+func TestUpstreamGatewayChallengeRecovers(t *testing.T) {
+	for name, tc := range map[string]struct {
+		second, outcome string
+		state           string
+	}{
+		"通过":  {reply("pass"), "merged", state.GateMerged},
+		"有问题": {reply("block", finding(newFile, 1, "blocker", "空指针会崩", "go test -run TestX 失败")), "fail", state.GateReturned},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newReviewFix(t, fixBacklog, testkit.AllCaps(), cloudflare403(), tc.second)
+			j := f.job(newFiles())
+			base := f.a.Now()
+			res := f.run(j)
+			r := reviewResult(t, res)
+			if res.Outcome != "defer" || !r.Upstream || r.Auth || !strings.Contains(r.Summary, "网关拦截页") || f.callCount() != 1 {
+				t.Fatalf("%+v %d", res, f.callCount())
+			}
+			f.collect(j, res)
+			if j.Gate.State != state.GateQueued || j.Gate.Upstream != 1 || j.Gate.Round != 0 {
+				t.Fatalf("%+v", j.Gate)
+			}
+			if d := j.Gate.NotBefore.Sub(base); d < 14*time.Minute || d > 16*time.Minute {
+				t.Errorf("按 TransientBackoff 第一档等 15 分钟：%s", d)
+			}
+			if !f.st.CooldownOf(f.a.Cfg.Backend).IsZero() || authPaused(f) {
+				t.Errorf("挑战页不是撞限、不是认证失败")
+			}
+			res = f.run(j)
+			f.collect(j, res)
+			if res.Outcome != tc.outcome || j.Gate.State != tc.state || j.Gate.Upstream != 0 || f.callCount() != 2 {
+				t.Fatalf("%+v %+v %d", res, j.Gate, f.callCount())
+			}
+		})
+	}
+}
+
+// 一直是 Cloudflare 挑战页：退避用完（一共调 3 次）才判不了、卡住，报告说明是上游错误。
+func TestUpstreamGatewayChallengeExhausted(t *testing.T) {
+	f := newReviewFix(t, fixBacklog, testkit.AllCaps(), cloudflare403())
+	j := f.job(newFiles())
+	for i := range gate.MaxUpstream {
+		res := f.run(j)
+		if res.Outcome != "defer" {
+			t.Fatalf("第 %d 次就判了：%+v", i+1, res)
+		}
+		f.collect(j, res)
+		if j.Gate.State != state.GateQueued {
+			t.Fatalf("第 %d 次就卡住：%+v", i+1, j.Gate)
+		}
+	}
+	res := f.run(j)
+	r := reviewResult(t, res)
+	if res.Outcome != "unknown" || r.Upstream || r.Defer != "" || f.callCount() != 3 {
+		t.Fatalf("%+v %d", res, f.callCount())
+	}
+	for _, want := range []string{"上游错误", "网关拦截页", "连续 3 次", "不是审查结论"} {
+		if !strings.Contains(r.Summary, want) {
+			t.Errorf("报告缺 %q：%s", want, r.Summary)
+		}
+	}
+	f.collect(j, res)
+	if j.Gate.State != state.GateStuck || j.Gate.Round != 0 {
+		t.Fatalf("%+v", j.Gate)
+	}
+	if got := j.Gate.Tally["review"]; got.Deferred != 2 || got.Unknown != 1 {
+		t.Errorf("%+v", got)
+	}
+}
+
+// 不是挑战页的 403（权限、组织关了订阅）不是上游瞬时错误：照旧当场重试一次后判不了，不排回去退避。
+func TestUpstreamPlain403NotTransient(t *testing.T) {
+	b, _ := json.Marshal(testkit.FakeEvent{Type: "result", OK: false, Text: "API Error: 403 {\"type\":\"permission_error\",\"message\":\"OAuth token does not meet scope requirement\"}", Status: 403})
+	f := newReviewFix(t, fixBacklog, testkit.AllCaps(), string(b)+"\n")
+	j := f.job(newFiles())
+	res := f.run(j)
+	r := reviewResult(t, res)
+	if res.Outcome != "unknown" || r.Upstream || r.Defer != "" || !strings.Contains(r.Summary, "没给出合格的结论") || f.callCount() != 2 {
+		t.Fatalf("%+v %d", res, f.callCount())
+	}
+}
+
 func stuckCard(t *testing.T, f *fix) *notify.DecideCard {
 	t.Helper()
 	s, err := f.k.Notify.LoadNotify()
@@ -370,4 +459,9 @@ func TestReviewOwner(t *testing.T) {
 	if got := gate.ReviewOwner(filepath.Join(dir, "没有")); got != "" {
 		t.Errorf("%q", got)
 	}
+}
+
+func authPaused(f *reviewFix) bool {
+	_, paused := f.a.AuthPausedUntil(f.name)
+	return paused
 }

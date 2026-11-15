@@ -24,9 +24,9 @@ import (
 //   - 来源：门的结果（gate/<任务>/last.json）、任务记录（jobs/<任务>/meta.json）按文件记，只读新出现或改过的；巡逻（patrol.json）只看上次之后首次发现的问题。
 //   - 同类归并：Key 是种类 + 门名 + 去掉路径、哈希、数字后的原因前 60 字。同一份证据（任务、巡逻问题）只算一次。
 //   - 门 error 档没过、退回了任务的拦截先记着；这一条后来合并了（门是对的）或用户放弃了，才算确认，并进项目约束（constraints.go）。
-//     用户放行、再审过了的不算：放行记成 gate-override 信号，是门的问题。
+//     用户放行、再审过了的不算：放行记成 gate-override 信号，是门的问题；门都过了、只因为改了尺子等人看而放行的不记（heldOnPurpose）；记过的每次收信号按现在的规则重判（recheckOverrides）。
 //   - agentq 自己的信号（见 selfKind）同一 Key 出现两次以上，写一条提案（proposal.go），同一 Key 只提一次。
-//   - 用户和真实使用里冒出来的问题（亲手 stop、门卡片上退回或放弃、验收后返工、巡逻疑似误报、retry_after 挡太久）见 usersignals.go。
+//   - 用户和真实使用里冒出来的问题（亲手 stop、刚启动就被停、门卡片上退回或放弃、验收后返工、巡逻疑似误报、retry_after 挡太久）见 usersignals.go。
 //   - tick 每小时最多收一次；没有新数据就什么都不写，下次 tick 再看（stat 门结果和任务记录，读一次 patrol.json）。
 const (
 	collectEvery    = time.Hour
@@ -59,14 +59,14 @@ const (
 
 // oneShot：一次就写，不等第二次。缺口和撤掉能力本身就是按次数、按时间算出来的。
 func oneShot(kind string) bool {
-	return kind == KindVuln || kind == KindRollback || kind == KindGap || kind == KindRetire
+	return kind == KindVuln || kind == KindRollback || kind == KindGap || kind == KindRetire || kind == KindQuickStop
 }
 
 // selfKind：说的是 agentq 自己的问题，不分项目归并，够次数写提案。其余是项目自己的事。
 func selfKind(kind string) bool {
 	switch kind {
 	case KindGateUnknown, KindGateOverride, KindPlan, KindCrash, KindTimeout, KindPatrol,
-		KindUserStop, KindUserDecide, KindRework, KindPatrolGone, KindRetryWait, KindVuln, KindRollback, KindGap, KindRetire:
+		KindUserStop, KindUserDecide, KindRework, KindPatrolGone, KindRetryWait, KindQuickStop, KindVuln, KindRollback, KindGap, KindRetire:
 		return true
 	}
 	return false
@@ -87,6 +87,7 @@ var kindWords = map[string]string{
 	KindRework:       "验收后返工",
 	KindPatrolGone:   "巡逻报了又自己消失",
 	KindRetryWait:    "条目被 retry_after 挡住超过 6 小时",
+	KindQuickStop:    "亲手派的任务刚启动就被停",
 	KindVuln:         "Go 或依赖有已知漏洞",
 	KindRollback:     "升级后任务变差",
 	KindGap:          "能力缺口",
@@ -343,6 +344,7 @@ func (s *Service) Collect(force bool) (bool, error) {
 	for _, w := range in.retry {
 		s.absorbRetryWait(st, w, now)
 	}
+	s.recheckOverrides(st)
 	for project, cs := range learned {
 		if err := s.learn(project, cs, now); err != nil {
 			s.Logf("自我进化：%s 的约束没存下：%v", project, err)
@@ -546,19 +548,20 @@ func (s *Service) absorbMeta(st *SignalStore, j *state.Job, now time.Time) []con
 			st.fixedSelfItem(j, g.Merge)
 			pend := st.takePending(j)
 			switch {
-			case g.Passes > 0 || g.Override != "":
+			case (g.Passes > 0 || g.Override != "") && !s.heldOnPurpose(j):
 				// 用户放行：门拦错了，不学；记成门的问题。合并后收尾还会再写 meta.json：这个任务记过一次就不再记，
 				// 不然第二次读时等确认的拦截已经取走，Key 变了，同一次放行会算成另一类
 				if slices.ContainsFunc(st.Signals, func(sig Signal) bool { return sig.Kind == KindGateOverride && slices.Contains(sig.Evidence, ev) }) {
 					break
 				}
+				// 放行的是这个任务自己被拦下的那次；前面几轮（退回后换了任务号）的拦截任务已经改过、门也过了，不是这次放行的对象
 				gateName, why := "", g.Override
-				if len(pend) > 0 {
-					gateName, why = pend[0].Gate, pend[0].Summary
+				if i := slices.IndexFunc(pend, func(p pendingFail) bool { return p.Job == j.ID }); i >= 0 {
+					gateName, why = pend[i].Gate, pend[i].Summary
 				}
 				st.add(now, KindGateOverride, j.Project, SignalKey(KindGateOverride, gateName, why), "用户放行了"+gateWord(gateName)+"拦下的任务："+textfmt.OneLine(why, 200), ev)
 			case g.Reruns > 0: // 再审过了：门前后结论不一样，说明不了是对的
-			default:
+			default: // 包括门都过了、只因为门要人看（改了尺子）等放行的：门没拦错，之前的拦截照样算确认
 				for _, p := range pend {
 					src := []string{"任务 " + p.Job, "任务 " + j.ID}
 					if g.Merge != "" {
@@ -598,6 +601,64 @@ func (s *Service) absorbMeta(st *SignalStore, j *state.Job, now time.Time) []con
 		st.add(now, KindFailed, j.Project, SignalKey(KindFailed, "", j.Summary), "任务失败："+textfmt.OneLine(j.Summary, 200), ev)
 	}
 	return out
+}
+
+// heldOnPurpose：门都过了，只是门自己要求等人看（Result.Hold，比如改了评判的尺子），用户看过放行的。这是设计好的人工把关，
+// 不算门拦错了。认法：这个任务的门目录里有门都过了的记录（passed-<tree>.json）且带着 Hold，又没再审过——
+// 没再审时，门都过了又要等人的那一次就是放行前的最后一次过门（等人之后只有放行、退回（换新任务）、放弃、再审）。
+// 门判不了、出错、没过之后放行的没有这样的记录，照旧记成 gate-override。
+func (s *Service) heldOnPurpose(j *state.Job) bool {
+	if j.Gate.Reruns > 0 {
+		return false
+	}
+	files, _ := filepath.Glob(filepath.Join(s.Gate.Dir(j.ID), "passed-*.json")) // 模式是固定的，不会报错
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var rec struct {
+			Results []gate.Result `json:"results"`
+		}
+		if json.Unmarshal(b, &rec) == nil && slices.ContainsFunc(rec.Results, func(r gate.Result) bool { return r.Hold != "" }) {
+			return true
+		}
+	}
+	return false
+}
+
+// recheckOverrides 按现在的规则重判记过的放行信号：规则后来改了（比如加了 heldOnPurpose），改之前记下、现在不算的证据去掉，
+// 一份不剩的信号删掉。不然这些按旧规则记的信号还会凑够次数提案，配上 self_project 后复审旧提案也会把它们原样转进待做。
+func (s *Service) recheckOverrides(st *SignalStore) {
+	for i := range st.Signals {
+		sig := &st.Signals[i]
+		if sig.Kind != KindGateOverride {
+			continue
+		}
+		n := len(sig.Evidence)
+		sig.Evidence = slices.DeleteFunc(sig.Evidence, func(ev string) bool {
+			id, ok := evidenceJob(ev)
+			if !ok {
+				return false
+			}
+			j := s.readMeta(filepath.Join(s.JobDir(id), "meta.json"))
+			return j != nil && j.Gate != nil && j.Gate.State == state.GateMerged && s.heldOnPurpose(j)
+		})
+		sig.Seen -= n - len(sig.Evidence)
+	}
+	st.Signals = slices.DeleteFunc(st.Signals, func(sig Signal) bool {
+		return sig.Kind == KindGateOverride && (len(sig.Evidence) == 0 || sig.Seen <= 0)
+	})
+}
+
+// evidenceJob 从「任务 <任务号>（<项目>）」这样的证据里取任务号。
+func evidenceJob(ev string) (string, bool) {
+	rest, ok := strings.CutPrefix(ev, "任务 ")
+	if !ok {
+		return "", false
+	}
+	id, _, ok := strings.Cut(rest, "（")
+	return id, ok && id != ""
 }
 
 // patrolVuln 是巡逻 govulncheck 那一类问题的 check（internal/patrol 的 vuln.go）。

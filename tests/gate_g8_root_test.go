@@ -119,3 +119,64 @@ func TestMorningGateSection(t *testing.T) {
 		}
 	}
 }
+
+// 审查进程撞上 Cloudflare 拦截页（真实 claude 的 result 行，任务 1113-180354-agentq 那种）：真二进制、真 Claude 后端解析。
+// 第一次 403、之后正常：排回去按退避重审，最后按审查结论合并，没标卡住；一直 403：退避用完才卡住，说明是上游错误。
+func TestIntegrationReviewGatewayChallenge(t *testing.T) {
+	const cf = `{"type":"result","subtype":"success","is_error":true,"api_error_status":403,"num_turns":1,"result":"Failed to authenticate. API Error: 403 Attention Required! | Cloudflare","session_id":"s-rv"}` + "\n"
+	title := "修东西 READYMERGE"
+	setup := func(t *testing.T) (*testEnv, string, *Job) {
+		e := newEnv(t, nil)
+		dir := gateRepo(t, e, "demo", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
+		os.WriteFile(filepath.Join(e.home, "fake-review.json"), []byte(cf), 0o644)
+		e.mustRun("tick")
+		j := e.tickUntilGate(title)
+		if j.Gate == nil || j.Gate.State != state.GateQueued || j.Gate.Upstream != 1 || j.Gate.Round != 0 {
+			t.Fatalf("撞上挑战页要排回去退避：%+v %s", j.Gate, j.Summary)
+		}
+		if b := e.backlogOf(dir); strings.Contains(b, "（卡住") {
+			t.Fatalf("没用完退避不标卡住：%s", b)
+		}
+		if _, err := os.Stat(filepath.Join(e.home, ".agentq", "backend-auth", "claude")); err == nil {
+			t.Error("挑战页不是认证失败，不暂停后端")
+		}
+		return e, dir, j
+	}
+	// after：把之后的 agentq 拨到现在之后 d，再 tick 起门、等结果、收结果。
+	after := func(e *testEnv, j *Job, d time.Duration) *Job {
+		e.extra = append(e.extra, "AGENTQ_TEST_NOW="+time.Now().Add(d).Format(time.RFC3339))
+		e.mustRun("tick")
+		e.waitGate(e.jobByTitle(title))
+		return e.jobByTitle(title)
+	}
+	t.Run("恢复", func(t *testing.T) {
+		t.Parallel()
+		e, dir, j := setup(t)
+		os.Remove(filepath.Join(e.home, "fake-review.json")) // 上游好了：审查通过
+		j = after(e, j, 16*time.Minute)
+		if j.Gate.State != state.GateMerged || j.Gate.Upstream != 0 {
+			t.Fatalf("按审查结论合并：%+v %s", j.Gate, j.Summary)
+		}
+		if b := e.backlogOf(dir); !strings.Contains(b, "- [x] 修东西 READYMERGE") || strings.Contains(b, "（卡住") {
+			t.Errorf("%s", b)
+		}
+	})
+	t.Run("一直403", func(t *testing.T) {
+		t.Parallel()
+		e, dir, j := setup(t)
+		j = after(e, j, 16*time.Minute)
+		if j.Gate.State != state.GateQueued || j.Gate.Upstream != 2 {
+			t.Fatalf("第二次还在退避：%+v %s", j.Gate, j.Summary)
+		}
+		j = after(e, j, 16*time.Minute+61*time.Minute)
+		if j.Gate.State != state.GateStuck || j.Gate.Round != 0 {
+			t.Fatalf("退避用完才卡住：%+v %s", j.Gate, j.Summary)
+		}
+		if out := e.mustRun("gate", "report", j.ID); !strings.Contains(out, "上游错误") || !strings.Contains(out, "网关拦截页") {
+			t.Errorf("报告要说明是上游错误：%s", out)
+		}
+		if b := e.backlogOf(dir); !strings.Contains(b, "（卡住") {
+			t.Errorf("%s", b)
+		}
+	})
+}

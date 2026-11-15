@@ -52,7 +52,7 @@ const (
 	maxRebuilds = 3
 	// mergeLockWait：排队等 <项目>-main 锁最多多久。
 	mergeLockWait = 5 * time.Minute
-	// MaxUpstream：上游 5xx 时排回去重跑几次，间隔见 state.TransientBackoff（15 分钟、1 小时）。加上第一次一共调 3 次模型，再不行判不了。不多试：没花钱也要有个头。
+	// MaxUpstream：上游瞬时错误（5xx、网关挑战页）时排回去重跑几次，间隔见 state.TransientBackoff（15 分钟、1 小时）。加上第一次一共调 3 次模型，再不行判不了。不多试：没花钱也要有个头。
 	MaxUpstream = 2
 	// MaxReruns：同一提交用户最多要几次再审。
 	MaxReruns = 2
@@ -66,7 +66,7 @@ const (
 	outFail    = "fail"    // 门没过，或者合并有冲突：退回任务
 	outUnknown = "unknown" // 判不了：不放行，等用户定
 	outWait    = "wait"    // 门过了，主目录挡着：保留结论，下次 tick 重试
-	outDefer   = "defer"   // 撞限、认证：过一会儿重跑
+	outDefer   = "defer"   // 撞限、认证、上游瞬时错误：过一会儿重跑
 	outBypass  = "bypass"  // 分支已经在 main 上，不是引擎合的：没过门
 	outHold    = "hold"    // 门没挡，改错了难撤回或影响面广又没有确定性检查：不合并，等用户拍板
 )
@@ -90,7 +90,7 @@ type Plan struct {
 	Override string `json:"override,omitempty"`
 	// Product：要跑成品门，过了生成交付单。
 	Product bool `json:"product,omitempty"`
-	// Rerun：用户要的再审，不沿用旧结论。Upstream：前面因为上游 5xx 重跑了几次。
+	// Rerun：用户要的再审，不沿用旧结论。Upstream：前面因为上游瞬时错误重跑了几次。
 	Rerun    bool `json:"rerun,omitempty"`
 	Upstream int  `json:"upstream,omitempty"`
 	// Timeout 是每个脚本、每次审查的超时。

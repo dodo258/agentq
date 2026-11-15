@@ -38,6 +38,19 @@ func (a *Service) ReadUsageOn(name string, now time.Time) *backend.UsageInfo {
 	return u
 }
 
+// stopUsageNote：停任务那一刻这个后端记着的额度和后台上限，一行字。只看状态文件里的读数，不为停任务现读。
+func (a *Service) stopUsageNote(st *state.State, name string) string {
+	u, now, pol := st.UsageOf(name), a.Now(), a.Cfg.ForBackend(name).UsagePolicy()
+	lvl, _, why := backend.UsageLevel(u, now, pol)
+	switch lvl {
+	case backend.UsageUnknown:
+		return "额度不知道（" + backend.UsageDescribe(u, now, pol) + "）"
+	case backend.UsageOK:
+		return "没到后台上限（" + backend.UsageDescribe(u, now, pol) + "）"
+	}
+	return "到了后台上限（" + why + "）"
+}
+
 // Usage 返回默认后端的当前额度，见 UsageOn。
 func (a *Service) Usage(st *state.State) *backend.UsageInfo { return a.UsageOn(st, a.Cfg.Backend) }
 

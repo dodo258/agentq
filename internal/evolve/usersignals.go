@@ -21,6 +21,8 @@ import (
 
 // 用户和真实使用里冒出来的问题（会话或用户发现、门和任务记录里看不出来的），都只读已经落盘的数据，不调模型：
 //   - 用户亲手停的任务：任务记录 status=killed（agentq stop 写的；agentq 按信号自动停的记中断，不算）。
+//   - 其中亲手派（Manual）、启动 3 分钟内就被停的，单算一类「刚启动就被停」，一次就写：多半是派活的人（常是 Claude、Codex 会话）
+//     被说明或输出带偏了，派完才发现不对。证据带上谁停的（命令行、Telegram）和停时的额度、后台上限。
 //   - 门卡片上用户点了退回或放弃：门的审计日志 gate/audit.log 的「退回」「放弃」行（卡片和 gate 命令写的都是这一行）。
 //   - 返工：项目 BACKLOG 里出现「验收 <原条目标题> 的意见」（dispatch 的固定写法），按条目范围、原条目范围和提到的合并提交改了的文件归到领域。
 //   - 巡逻报过、当天又自己消失的问题（疑似误报）：信号文件记着上次还在的巡逻问题，这次不在了、首次发现是今天，就算。
@@ -33,11 +35,13 @@ const (
 	KindRework     = "rework"
 	KindPatrolGone = "patrol-gone"
 	KindRetryWait  = "retry-wait"
+	KindQuickStop  = "quick-stop"
 
-	retryWaitLong = 6 * time.Hour
-	auditTail     = 500
-	reworkSeenMax = 500
-	gitShowWait   = 10 * time.Second
+	quickStopWithin = 3 * time.Minute
+	retryWaitLong   = 6 * time.Hour
+	auditTail       = 500
+	reworkSeenMax   = 500
+	gitShowWait     = 10 * time.Second
 )
 
 // hasEvidence：这一类信号里已经有这份证据。
@@ -53,9 +57,13 @@ func jobEvidence(j *state.Job) string {
 	return ev
 }
 
-// absorbStop：用户亲手停的任务。按任务种类归（待做、新项目……），停的原因五花八门，不进 Key。
+// absorbStop：用户亲手停的任务。按任务种类归（待做、新项目……），停的原因五花八门，不进 Key。亲手派、刚启动就停的记成 quick-stop。
 func (s *Service) absorbStop(st *SignalStore, j *state.Job, now time.Time) {
 	if j.Status != state.StatusKilled {
+		return
+	}
+	if quickStop(j) {
+		absorbQuickStop(st, j, now)
 		return
 	}
 	kind := j.Kind
@@ -63,6 +71,24 @@ func (s *Service) absorbStop(st *SignalStore, j *state.Job, now time.Time) {
 		kind = "待做"
 	}
 	st.add(now, KindUserStop, j.Project, SignalKey(KindUserStop, kind, ""), "用户停了"+kind+"任务「"+textfmt.TruncRunes(j.Title, 30)+"」："+textfmt.OneLine(j.Summary, 160), jobEvidence(j))
+}
+
+// quickStop：亲手派的任务，启动后 3 分钟内（含）被用户停了。
+func quickStop(j *state.Job) bool {
+	return j.Manual && j.EndedAt != nil && !j.StartedAt.IsZero() && j.EndedAt.Sub(j.StartedAt) <= quickStopWithin
+}
+
+func absorbQuickStop(st *SignalStore, j *state.Job, now time.Time) {
+	via, usage := j.StopVia, textfmt.OneLine(j.StopUsage, 160)
+	if via == "" {
+		via = "来源没记"
+	}
+	if usage == "" {
+		usage = "额度没记"
+	}
+	after := textfmt.FormatIdle(j.EndedAt.Sub(j.StartedAt))
+	what := "启动 " + after + "后被停（" + via + "），停时" + usage
+	st.add(now, KindQuickStop, j.Project, SignalKey(KindQuickStop, "", ""), "亲手派的「"+textfmt.TruncRunes(j.Title, 30)+"」"+what, jobEvidence(j)+what)
 }
 
 // ---- 门卡片上的决定 ----

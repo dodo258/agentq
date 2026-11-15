@@ -56,7 +56,7 @@ type Result struct {
 	ResetAt time.Time `json:"reset_at,omitzero"`
 	// Auth：Defer 的原因是后端认证失败，tick 要暂停这个后端并通知用户。
 	Auth bool `json:"auth,omitempty"`
-	// Upstream：Defer 的原因是上游 5xx：按 state.TransientBackoff 退避重跑，连续用完才判不了。
+	// Upstream：Defer 的原因是上游瞬时错误（backend.Result.Upstream：5xx、网关挑战页）：按 state.TransientBackoff 退避重跑，连续用完才判不了。
 	Upstream bool `json:"upstream,omitempty"`
 	// Cached：这个 tree 上次的结果，这次没跑，不算次数。
 	Cached bool `json:"cached,omitempty"`
@@ -101,7 +101,7 @@ type Candidate struct {
 	Timeout time.Duration
 	// Fresh：用户要再审一次，不沿用审查结论。
 	Fresh bool
-	// Upstream：前面已经因为上游 5xx 重跑了几次。
+	// Upstream：前面已经因为上游瞬时错误重跑了几次。
 	Upstream int
 	// Prior 是这次已经跑完的门的结果，比如让审查门看到测试门标出的事。
 	Prior []Result

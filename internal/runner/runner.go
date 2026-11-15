@@ -169,7 +169,8 @@ func (a *Service) ManualGateOn(st *state.State, name string) (RunResult, error) 
 }
 
 // StopByID 按 id（或前缀）停任务（调用方拿着 tick.lock）。agentq stop 和 Telegram 的「停 <任务id>」都走这里，都是用户亲手停的。
-func (a *Service) StopByID(st *state.State, id string) (string, error) {
+// via 是从哪儿停的（state.StopViaCLI、StopViaTelegram），和停的那一刻的额度一起记在任务上，自我进化看「刚启动就被停」用。
+func (a *Service) StopByID(st *state.State, id, via string) (string, error) {
 	j, err := st.Find(id)
 	if err != nil {
 		return "", err
@@ -177,6 +178,7 @@ func (a *Service) StopByID(st *state.State, id string) (string, error) {
 	if j.Status != state.StatusRunning {
 		return "", fmt.Errorf("任务 %s 已经%s，不用停", j.ID, state.StatusLabel(j.Status))
 	}
+	j.StopVia, j.StopUsage = via, a.stopUsageNote(st, j.Backend)
 	return a.StopJob(st, j)
 }
 

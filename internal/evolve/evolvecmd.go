@@ -10,7 +10,8 @@ import (
 	"agentq/internal/textfmt"
 )
 
-const evolveUsage = `agentq evolve：自我进化的信号、学到的约束、自己升级的记录
+// EvolveUsage 是 agentq evolve 的详细用法，agentq evolve --help 也用它。
+const EvolveUsage = `agentq evolve：自我进化的信号、学到的约束、自己升级的记录
   agentq evolve signals              看收到的信号、等确认的门拦截、按领域的账和能力缺口、能力清单、提案和自己长大写进待做的条目
   agentq evolve constraints <项目>    看这个项目学到的约束（新任务合同末尾带的就是这些）
   agentq evolve upgrades             看每次演练、升级、留下、回滚的记录和现在的观察期（自己长大和自动更新）
@@ -20,7 +21,7 @@ const evolveUsage = `agentq evolve：自我进化的信号、学到的约束、�
 // CmdEvolve 是命令入口。apply 之外只读，不收集、不写文件、不调模型。
 func (s *Service) CmdEvolve(args []string) error {
 	if len(args) == 0 {
-		fmt.Fprint(s.Out, evolveUsage)
+		fmt.Fprint(s.Out, EvolveUsage)
 		return errors.New("要写子命令")
 	}
 	switch {
@@ -33,7 +34,7 @@ func (s *Service) CmdEvolve(args []string) error {
 	case args[0] == "apply" && len(args) == 1:
 		return s.Apply()
 	}
-	fmt.Fprint(s.Out, evolveUsage)
+	fmt.Fprint(s.Out, EvolveUsage)
 	return fmt.Errorf("不认识的写法：agentq evolve %s", strings.Join(args, " "))
 }
 

@@ -309,8 +309,8 @@ func TestFastStopBypassesQueue(t *testing.T) {
 	tg.msg(1, ownerChat, 11, "停 "+job.ID, "")
 	tg.msg(2, ownerChat, 12, "这条在冷却，要回原因", "")
 	e.mustRun("tick")
-	if j := e.jobByTitle("甲"); j.Status != state.StatusKilled {
-		t.Fatalf("应停了：%+v", j)
+	if j := e.jobByTitle("甲"); j.Status != state.StatusKilled || j.StopVia != state.StopViaTelegram || j.StopUsage == "" {
+		t.Fatalf("应停了，记下是 Telegram 停的和停时额度：%+v", j)
 	}
 	got := strings.Join(tg.texts(), "\n")
 	if !strings.Contains(got, "已停止任务 "+job.ID) || !strings.Contains(got, "这条现在没法交给 claude") {

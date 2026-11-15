@@ -141,6 +141,12 @@ const (
 	StatusInterrupted = "interrupted"
 )
 
+// Job.StopVia 的取值：用户从哪儿停的任务。
+const (
+	StopViaCLI      = "命令行"
+	StopViaTelegram = "Telegram"
+)
+
 // 结束的任务在 state.json 里保留多久（retry_after 和 status 只需要最近的）。
 const KeepEndedJobs = 30 * 24 * time.Hour
 
@@ -204,6 +210,10 @@ type Job struct {
 	BudgetHit bool `json:"budget_hit,omitempty"`
 	// AutoStop：agentq 按信号自动停的（值是信号名，见 internal/runner/budget.go）。不是用户 stop：状态记中断，不用 statusKilled。
 	AutoStop string `json:"auto_stop,omitempty"`
+	// StopVia、StopUsage：用户亲手停的（agentq stop、Telegram「停」）是从哪儿停的（StopViaCLI、StopViaTelegram），和停的那一刻记着的额度、后台上限（一行字）。
+	// 自我进化认「刚启动就被停」用（internal/evolve/usersignals.go）。要停时进程已经自己结束、按结果收尾的也记着（是停的请求从哪儿来）。老记录没有。
+	StopVia   string `json:"stop_via,omitempty"`
+	StopUsage string `json:"stop_usage,omitempty"`
 	// StuckPending：要写进 BACKLOG 的卡住原因，写上就清空；主目录一时提交不了时下次 tick 再写，这期间这一条不接手、不重挑。
 	StuckPending string `json:"stuck_pending,omitempty"`
 	// StuckMarked：agentq 自己写上了卡住标记（见 writeStuckMark）。之后条目又能被挑到，就是用户去掉了标记：不等 retry_after，从记下的分支接着做。

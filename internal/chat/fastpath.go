@@ -162,7 +162,7 @@ func (a *Service) serveStops(s *notify.State, st *state.State, c *telegram.TgCre
 	}
 	s.Inbox = rest // 先摘出来：收尾时可能往收件箱加东西
 	for _, m := range stops {
-		msg, err := a.Runner.StopByID(st, m.StopJob)
+		msg, err := a.Runner.StopByID(st, m.StopJob, state.StopViaTelegram)
 		if err != nil {
 			msg = "没停：" + err.Error()
 		}

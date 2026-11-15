@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 // 自我派活：agentq 自己的信号同一 Key 出现 proposeAt 次以上（漏洞一次）、没提过，写一条有证据的条目。
 // 自己长大开着、找得到 self_project：直接进它的「待做」，接着自动做（selfgrow.go）。
 // 关着时只提案：写进 self_project BACKLOG 的「## 建议」，编号、「做 N」「不做 N」用 suggest 的索引和不做清单；在不做清单里的不再提。
-// 没配（或找不到这个项目）：追加到 ~/.agentq/evolve/proposals.md，当天汇总记一行。
+// 没配（或找不到这个项目）：追加到 ~/.agentq/evolve/proposals.md，当天汇总记一行；配上后复审一次（reproposal.go）。
 const (
 	proposalTitleMax = 60
 	proposalLineMax  = 400
@@ -42,6 +43,7 @@ func makeProposal(sig *Signal) proposal {
 }
 
 // propose 把够次数、没提过的自身信号写成提案。写成了（或在不做清单里、已经提过）才标已提案，写不进的下次再试。
+// 提案能写进 self_project 时，顺带复审以前只写进 proposals.md 的那些（reproposal.go）。
 func (s *Service) propose(st *SignalStore, now time.Time) {
 	var sigs []*Signal
 	for i := range st.Signals {
@@ -51,19 +53,51 @@ func (s *Service) propose(st *SignalStore, now time.Time) {
 		}
 		sigs = append(sigs, sig)
 	}
-	if len(sigs) == 0 {
+	old := s.unreviewedFileLines()
+	if len(sigs) == 0 && len(old) == 0 {
 		return
 	}
-	if s.SelfGrowOn() {
-		if p, ok := s.selfProjectAny(); ok {
-			for _, pr := range s.proposeToTodo(p, sigs, st, now) {
-				pr.sig.Proposed = true
-				st.ProposedKey = append(st.ProposedKey, pr.sig.Key)
-			}
-			return
+	p, todo, ok := s.proposeTarget(len(sigs) > 0)
+	if !ok {
+		if len(sigs) > 0 {
+			s.settle(st, s.proposeToFile(fileProposals(sigs, st), now))
 		}
-		s.Logf("自我进化：self_project %s 不在项目里，提案照旧写", s.Cfg.SelfProject)
+		return
 	}
+	review := s.reviewFileLines(st, old, now)
+	for _, sig := range review.again {
+		if !slices.Contains(sigs, sig) {
+			sigs = append(sigs, sig)
+		}
+	}
+	var done []proposal
+	switch {
+	case len(sigs) == 0:
+	case todo:
+		done = s.proposeToTodo(p, sigs, st, now)
+	default:
+		done = s.proposeToProject(p, fileProposals(sigs, st), now)
+	}
+	s.settle(st, done)
+	where := "「建议」"
+	if todo {
+		where = "待做"
+	}
+	s.markFileLines(review, done, p.Name+" 的"+where, now)
+}
+
+// settle：写成了的标已提案，Key 记一次。
+func (s *Service) settle(st *SignalStore, done []proposal) {
+	for _, pr := range done {
+		pr.sig.Proposed = true
+		if !slices.Contains(st.ProposedKey, pr.sig.Key) {
+			st.ProposedKey = append(st.ProposedKey, pr.sig.Key)
+		}
+	}
+}
+
+// fileProposals 是写进「建议」或 proposals.md 的那几行：能力缺口、撤掉能力有自己的写法。
+func fileProposals(sigs []*Signal, st *SignalStore) []proposal {
 	var props []proposal
 	for _, sig := range sigs {
 		if p, ok := capProposal(sig, st.Fixes[sig.Key]); ok {
@@ -72,14 +106,30 @@ func (s *Service) propose(st *SignalStore, now time.Time) {
 		}
 		props = append(props, makeProposal(sig))
 	}
-	done := s.proposeToProject(props, now)
-	if done == nil {
-		done = s.proposeToFile(props, now)
+	return props
+}
+
+// proposeTarget：提案写到哪。自己长大开着、找得到 self_project（被排除也算）写它的待做（todo 为真）；
+// 否则找得到（没被排除）写它的「建议」；都不行 ok 为假，写 proposals.md。loud 为假时找不到也不记日志（只为复审时）。
+func (s *Service) proposeTarget(loud bool) (p backlog.Project, todo, ok bool) {
+	if s.Cfg.SelfProject == "" {
+		return backlog.Project{}, false, false
 	}
-	for _, p := range done {
-		p.sig.Proposed = true
-		st.ProposedKey = append(st.ProposedKey, p.sig.Key)
+	if s.SelfGrowOn() {
+		if p, ok := s.selfProjectAny(); ok {
+			return p, true, true
+		}
+		if loud {
+			s.Logf("自我进化：self_project %s 不在项目里，提案照旧写", s.Cfg.SelfProject)
+		}
 	}
+	if p, ok := s.selfProject(); ok {
+		return p, false, true
+	}
+	if loud {
+		s.Logf("自我进化：self_project %s 不在项目里（或被排除），提案写进 %s", s.Cfg.SelfProject, s.Tilde(s.ProposalsPath()))
+	}
+	return backlog.Project{}, false, false
 }
 
 // selfProject 找 self_project。没配、找不到、在排除名单里返回 false。
@@ -93,16 +143,11 @@ func (s *Service) selfProject() (backlog.Project, bool) {
 			return p, true
 		}
 	}
-	s.Logf("自我进化：self_project %s 不在项目里（或被排除），提案写进 %s", s.Cfg.SelfProject, s.Tilde(s.ProposalsPath()))
 	return backlog.Project{}, false
 }
 
-// proposeToProject 写进 self_project 的「## 建议」。没配或找不到返回 nil（改写文件）；写不进返回空切片（下次再试）。
-func (s *Service) proposeToProject(props []proposal, now time.Time) []proposal {
-	p, ok := s.selfProject()
-	if !ok {
-		return nil
-	}
+// proposeToProject 写进 self_project 的「## 建议」。写不进返回空切片（下次再试）。
+func (s *Service) proposeToProject(p backlog.Project, props []proposal, now time.Time) []proposal {
 	in := make([]suggest.Proposal, len(props))
 	for i, pr := range props {
 		in[i] = suggest.Proposal{Title: pr.title, Line: pr.line}
@@ -126,7 +171,7 @@ func (s *Service) proposeToProject(props []proposal, now time.Time) []proposal {
 	return out
 }
 
-const proposalsHead = "# agentq 自我进化提案\n\n只提案，不改代码。配置 `self_project` 后提案写进那个项目 BACKLOG 的「## 建议」。\n\n"
+const proposalsHead = "# agentq 自我进化提案\n\n只提案，不改代码。配置 `self_project` 后提案写进那个项目的 BACKLOG（自己长大开着进「待做」，关着进「## 建议」），这里近 14 天还出现过的会转过去一次，其余标「已过时」。\n\n"
 
 // proposeToFile 追加到 proposals.md，当天汇总记一行。写不了返回空切片（下次再试）。
 func (s *Service) proposeToFile(props []proposal, now time.Time) []proposal {

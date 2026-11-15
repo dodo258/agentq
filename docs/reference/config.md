@@ -116,7 +116,7 @@
 
 | 键 | 类型 | 缺键默认 | 作用 |
 | --- | --- | --- | --- |
-| `self_project` | 字符串 | 空 | agentq 源码所在的项目目录名。配了，agentq 自己反复出的问题写进那个项目（`self_grow_enabled` 开着时进「待做」接着做，关着时进「## 建议」等你回「做 N」）；空的只写 `~/.agentq/evolve/proposals.md`。见[自我进化](commands.md#自我进化) |
+| `self_project` | 字符串 | 空 | agentq 源码所在的项目目录名。配了，agentq 自己反复出的问题写进那个项目（`self_grow_enabled` 开着时进「待做」接着做，关着时进「## 建议」等你回「做 N」）；空的只写 `~/.agentq/evolve/proposals.md`，配上后那里近 14 天还出现过的转过去一次。见[自我进化](commands.md#自我进化) |
 | `self_grow_enabled` | 布尔 | `true` | 自己长大：配了 `self_project` 时，自身问题直接进待做接着做，合并过了评测门的修复空闲时用安装引擎升级自己，之后几个任务变差就回滚。关掉和以前一样：只提案、不升级。没配 `self_project` 时开着也不起作用。见[自己长大](commands.md#自己长大) |
 | `auto_update` | 布尔 | `false` | 自动更新：发行版每天最多看一次发布地址，有更新的版本就在空闲时照 `agentq update` 装上（沿用安装时的代理和镜像），之后几个任务变差就回滚、这个版本不再自动装。关着时不联网。源码构建、配了 `self_project` 的机器不管。见[自动更新](commands.md#自动更新) |
 

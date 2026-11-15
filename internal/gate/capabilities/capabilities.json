@@ -1,3 +1,13 @@
 {
-  "capabilities": []
+  "capabilities": [
+    {
+      "name": "backend-delete-guard",
+      "domain": "backend",
+      "knowledge": ["rules/backend-delete.md"],
+      "check": "delete-guard.sh",
+      "cases": ["036-backend-delete-needs-test"],
+      "when": {"changed": ["*.go", "*.rs", "*.py", "*.js", "*.mjs", "*.cjs", "*.ts", "*.rb", "*.java", "*.kt", "*.swift", "*.sh", "*.bash"]},
+      "added": "2026-11-16"
+    }
+  ]
 }

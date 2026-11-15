@@ -51,7 +51,7 @@ func (s *Service) cmdJudge(args []string) error {
 		}
 	}
 	if bin == "" {
-		fmt.Fprint(s.Out, evalUsage)
+		fmt.Fprint(s.Out, EvalUsage)
 		return errors.New("eval judge 要写 --bin：被评判的 agentq")
 	}
 	bin, err := resolveBin(bin)

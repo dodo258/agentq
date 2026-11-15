@@ -69,7 +69,8 @@ type Baseline struct {
 	Scores  []Score   `json:"scores"`
 }
 
-const evalUsage = `agentq eval：评测集，给 agentq 自己打分
+// EvalUsage 是 agentq eval 的详细用法，agentq eval --help 也用它。
+const EvalUsage = `agentq eval：评测集，给 agentq 自己打分
   agentq eval list                         列题；留出集只显示数量
   agentq eval run [题号…] [--fake|--real] [--bin 路径]
       默认只跑不调模型的程序题；--fake 用假 CLI 走完全部题的流程；--real 才调模型（周额度 ≥85% 拒绝）
@@ -90,7 +91,7 @@ func (s *Service) baselinePath() string { return filepath.Join(s.evalDir(), "bas
 // CmdEval 是命令入口。tick 永远不走这里。
 func (s *Service) CmdEval(args []string) error {
 	if len(args) == 0 {
-		fmt.Fprint(s.Out, evalUsage)
+		fmt.Fprint(s.Out, EvalUsage)
 		return errors.New("要写子命令")
 	}
 	rest := args[1:]
@@ -109,7 +110,7 @@ func (s *Service) CmdEval(args []string) error {
 	case "judge":
 		return s.cmdJudge(rest)
 	}
-	fmt.Fprint(s.Out, evalUsage)
+	fmt.Fprint(s.Out, EvalUsage)
 	return fmt.Errorf("不认识的子命令 %q", args[0])
 }
 
@@ -278,7 +279,7 @@ func (s *Service) prepareReal(ctx context.Context, h *harness) error {
 func (s *Service) cmdRun(args []string) error {
 	o, err := parseRunArgs(args)
 	if err != nil {
-		fmt.Fprint(s.Out, evalUsage)
+		fmt.Fprint(s.Out, EvalUsage)
 		return err
 	}
 	public, held, err := s.loadCases()

@@ -205,10 +205,10 @@ func askModel(ctx context.Context, d Deps, c Candidate, be backend.Backend, req 
 		if res.Stop == backend.StopAuth {
 			return ReviewRecord{}, nil, &Result{Outcome: Unknown, Summary: who + "进程认证失败", Defer: "后端 " + be.Name() + " 认证失败，过一会儿重跑；重新登录后就好", Auth: true, Usage: usage}
 		}
-		if res.Failed && backend.TransientStatus(res.HTTPStatus) { // 上游的事，当场重试多半还是一样：退避后整次重跑，次数用完才判不了
-			why := fmt.Sprintf("%s撞上上游错误（HTTP %d）", who, res.HTTPStatus)
+		if res.Failed && res.Upstream() { // 上游的事（5xx、网关挑战页），当场重试多半还是一样：退避后整次重跑，次数用完才判不了
+			why := fmt.Sprintf("%s撞上上游错误（%s）", who, upstreamWhat(res))
 			if c.Upstream >= MaxUpstream {
-				return ReviewRecord{}, nil, &Result{Outcome: Unknown, Summary: fmt.Sprintf("%s，连续 %d 次，判不了", why, c.Upstream+1), Usage: usage}
+				return ReviewRecord{}, nil, &Result{Outcome: Unknown, Summary: fmt.Sprintf("%s，连续 %d 次，判不了；是上游的问题，不是审查结论，上游好了再审一次", why, c.Upstream+1), Usage: usage}
 			}
 			return ReviewRecord{}, nil, &Result{Outcome: Unknown, Summary: why, Defer: why + "，过一会儿重跑", Upstream: true, Usage: usage}
 		}
@@ -220,6 +220,14 @@ func askModel(ctx context.Context, d Deps, c Candidate, be backend.Backend, req 
 		return rec, usage, nil
 	}
 	return ReviewRecord{}, nil, &Result{Outcome: Unknown, Summary: who + "没给出合格的结论，重试过一次：" + why, Evidence: []string{"输出 " + d.Tilde(filepath.Join(c.WorkDir, prefix+"-2"))}, Usage: usage}
+}
+
+// upstreamWhat：报告里怎么说这次上游错误。
+func upstreamWhat(res backend.Result) string {
+	if res.GatewayChallenge {
+		return fmt.Sprintf("HTTP %d，网关拦截页", res.HTTPStatus)
+	}
+	return fmt.Sprintf("HTTP %d", res.HTTPStatus)
 }
 
 // findReview 找能沿用的结论：同一个 tree，或者任务改动没变（patch-id 相同，main 动过）。

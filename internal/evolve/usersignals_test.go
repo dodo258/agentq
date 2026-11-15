@@ -314,3 +314,43 @@ func TestCmdSignalsShowsUserSignals(t *testing.T) {
 		}
 	}
 }
+
+// 亲手派的任务启动 3 分钟内（含）被停：单算 quick-stop，一次就写提案，证据带谁停的和停时额度；超过 3 分钟、不是亲手派的照旧是 user-stop。
+func TestQuickStopSignal(t *testing.T) {
+	r := newSigRig(t, nil)
+	start := r.now.Add(-time.Hour)
+	stopped := func(id string, manual bool, after time.Duration, via, usage string) {
+		end := start.Add(after)
+		r.meta(&state.Job{ID: id, Project: "web", Title: "条目 " + id, Manual: manual, Status: state.StatusKilled, StartedAt: start, EndedAt: &end,
+			Summary: "被 agentq stop 停止（SIGTERM）", StopVia: via, StopUsage: usage})
+	}
+	stopped("q1", true, 7*time.Second, state.StopViaCLI, "到了后台上限（会话 72%，后台上限 70%）")
+	stopped("q2", true, quickStopWithin, state.StopViaTelegram, "没到后台上限（会话 40%）")
+	stopped("q3", true, quickStopWithin+time.Second, state.StopViaCLI, "")
+	stopped("q4", false, 10*time.Second, state.StopViaCLI, "")
+	r.collect()
+	quick := r.signals(KindQuickStop)
+	if len(quick) != 1 || quick[0].Seen != 2 || !quick[0].Proposed {
+		t.Fatalf("7 秒、正好 3 分钟各算一次，一次就提案：%+v", quick)
+	}
+	ev := strings.Join(quick[0].Evidence, "\n")
+	for _, want := range []string{"任务 q1（web）「条目 q1」启动 7 秒后被停（命令行），停时到了后台上限（会话 72%，后台上限 70%）", "任务 q2（web）「条目 q2」启动 3 分钟后被停（Telegram），停时没到后台上限"} {
+		if !strings.Contains(ev, want) {
+			t.Errorf("证据缺「%s」：\n%s", want, ev)
+		}
+	}
+	if stops := r.signals(KindUserStop); len(stops) != 1 || stops[0].Seen != 2 || strings.Contains(strings.Join(stops[0].Evidence, " "), "q1") {
+		t.Fatalf("超过 3 分钟、不是亲手派的才是 user-stop：%+v", stops)
+	}
+	if p := r.proposals(); !strings.Contains(p, "亲手派的任务刚启动就被停") || !strings.Contains(p, "被停（命令行）") {
+		t.Fatalf("提案：\n%s", p)
+	}
+	r.unchanged()
+	// 老记录没记来源和额度：照样算，写明没记
+	stopped("q5", true, time.Minute, "", "")
+	r.collect()
+	if quick = r.signals(KindQuickStop); quick[0].Seen != 3 || !strings.Contains(quick[0].Summary, "被停（来源没记），停时额度没记") {
+		t.Fatalf("%+v", quick)
+	}
+	r.noCLI()
+}

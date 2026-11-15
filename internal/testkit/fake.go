@@ -184,6 +184,7 @@ func (f *Fake) Parse(job backend.JobRef, exit backend.Exit) backend.Result {
 			res.HaveTerminal = true
 			res.Failed = !e.OK
 			res.Text, res.Structured, res.Turns, res.HTTPStatus = e.Text, e.Structured, e.Turns, e.Status
+			res.GatewayChallenge = !e.OK && backend.GatewayChallenge(e.Text) // 报错结束时 text 当 API 错误正文，和真后端一样只看错误通道
 			if e.Auth {
 				res.Stop = backend.StopAuth
 			}

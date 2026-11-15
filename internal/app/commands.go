@@ -327,7 +327,7 @@ func (a *App) CmdStop(id string) error {
 	if err != nil {
 		return fmt.Errorf("状态文件读不出：%w", err)
 	}
-	msg, err := a.Runner.StopByID(st, id)
+	msg, err := a.Runner.StopByID(st, id, state.StopViaCLI)
 	if err != nil {
 		return err
 	}

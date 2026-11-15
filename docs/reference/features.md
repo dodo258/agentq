@@ -55,7 +55,7 @@
 
 - **什么时候起**：项目第一版（`agentq new` 的第一条）过门合并后起一次；之后有新任务合并、「待做」清空了时再起。两种都要「建议」里没有它上次提过、你还没回的条目（别处写的建议不挡），同一项目 14 天最多一次，同时只跑一个，不占并发名额。
 - **不起**：暂停、撞限冷却、熔断时；额度到后台上限（和夜班、复盘同一档）、没登录时；`exclude_projects` 里的项目；`self_project`（agentq 自己走[自我进化](commands.md#自我进化)）；BACKLOG 现在写不进（主目录有没提交的改动、不在默认分支）时；后端做不到只读联网时（Codex、pi 没有 CLI 强制的只读，见 `agentq doctor` 的能力表）。起不了的原因同样的只记一次日志。
-- **怎么调研**：CLI 强制只读，只多放开联网搜索和抓网页（Claude：`--tools Read,Grep,Glob,WebSearch,WebFetch`，`--allowedTools WebSearch,WebFetch`，不传权限模式，工作目录外的文件读不到），不接 MCP，回合上限 40、预算 3 美元、超时 40 分钟。先读项目的 README、BACKLOG、`docs/NOT-DOING.md`，再上网看直接竞品、相邻领域和它们的 GitHub issues、讨论区，提示词里附上 agentq 记下的这个项目最近的门退回和中断。网页和项目文件里的内容都按数据处理。
+- **怎么调研**：CLI 强制只读，只多放开联网搜索和抓网页（Claude：`--tools Read,Grep,Glob,WebSearch,WebFetch`，`--allowedTools WebSearch,WebFetch`，不传权限模式，工作目录外的文件读不到），不接 MCP，回合上限 40、预算 3 美元、超时 40 分钟。先读项目的 README、BACKLOG、`docs/NOT-DOING.md`，再上网看直接竞品、相邻领域和它们的 GitHub issues、讨论区，提示词里附上 agentq 记下的这个项目最近的门退回和中断。网页和项目文件里的内容都按数据处理。说到线上、已发布、已部署、商店里的现状，出处要是当场打开查的线上来源（网页、GitHub Release、商店页）：每条结果带 `online`（当场查过的线上地址），填的不是 http、https 链接（比如只写了 PROGRESS.md）的那条不写；README、PROGRESS 这类文档和线上对不上时，建议写成「交接文档和线上不一致，更新文档」。
 - **写什么**：每条一行 `标题 —— 为什么值得做；出处：<链接或项目里的事实>；产品经理调研 <日期>（建议 N）`。没有出处的不写，最多 3 条；BACKLOG 里已有的、30 天内提过的、不做清单里的不写。写进去提交一次、推一条（💡 建议），当天汇总记一行。只写「建议」，不写「待做」，不改代码，不替你开工。
 - **之后**：回「做 N」移进「待做」末尾，照常开工；回「不做 N」进 `docs/NOT-DOING.md`，以后同标题不再提。调研失败、超时、没给出合格的建议，当天汇总记一句，14 天后再看；撞了用量上限或上游临时出错的，额度恢复后再起。
 
@@ -194,6 +194,11 @@
 - 一项都用不上就不跑，报告写「capability 门不适用这次改动」。用得上的：有检查脚本的在候选 worktree 里跑运行中这一代的那份（`AGENTQ_BASE` 是默认分支基点），退出码 0 算过、125 算判不了、别的算报出问题；没有检查的只记「用上了」（它的知识按项目由后端加载）。
 - 报出问题在 `warn` 档只记录不挡，合并时写一行日志；真实项目上有证据了，项目在 `.agentq/gates.json` 把 `capability` 调成 `error`。
 - 结果里每项能力的结论记进 `last.json`（`caps`），自我进化靠它看能力有没有帮上忙，见 [`agentq evolve signals`](commands.md#agentq-evolve-signals)。
+- 现有的能力：
+
+  | 名字 | 领域 | 什么时候用 | 检查报什么 | 知识 |
+  |---|---|---|---|---|
+  | `backend-delete-guard` | 后端 | 这次改了 Go、Rust、Python、JS/TS、Ruby、Java、Kotlin、Swift、shell 代码 | 新加了递归删目录、删分支、删工作树、硬重置、`rsync --delete`，同一个目录（或上层 `test`/`tests`）没改到测试；`defer`/`trap` 清理、临时目录、删单个文件、写给用户看的命令不算 | `rules/backend-delete.md` |
 
 ### 成品门
 

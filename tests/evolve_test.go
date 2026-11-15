@@ -74,7 +74,7 @@ func TestIntegrationLearnedConstraints(t *testing.T) {
 	waitExit(t, j.PID, 20*time.Second)
 }
 
-// 用户亲手 stop、门卡片上退回、验收后返工：tick 只读本机数据收成信号（不调模型），agentq evolve signals 看得到种类、领域和证据。
+// 亲手派了马上 stop（刚启动就被停）、门卡片上退回、验收后返工：tick 只读本机数据收成信号（不调模型），agentq evolve signals 看得到种类、领域和证据。
 func TestIntegrationUserSignals(t *testing.T) {
 	e := newEnv(t, map[string]any{"paused": true})
 	gateRepo(t, e, "demo", "- [ ] 甲 —— SLEEP=120", "- [ ] 验收 首页改版 的意见 —— 按钮错位（范围：web/）")
@@ -93,7 +93,7 @@ func TestIntegrationUserSignals(t *testing.T) {
 		t.Fatalf("收信号不该调模型：%d → %d", calls, n)
 	}
 	sig := e.mustRun("evolve", "signals")
-	for _, want := range []string{"user-stop", "证据：任务 " + j.ID + "（demo）「甲」", "user-decide", "退回了「旧活」", "rework", "前端返工", "项目 demo「验收 首页改版 的意见」"} {
+	for _, want := range []string{"quick-stop", "证据：任务 " + j.ID + "（demo）「甲」启动 ", "被停（命令行）", "user-decide", "退回了「旧活」", "rework", "前端返工", "项目 demo「验收 首页改版 的意见」"} {
 		if !strings.Contains(sig, want) {
 			t.Errorf("evolve signals 缺 %q：\n%s", want, sig)
 		}

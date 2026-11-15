@@ -174,7 +174,7 @@ func TestStopFindsLostClaude(t *testing.T) {
 			now := time.Now().Add(later)
 			a.Now = func() time.Time { return now }
 			pid := lostShellPids(t, log)[0]
-			msg, err := a.Runner.StopByID(st, st.Jobs[0].ID)
+			msg, err := a.Runner.StopByID(st, st.Jobs[0].ID, state.StopViaCLI)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -203,7 +203,7 @@ func TestStopCannotLookUpSaysSo(t *testing.T) {
 	a, log, st, breakPS := lostRunningJob(t)
 	id := st.Jobs[0].ID
 	breakPS(errors.New("ps 坏了"))
-	msg, err := a.Runner.StopByID(st, id)
+	msg, err := a.Runner.StopByID(st, id, state.StopViaCLI)
 	if err == nil {
 		t.Fatalf("没停成不能算成功：%s", msg)
 	}
@@ -225,7 +225,7 @@ func TestStopCannotLookUpSaysSo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Runner.StopByID(st, id); err != nil {
+	if _, err := a.Runner.StopByID(st, id, state.StopViaCLI); err != nil {
 		t.Fatal(err)
 	}
 	if live := liveClaudes(t, log); len(live) != 0 {
@@ -241,7 +241,7 @@ func TestStopNoProcessAtAll(t *testing.T) {
 	j := lostJob(a, "1104-000011-alpha")
 	j.StartedAt = a.Now() // 还在报 pid 的时限之内
 	st := &State{Jobs: []*Job{j}}
-	msg, err := a.Runner.StopByID(st, j.ID)
+	msg, err := a.Runner.StopByID(st, j.ID, state.StopViaCLI)
 	if err != nil || j.Status != state.StatusKilled || !strings.Contains(msg, "已停止") {
 		t.Fatalf("%q %v %s", msg, err, fmtJobs(st))
 	}
