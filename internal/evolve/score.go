@@ -229,12 +229,41 @@ const (
 	noteTime   = time.Minute
 )
 
-// Comparison 是这次和基线比的结果。Worse 非空就是变差了，不看平均。
+// Comparison 是这次和基线比的结果。Worse 非空就是变差了，不看平均。Unjudged 是 Worse 里这次判不了的题（只写题名）。
+// Env 是因为环境问题（取依赖、网络）判不了的题和原因：不进 Worse，评测门按判不了处理，过一会儿重跑。
 type Comparison struct {
 	Worse    []string
+	Unjudged []string
+	Env      []string
 	Better   []string
 	Notes    []string
 	Compared int
+}
+
+// envCauses：判不了的原因里出现这些字样，就是这台机器当时取不到依赖、连不上网，和被评判的 agentq 改得好不好无关。
+// 只收网络和取依赖这一类：别的判不了（布置不起现场、超时）可能是候选改坏了，照旧算变差。
+var envCauses = []struct{ marker, cause string }{
+	{"fetch locked third party", "取锁定的第三方依赖失败"},
+	{"could not resolve host", "域名解析不了"},
+	{"temporary failure in name resolution", "域名解析不了"},
+	{"no such host", "域名解析不了"},
+	{"network is unreachable", "网络不通"},
+	{"failed to connect to", "连不上远端"},
+	{"connection timed out", "连接超时"},
+	{"connection reset by peer", "连接被重置"},
+	{"tls handshake timeout", "连接超时"},
+	{"i/o timeout", "连接超时"},
+}
+
+// envCause 认判不了的原因是不是环境问题，是就返回给人看的原因，不是返回空。
+func envCause(errText string) string {
+	low := strings.ToLower(errText)
+	for _, c := range envCauses {
+		if strings.Contains(low, c.marker) {
+			return c.cause
+		}
+	}
+	return ""
 }
 
 // Compare 比这次和基线。只比同一题、同一种跑法。任一题、任一领域变差都进 Worse；平均涨了也一样。
@@ -270,12 +299,18 @@ func Compare(base, cur []Score) Comparison {
 			cmp.Notes = append(cmp.Notes, label(c)+"：基线那次判不了，没比")
 			continue
 		}
+		if cause := envCause(c.Error); cause != "" { // 原因是固定的几种说法，留出题也能写
+			cmp.Env = append(cmp.Env, label(c)+"（"+cause+"）")
+			cmp.Notes = append(cmp.Notes, label(c)+"：环境问题，这次判不了（"+cause+"），不算变差，没比")
+			continue
+		}
 		if c.Error != "" {
 			why := "：" + textfmt.OneLine(c.Error, 200)
 			if c.Held {
 				why = "" // 原因里可能有题目内容
 			}
 			cmp.Worse = append(cmp.Worse, label(c)+"：这次判不了"+why)
+			cmp.Unjudged = append(cmp.Unjudged, label(c))
 			cmp.Compared++
 			continue
 		}

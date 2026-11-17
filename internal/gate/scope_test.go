@@ -161,7 +161,7 @@ func TestScopeGateNextRound(t *testing.T) {
 	})
 }
 
-// 到上限转用户：原因写成计划的问题，卡住标记、报告、通知都带这句。
+// 到上限转用户：原因写成计划的问题，卡住标记、报告带这句，卡片用人话说。
 func TestRoundLimitSaysPlanProblem(t *testing.T) {
 	f := newFix(t, fixBacklog)
 	f.a.Cfg.NotifyEnabled = true
@@ -191,8 +191,9 @@ func TestRoundLimitSaysPlanProblem(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := false
-	for _, n := range s.Pending {
-		if n.Key == "gate:"+j.ID && strings.Contains(strings.Join(n.Lines, "\n"), want) {
+	for _, n := range s.Pending { // 卡片用人话说：改了几轮还没过、多半是条目的问题，建议放弃重拆
+		lines := strings.Join(n.Lines, "\n")
+		if n.Key == "gate:"+j.ID && strings.Contains(lines, fmt.Sprintf("改了 %d 轮还没过", gate.MaxRounds)) && strings.Contains(lines, "拆小") && n.Card.Recommend == "C" {
 			found = true
 		}
 	}

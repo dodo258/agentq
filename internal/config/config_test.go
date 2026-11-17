@@ -318,3 +318,31 @@ func TestModelDefaults(t *testing.T) {
 		t.Error(ModelLabel(""))
 	}
 }
+
+// release_repos 写 项目目录名 到 owner/repo，site_project 写目录名；默认都不写进新配置。
+func TestReleaseConfigValidate(t *testing.T) {
+	for _, repos := range []map[string]string{{"a/b": "o/r"}, {"": "o/r"}, {"p": "o"}, {"p": "o/r/x"}, {"p": "https://github.com/o/r"}} {
+		c := Default()
+		c.ReleaseRepos = repos
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "release_repos") {
+			t.Errorf("%v 应拒绝：%v", repos, err)
+		}
+	}
+	c := Default()
+	c.SiteProject = "a/b"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "site_project") {
+		t.Errorf("site_project 带路径应拒绝：%v", err)
+	}
+	c = Default()
+	c.ReleaseRepos, c.SiteProject = map[string]string{"agentq": "someone/agentq.go"}, "site"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "c.json")
+	if err := Save(p, Default()); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(p); err != nil || strings.Contains(string(b), "release_repos") || strings.Contains(string(b), "site_project") {
+		t.Fatalf("%v %s", err, b)
+	}
+}

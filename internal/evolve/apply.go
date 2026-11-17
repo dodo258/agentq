@@ -105,7 +105,7 @@ func (s *Service) Apply() error {
 // 先等到空闲、tick 放开锁（安装引擎自己也拿 tick.lock，只等 90 秒）。不设超时、不杀：安装事务第一步就卸载服务，
 // 中途被杀会留下没做完的事务、服务全停；安装引擎里联网、探测这些步骤自己有超时。
 func (s *Service) installer(bin string, args ...string) error {
-	if st, err := state.Load(s.StatePath()); err != nil || activeJobs(st) > 0 {
+	if st, err := state.Load(s.StatePath()); err != nil || st.ActiveJobs() > 0 {
 		return errNotIdle
 	}
 	lock, err := fsx.AcquireLock(s.LockPath(), tickWait)
@@ -137,7 +137,7 @@ func lastBytes(b []byte, n int) string {
 // busy：状态文件里有在跑、在过门的任务。读不了当有（不动安装）。
 func (s *Service) busy() bool {
 	st, err := state.Load(s.StatePath())
-	return err != nil || activeJobs(st) > 0
+	return err != nil || st.ActiveJobs() > 0
 }
 
 // readGeneration 读安装记录里现在是哪一代。

@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -20,9 +19,9 @@ import (
 )
 
 // 用户和真实使用里冒出来的问题（会话或用户发现、门和任务记录里看不出来的），都只读已经落盘的数据，不调模型：
-//   - 用户亲手停的任务：任务记录 status=killed（agentq stop 写的；agentq 按信号自动停的记中断，不算）。
-//   - 其中亲手派（Manual）、启动 3 分钟内就被停的，单算一类「刚启动就被停」，一次就写：多半是派活的人（常是 Claude、Codex 会话）
-//     被说明或输出带偏了，派完才发现不对。证据带上谁停的（命令行、Telegram）和停时的额度、后台上限。
+//   - 用户亲手停的任务（user-stop）；其中亲手派、启动 3 分钟内就被停的单算一类「刚启动就被停」（quick-stop），一次就写：
+//     多半是派活的人（常是 Claude、Codex 会话）被说明或输出带偏了，派完才发现不对。证据带上谁停的（命令行、Telegram）和停时的额度、
+//     后台上限。停了以后很快亲手重派的是改需求，不算。怎么判见下面「按任务记录判的信号」一节的 jobCounts。
 //   - 门卡片上用户点了退回或放弃：门的审计日志 gate/audit.log 的「退回」「放弃」行（卡片和 gate 命令写的都是这一行）。
 //   - 返工：项目 BACKLOG 里出现「验收 <原条目标题> 的意见」（dispatch 的固定写法），按条目范围、原条目范围和提到的合并提交改了的文件归到领域。
 //   - 巡逻报过、当天又自己消失的问题（疑似误报）：信号文件记着上次还在的巡逻问题，这次不在了、首次发现是今天，就算。
@@ -38,6 +37,7 @@ const (
 	KindQuickStop  = "quick-stop"
 
 	quickStopWithin = 3 * time.Minute
+	redoWithin      = 30 * time.Minute
 	retryWaitLong   = 6 * time.Hour
 	auditTail       = 500
 	reworkSeenMax   = 500
@@ -57,25 +57,101 @@ func jobEvidence(j *state.Job) string {
 	return ev
 }
 
-// absorbStop：用户亲手停的任务。按任务种类归（待做、新项目……），停的原因五花八门，不进 Key。亲手派、刚启动就停的记成 quick-stop。
+// ---- 按任务记录判的信号：亲手停、刚启动就停、放行 ----
+//
+// 这三类说的都是用户对一个任务做了什么，算不算 agentq 的问题，要看这个任务（有时还有它之后的任务）的记录。
+// 以前每类在第一次读到任务记录时各判一次，判法散在几处；规则后来改了（刚启动就停单算、改了尺子等人放行不算、停了重派不算），
+// 按旧规则记下的证据还留着凑次数提案，只有放行一类会重判。现在只有 jobCounts 一处规则：收的时候用它，之后每次收信号
+// 用它重判记过的证据（recheckJobSignals），规则再改也不用另写重判。
+var jobKinds = []string{KindUserStop, KindQuickStop, KindGateOverride}
+
+// jobCounts：这份任务记录按现在的规则算不算 kind 这一类。
+//   - quick-stop：亲手派、启动 3 分钟内（含）被用户停了。
+//   - user-stop：用户停了（agentq 按信号自动停的记中断，不算），不是刚启动就停的，停了以后 30 分钟内同一个项目也没有亲手再派
+//     （改了条目重派、换一条替它是改需求，不是 agentq 的问题）。停了还不到 30 分钟又没重派的看不出来，见 jobUndecided。
+//   - gate-override：合并了、是用户放行的，不是门都过了只因为改了尺子等人看（heldOnPurpose）。
+func (s *Service) jobCounts(kind string, j *state.Job) bool {
+	switch kind {
+	case KindQuickStop:
+		return j.Status == state.StatusKilled && quickStop(j)
+	case KindUserStop:
+		return j.Status == state.StatusKilled && !quickStop(j) && s.stopRedo(j) == nil
+	case KindGateOverride:
+		g := j.Gate
+		return g != nil && g.State == state.GateMerged && (g.Passes > 0 || g.Override != "") && !s.heldOnPurpose(j)
+	}
+	return false
+}
+
+// jobUndecided：用户停的（刚启动就停的不算），停了还不到 30 分钟、也还没重派，看不出是不是改需求：这次先不收这份任务记录。
+func (s *Service) jobUndecided(j *state.Job, now time.Time) bool {
+	return s.jobCounts(KindUserStop, j) && j.EndedAt != nil && now.Sub(*j.EndedAt) < redoWithin
+}
+
+// recheckJobSignals 按 jobCounts 重判记过的按任务记录判的信号：现在不算这一类的证据去掉，一份不剩的信号删掉。
+// 放行信号还按 overrideRegrouped 去掉按放行理由凑的证据。
+// 任务记录已经清掉、读不了的证据照留：没法重判。只去不加：按旧规则记在别处的证据不挪过来，免得把早处理过的事再提一次。
+func (s *Service) recheckJobSignals(st *SignalStore) {
+	for i := range st.Signals {
+		sig := &st.Signals[i]
+		if !slices.Contains(jobKinds, sig.Kind) {
+			continue
+		}
+		n := len(sig.Evidence)
+		sig.Evidence = slices.DeleteFunc(sig.Evidence, func(ev string) bool {
+			id, ok := evidenceJob(ev)
+			if !ok {
+				return false
+			}
+			j := s.readMeta(filepath.Join(s.JobDir(id), "meta.json"))
+			return j != nil && (!s.jobCounts(sig.Kind, j) || sig.Kind == KindGateOverride && s.overrideRegrouped(sig.Key, j))
+		})
+		sig.Seen -= n - len(sig.Evidence)
+	}
+	st.Signals = slices.DeleteFunc(st.Signals, func(sig Signal) bool {
+		return slices.Contains(jobKinds, sig.Kind) && (len(sig.Evidence) == 0 || sig.Seen <= 0)
+	})
+}
+
+// overrideRegrouped：这条放行证据当时按放行理由归的类，现在认得出门停在哪、归到别处了（overrideStop）。只去不挪，理由同上。
+func (s *Service) overrideRegrouped(key string, j *state.Job) bool {
+	name, why := s.overrideStop(j)
+	return key == SignalKey(KindGateOverride, "", j.Gate.Override) && key != SignalKey(KindGateOverride, name, why)
+}
+
+// absorbStop：用户亲手停的任务。按任务种类归（待做、新项目……），停的原因五花八门，不进 Key。
 func (s *Service) absorbStop(st *SignalStore, j *state.Job, now time.Time) {
-	if j.Status != state.StatusKilled {
-		return
-	}
-	if quickStop(j) {
+	switch {
+	case s.jobCounts(KindQuickStop, j):
 		absorbQuickStop(st, j, now)
-		return
+	case s.jobCounts(KindUserStop, j):
+		kind := j.Kind
+		if kind == "" {
+			kind = "待做"
+		}
+		st.add(now, KindUserStop, j.Project, SignalKey(KindUserStop, kind, ""), "用户停了"+kind+"任务「"+textfmt.TruncRunes(j.Title, 30)+"」："+textfmt.OneLine(j.Summary, 160), jobEvidence(j))
 	}
-	kind := j.Kind
-	if kind == "" {
-		kind = "待做"
-	}
-	st.add(now, KindUserStop, j.Project, SignalKey(KindUserStop, kind, ""), "用户停了"+kind+"任务「"+textfmt.TruncRunes(j.Title, 30)+"」："+textfmt.OneLine(j.Summary, 160), jobEvidence(j))
 }
 
 // quickStop：亲手派的任务，启动后 3 分钟内（含）被用户停了。
 func quickStop(j *state.Job) bool {
 	return j.Manual && j.EndedAt != nil && !j.StartedAt.IsZero() && j.EndedAt.Sub(j.StartedAt) <= quickStopWithin
+}
+
+// stopRedo：用户停了这个任务之后 30 分钟内（含），同一个项目亲手派的任务；没有是 nil。后来自动接的不算：那是空出位子 tick 挑的下一条。
+func (s *Service) stopRedo(j *state.Job) *state.Job {
+	if j.EndedAt == nil {
+		return nil
+	}
+	metas, _ := filepath.Glob(filepath.Join(s.DataDir(), "jobs", "*", "meta.json")) // 模式是固定的，不会报错
+	for _, p := range metas {
+		n := s.readMeta(p)
+		if n != nil && n.ID != j.ID && n.Project == j.Project && n.Manual &&
+			n.StartedAt.After(*j.EndedAt) && n.StartedAt.Sub(*j.EndedAt) <= redoWithin {
+			return n
+		}
+	}
+	return nil
 }
 
 func absorbQuickStop(st *SignalStore, j *state.Job, now time.Time) {
@@ -263,72 +339,6 @@ func changedFiles(ctx context.Context, dir, commit string) []string {
 	return strings.Fields(string(out))
 }
 
-// 领域：前端、后端、设计、文档由路径归，路径归不了的不算。和英文名的对照见 capability.go 的 domainTable。
-const (
-	DomainFrontend = "前端"
-	DomainBackend  = "后端"
-	DomainDesign   = "设计"
-	DomainDocs     = "文档"
-	domainUnknown  = "未分类"
-)
-
-var (
-	frontendDirs = []string{"web", "frontend", "ui", "components", "pages", "views", "public", "styles", "site"}
-	backendDirs  = []string{"server", "backend", "api", "internal", "cmd", "pkg", "db", "migrations"}
-	domainWords  = map[string]*regexp.Regexp{
-		DomainDesign:   regexp.MustCompile(`设计|配色|视觉|排版|字体|图标|好看|难看|丑`),
-		DomainFrontend: regexp.MustCompile(`界面|页面|前端|按钮|布局|样式|动画|交互|(?i:\bui\b)`),
-		DomainBackend:  regexp.MustCompile(`后端|接口|数据库|服务端|(?i:\bapi\b)`),
-	}
-)
-
-// pathDomain：一个文件或目录（范围写的前缀）归哪个领域，归不了是空。
-func pathDomain(p string) string {
-	p = strings.ToLower(strings.TrimSuffix(filepath.ToSlash(p), "/"))
-	if p == "" {
-		return ""
-	}
-	parts := strings.Split(p, "/")
-	hasDir := func(names []string) bool {
-		return slices.ContainsFunc(parts, func(seg string) bool { return slices.Contains(names, seg) })
-	}
-	base := parts[len(parts)-1]
-	switch path.Ext(base) {
-	case ".svg", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".fig", ".sketch", ".icns":
-		return DomainDesign
-	case ".tsx", ".jsx", ".vue", ".svelte", ".astro", ".css", ".scss", ".sass", ".less", ".html":
-		return DomainFrontend
-	case ".go", ".rs", ".py", ".java", ".rb", ".php", ".sql", ".proto":
-		return DomainBackend
-	case ".swift", ".kt":
-		if strings.Contains(base, "view") || hasDir([]string{"views", "ui", "screens"}) {
-			return DomainFrontend
-		}
-		return ""
-	case ".ts", ".js", ".mjs":
-		if hasDir(backendDirs) {
-			return DomainBackend
-		}
-		return DomainFrontend
-	case ".md":
-		if hasDir([]string{"design"}) || strings.HasPrefix(base, "design") {
-			return DomainDesign
-		}
-		return DomainDocs
-	}
-	switch { // 范围写的目录
-	case hasDir([]string{"design"}):
-		return DomainDesign
-	case hasDir(frontendDirs):
-		return DomainFrontend
-	case hasDir(backendDirs):
-		return DomainBackend
-	case hasDir([]string{"docs"}):
-		return DomainDocs
-	}
-	return ""
-}
-
 // absorbRework：一条返工意见，每个领域记一次（E7 按领域看返工）。
 func (s *Service) absorbRework(st *SignalStore, r reworkItem, now time.Time) {
 	ev := "项目 " + r.project + "「验收 " + textfmt.TruncRunes(r.title, 30) + " 的意见」"
@@ -354,7 +364,7 @@ func (s *Service) absorbRework(st *SignalStore, r reworkItem, now time.Time) {
 func (s *Service) scanPatrolGone(st *SignalStore, issues []patrolIssue, now time.Time, in *scanned) {
 	var open []patrolIssue
 	for _, is := range issues {
-		if selfPatrol(is.Check) {
+		if selfPatrol(is) {
 			open = append(open, is)
 		}
 	}

@@ -76,6 +76,7 @@ const EvalUsage = `agentq eval：评测集，给 agentq 自己打分
       默认只跑不调模型的程序题；--fake 用假 CLI 走完全部题的流程；--real 才调模型（周额度 ≥85% 拒绝）
       --bin：评判这个 agentq，不写就评判自己
   agentq eval baseline [run]               把一次结果并进基线（默认最近一次）
+  agentq eval baseline --fill              用这一代跑基线里还没有的题（--fake），只把通过的补进去，已有的分不动
   agentq eval compare [run]                和基线比（默认最近一次）；任一题或任一领域变差就报，退出码 1
   agentq eval judge --bin 路径 [--out 文件] [题号…] [--new-dir 目录 --new 题号… --domain 领域…]
       评测门用：拿这一代的题和判分评判别的 agentq（--fake 跑法，含程序题），和基线比，结论写进 --out；
@@ -578,6 +579,12 @@ func oneOptional(args []string, what string) (string, error) {
 }
 
 func (s *Service) cmdBaseline(args []string) error {
+	if slices.Contains(args, "--fill") {
+		if len(args) != 1 {
+			return errors.New("eval baseline --fill 不带别的参数")
+		}
+		return s.cmdFill()
+	}
 	name, err := oneOptional(args, "baseline")
 	if err != nil {
 		return err

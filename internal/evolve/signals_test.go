@@ -369,6 +369,49 @@ func TestPatrolSignals(t *testing.T) {
 	}
 }
 
+// 10-12 夜班任务因为后端登录失败了，08:32 巡逻又报缺夜班报告：缺报告是任务失败的后果（caused_by），不另算 agentq 的问题；
+// 夜班做完了却没写报告的照算。
+func TestPatrolCausedByNotSelf(t *testing.T) {
+	r := newSigRig(t, nil)
+	t1 := r.now.Add(-time.Hour)
+	r.write(filepath.Join(r.s.DataDir(), "patrol.json"), map[string]any{"issues": []map[string]any{
+		{"fingerprint": "job:1012-010008-夜班", "check": "job", "title": "任务失败：夜班「agentq night」", "first_seen": t1},
+		{"fingerprint": "report:night:2026-10-12", "check": "report", "title": "08:00 后还没有当天的夜班报告", "first_seen": t1, "caused_by": "job:1012-010008-夜班"},
+	}})
+	r.collect()
+	if st, _ := r.s.LoadSignals(); len(st.Signals) != 0 {
+		t.Fatalf("任务失败引起的缺报告不该算 agentq 的问题：%+v", st.Signals)
+	}
+	r.now = r.now.Add(2 * time.Hour)
+	r.write(filepath.Join(r.s.DataDir(), "patrol.json"), map[string]any{"issues": []map[string]any{
+		{"fingerprint": "report:night:2026-10-13", "check": "report", "title": "08:00 后还没有当天的夜班报告", "first_seen": r.now},
+	}})
+	r.collect()
+	if st, _ := r.s.LoadSignals(); len(st.Signals) != 1 || st.Signals[0].Kind != KindPatrol {
+		t.Fatalf("不是别的问题的后果的缺报告照算：%+v", st.Signals)
+	}
+}
+
+// 当天备份报告里的失败是外部备份脚本的事（同 autopush），连着几天都失败也不算 agentq 的问题；同一批里 agentq 自己的问题照记。
+func TestPatrolSignalsSkipBackupReport(t *testing.T) {
+	r := newSigRig(t, nil)
+	t1 := r.now.Add(-25 * time.Hour)
+	t2 := r.now.Add(-time.Hour)
+	r.write(filepath.Join(r.s.DataDir(), "patrol.json"), map[string]any{"issues": []map[string]any{
+		{"fingerprint": "backup:2026-11-14", "check": "backup", "title": "今天的备份有 1 个仓库推送失败", "first_seen": t1},
+		{"fingerprint": "backup:2026-11-15", "check": "backup", "title": "今天的备份有 1 个仓库推送失败", "first_seen": t2},
+		{"fingerprint": "report:review:2026-11-15", "check": "report", "title": "08:00 后还没有今天的早报", "first_seen": t2},
+	}})
+	r.collect()
+	st, _ := r.s.LoadSignals()
+	if len(st.Signals) != 1 || st.Signals[0].Kind != KindPatrol || !strings.Contains(st.Signals[0].Summary, "早报") {
+		t.Fatalf("只该记早报那一条：%+v", st.Signals)
+	}
+	if b, _ := os.ReadFile(r.s.ProposalsPath()); strings.Contains(string(b), "备份") {
+		t.Fatalf("备份失败不该写成 agentq 的提案：%s", b)
+	}
+}
+
 // 信号文件坏了：命令报错；收集时备份坏文件、从空的开始，不卡住以后每个 tick。
 func TestCollectBadSignalsFile(t *testing.T) {
 	r := newSigRig(t, nil)

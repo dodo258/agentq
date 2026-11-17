@@ -70,7 +70,7 @@ func (a *Service) CheckDirtyBacklogs(now time.Time, fail func(prefix, note strin
 	return out
 }
 
-// checkLaunchd：launchctl list 里前缀是 launchdPrefix 的服务，上次退出码不是 0 的报出来，证据带它日志的末尾；
+// checkLaunchd：launchctl list 里前缀是 launchdPrefix 的服务，上次退出码不是 0 的报出来（备份脚本的失败除外，归备份报告那一项），证据带它日志的末尾；
 // agentq 装着时，开关打开的夜班、复盘定点服务不在列表里也报。
 func (a *Service) checkLaunchd(r *PatrolReport, fail func(prefix, note string)) []PatrolIssue {
 	m := a.Service.Svc()
@@ -89,6 +89,16 @@ func (a *Service) checkLaunchd(r *PatrolReport, fail func(prefix, note string)) 
 			continue
 		}
 		pid, code, label := s.Pid, s.Code, s.Label
+		var tail string
+		if code != "0" && code != "-" {
+			tail = m.LogTail(label)
+			// 备份脚本有仓库没推上时退出码是 1，同一次失败当天的备份报告（checkBackupReport）已经报了；手动重跑修好后
+			// 报告会更新，launchd 的退出码要等下次定点运行才变。交给备份那一项，不在这里重报，也不当成在列表里
+			// （之前报过的悄悄去掉，不写「已恢复」）。
+			if code == "1" && backupSummaryRe.MatchString(tail) {
+				continue
+			}
+		}
 		loaded[label] = true
 		if label == a.Service.ListenLabel() {
 			listenPID = pid
@@ -104,11 +114,11 @@ func (a *Service) checkLaunchd(r *PatrolReport, fail func(prefix, note string)) 
 			ev += "，现在在跑（pid " + pid + "）"
 		}
 		evs := []string{ev}
-		if t := m.LogTail(label); t != "" {
-			evs = append(evs, t)
+		if tail != "" {
+			evs = append(evs, tail)
 		}
 		res = append(res, PatrolIssue{
-			Fingerprint: "launchd:" + label, Check: "launchd", Anomaly: true, // 不带退出码：从 1 变成 2 不算恢复再出问题
+			Fingerprint: "launchd:" + label, Check: "launchd", // 不带退出码：从 1 变成 2 不算恢复再出问题
 			Title:    w.Name + " 服务 " + label + " 上次退出码 " + code,
 			Evidence: evs,
 			Action:   "没自动处理：按日志查原因；修好后它下次运行退出码为 0，巡逻就记为已恢复",
@@ -120,14 +130,14 @@ func (a *Service) checkLaunchd(r *PatrolReport, fail func(prefix, note string)) 
 		switch {
 		case !loaded[label]:
 			res = append(res, PatrolIssue{
-				Fingerprint: "launchd:" + label + ":missing", Check: "launchd", Anomaly: true,
+				Fingerprint: "launchd:" + label + ":missing", Check: "launchd",
 				Title:    "Telegram 监听 " + label + " 没装上",
 				Evidence: []string{w.List + " 里有 " + a.Service.ServiceLabel() + "，没有 " + label + "，而 Telegram 配好了；现在靠 tick 每 5 分钟兜底收消息"},
 				Action:   "没自动处理：在终端执行 " + a.Service.ServiceInstallCommand() + " 装上（可重复执行）",
 			})
 		case listenPID == "-":
 			res = append(res, PatrolIssue{
-				Fingerprint: "launchd:" + label + ":down", Check: "launchd", Anomaly: true,
+				Fingerprint: "launchd:" + label + ":down", Check: "launchd",
 				Title:    "Telegram 监听 " + label + " 没在跑",
 				Evidence: []string{w.List + "：" + label + " 没有 pid（" + w.KeepAlive + " 没把它拉起来）；现在靠 tick 每 5 分钟兜底收消息"},
 				Action:   "没自动处理：看 ~/.agentq/launchd.log 里「监听：」开头的几行，再执行 " + a.Service.ServiceInstallCommand() + " 重新装上",
@@ -139,7 +149,7 @@ func (a *Service) checkLaunchd(r *PatrolReport, fail func(prefix, note string)) 
 			r := config.Routines[kind]
 			if label := a.Service.RoutineLabel(kind); r.Enabled(a.Cfg) && !loaded[label] {
 				res = append(res, PatrolIssue{
-					Fingerprint: "launchd:" + label + ":missing", Check: "launchd", Anomaly: true,
+					Fingerprint: "launchd:" + label + ":missing", Check: "launchd",
 					Title:    r.Name + "的定点服务 " + label + " 没装上",
 					Evidence: []string{w.List + " 里有 " + a.Service.ServiceLabel() + "，没有 " + label + "，而 " + r.Key + "=true"},
 					Action:   "没自动处理：在终端执行 " + a.Service.ServiceInstallCommand() + " 重新装上（可重复执行）",
@@ -230,7 +240,7 @@ func (a *Service) checkAutopush(now time.Time, r *PatrolReport, fail func(prefix
 			name = filepath.Base(filepath.Dir(repo))
 		}
 		res = append(res, PatrolIssue{
-			Fingerprint: fp(repo, rf.start), Check: "autopush", Anomaly: true,
+			Fingerprint: fp(repo, rf.start), Check: "autopush",
 			Title:    "自动备份推送失败：" + name,
 			Evidence: []string{fmt.Sprintf("%s 里 %s 起连续 %d 次 FAIL，之后还没推成功，最后一次：%s", path, textfmt.WhenCN(rf.start), rf.n, textfmt.OneLine(rf.last, 200))},
 			Action:   "没自动处理：每天 05:30 的定时备份会再推一次，仍失败会写在当天的 *-backup.md",
@@ -242,6 +252,7 @@ func (a *Service) checkAutopush(now time.Time, r *PatrolReport, fail func(prefix
 // 备份脚本（~/.claude/scripts/backup-push.sh）的固定写法：第一行「…，**N 个失败**」，失败的仓库一行「- 名字：**推送失败**：报错」。
 var (
 	backupFailRe     = regexp.MustCompile(`\*\*(\d+) 个失败\*\*`)
+	backupSummaryRe  = regexp.MustCompile(`备份：\d+ 个仓库已推到`) // 脚本最后打印的那行总结，服务日志里看得到
 	backupFailLineRe = regexp.MustCompile(`^- .+：\*\*推送失败\*\*`)
 )
 
@@ -269,7 +280,7 @@ func (a *Service) checkBackupReport(now time.Time, fail func(prefix, note string
 		}
 	}
 	return []PatrolIssue{{
-		Fingerprint: "backup:" + day, Check: "backup", Anomaly: true,
+		Fingerprint: "backup:" + day, Check: "backup",
 		Title:    "今天的备份有 " + m[1] + " 个仓库推送失败",
 		Evidence: evs,
 		Action:   "没自动处理：明天 05:30 会再推一次；急的话手动执行 ~/.claude/scripts/backup-push.sh",
@@ -297,7 +308,7 @@ func (a *Service) CheckJobs(st *state.State, now time.Time) []PatrolIssue {
 				continue
 			}
 			res = append(res, PatrolIssue{
-				Fingerprint: "stall:" + j.ID, Check: "stall", Anomaly: !a.Backlog.Excluded(j.Project), quiet: true,
+				Fingerprint: "stall:" + j.ID, Check: "stall", excluded: a.Backlog.Excluded(j.Project),
 				Title: "任务疑似卡住：" + name,
 				Evidence: []string{fmt.Sprintf("任务 %s 已运行 %s，会话记录 %s 没增长（超过 %s 算卡住），pid %d",
 					j.ID, now.Sub(j.StartedAt).Round(time.Minute), textfmt.FormatIdle(idle), textfmt.FormatDuration(a.Cfg.StallAfter.Duration), j.PID)},
@@ -310,7 +321,7 @@ func (a *Service) CheckJobs(st *state.State, now time.Time) []PatrolIssue {
 			continue
 		}
 		is := PatrolIssue{
-			Fingerprint: "job:" + j.ID, Check: "job", Anomaly: !a.Backlog.Excluded(j.Project),
+			Fingerprint: "job:" + j.ID, Check: "job", excluded: a.Backlog.Excluded(j.Project),
 			Title: "任务" + state.StatusLabel(j.Status) + "：" + name,
 			Evidence: []string{fmt.Sprintf("任务 %s，%s 启动，%s 结束：%s", j.ID, textfmt.WhenCN(j.StartedAt),
 				textfmt.WhenCN(*j.EndedAt), textfmt.OneLine(j.Summary, 200)), "详情：agentq logs " + j.ID},
@@ -322,7 +333,7 @@ func (a *Service) CheckJobs(st *state.State, now time.Time) []PatrolIssue {
 		}
 		res = append(res, is)
 	}
-	return res
+	return settleAll(res, nil)
 }
 
 // endedUnfinished：最近 patrolWindow 里失败、超时、中断，又没有别的路接着处理的任务（撞用量上限、等着或已经续跑、
@@ -427,7 +438,7 @@ func (a *Service) checkUsage(st *state.State, now time.Time) []PatrolIssue {
 		}
 	}
 	return []PatrolIssue{{
-		Fingerprint: fp, Check: "usage", quiet: true,
+		Fingerprint: fp, Check: "usage",
 		Title:    "订阅额度到了后台上限：" + why,
 		Evidence: []string{"额度：" + backend.UsageDescribe(u, now, a.Cfg.UsagePolicy()) + "（" + textfmt.WhenCN(u.CheckedAt) + " 读取）"},
 		Action:   backend.UsageGateNote(lvl, until, why),
@@ -435,7 +446,7 @@ func (a *Service) checkUsage(st *state.State, now time.Time) []PatrolIssue {
 }
 
 // CheckReports：patrolReportHour 点以后，开关打开的复盘还没写当天早报（<日期>.md）、夜班还没写报告（<日期>-night.md）。
-// 正在跑的不报；今天到点时开关还关着的不报。
+// 正在跑的不报；今天到点时开关还关着的不报。今天这一种的最后一个任务没做完（失败、超时、中断）时，缺报告是它的后果，记 CausedBy。
 func (a *Service) CheckReports(st *state.State, now time.Time) []PatrolIssue {
 	if now.Hour() < patrolReportHour {
 		return nil
@@ -467,6 +478,10 @@ func (a *Service) CheckReports(st *state.State, now time.Time) []PatrolIssue {
 		}
 		evs := []string{fmt.Sprintf("%s 不存在（%s 查）", path, now.Format("15:04"))}
 		action := fmt.Sprintf("没自动处理：要补就在终端执行 agentq %s", x.kind)
+		causedBy := ""
+		if last != nil && last.Status != state.StatusDone { // 任务失败、超时、中断了，缺报告是它的后果，任务那一类会报
+			causedBy = "job:" + last.ID
+		}
 		if last != nil {
 			evs = append(evs, fmt.Sprintf("今天的%s任务 %s %s：%s", r.Name, last.ID, state.StatusLabel(last.Status), textfmt.OneLine(last.Summary, 150)))
 			action = "没自动处理：原因看 agentq logs " + last.ID + "；要补就在终端执行 agentq " + x.kind
@@ -474,13 +489,13 @@ func (a *Service) CheckReports(st *state.State, now time.Time) []PatrolIssue {
 			evs = append(evs, fmt.Sprintf("今天没有%s任务的记录（%s 每天 %s 叫醒，看 %s）", r.Name, a.Service.Svc().Words().Name, r.At(), a.LaunchdLogPath()))
 		}
 		res = append(res, PatrolIssue{
-			Fingerprint: "report:" + x.kind + ":" + day, Check: "report", Anomaly: true,
+			Fingerprint: "report:" + x.kind + ":" + day, Check: "report", CausedBy: causedBy,
 			Title:    fmt.Sprintf("%02d:00 后还没有当天的%s", patrolReportHour, x.what),
 			Evidence: evs,
 			Action:   action,
 		})
 	}
-	return res
+	return settleAll(res, nil)
 }
 
 // checkDecisions：各项目 BACKLOG「等用户决定」里的条目（「- [ ]」开头），指纹按标题算，条目一直在就只报一次。
@@ -515,7 +530,7 @@ func (a *Service) checkDisk(fail func(prefix, note string)) []PatrolIssue {
 	}
 	gb := func(n uint64) string { return strconv.FormatFloat(float64(n)/(1<<30), 'f', 1, 64) }
 	return []PatrolIssue{{
-		Fingerprint: "disk", Check: "disk", Anomaly: true,
+		Fingerprint: "disk", Check: "disk",
 		Title:    "磁盘剩余不到 " + strconv.Itoa(patrolDiskMin>>30) + " GB",
 		Evidence: []string{a.Home + " 所在磁盘剩余 " + gb(free) + " GB（共 " + gb(total) + " GB）"},
 		Action:   "没自动处理：清理不用的大文件（Xcode 的 DerivedData、旧模拟器和归档常占很多）",

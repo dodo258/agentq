@@ -32,6 +32,7 @@
 | `retention_days` | 整数 | `90` | 任务记录这些运行数据留多少天，tick 每天清一次。`0` 表示不删。见[运行数据](files.md) |
 | `discuss_enabled` | 布尔 | `true` | 标了 `（大方向）` 的条目和 `agentq new` 开工前问一次。关掉就都按默认直接开工。见[大方向商量](features.md#大方向商量) |
 | `pm_enabled` | 布尔 | `true` | 项目第一版合并后、之后做完一批待做时，起一个只读联网的调研任务，写 1–3 条下一步进「## 建议」，同一项目 14 天最多一次。见[产品经理调研](features.md#产品经理调研) |
+| `suggest_auto_after` | 时长 | `"24h"` | 「## 建议」里的条目写进去这么久还没回「做 N」「不做 N」，tick 就照「做 N」移进「待做」末尾并推一条，一个项目一次 tick 最多 1 条。`"0"` 表示一直等你回。见[建议](features.md#建议) |
 | `backend` | 字符串 | 不写就是 `claude` | 用哪个 CLI 后端。写了不认识的名字不回退：任务不启动，`agentq status`、`agentq doctor` 说明。能力表用 `agentq doctor` 看，接新后端见[这里](../backends.md) |
 | `project_backends` | 对象 | 空 | 按项目换后端，键是项目目录名。放用户配置，不放项目仓库。续跑用任务原来的后端，不跟随之后的配置 |
 | `backends` | 对象 | 空 | 每个后端自己的配置，键是后端名，值可以有 `path`、`model`、`effort`、`permission`。顶层的 `model`、`effort`、`permission_mode` 只归默认后端，别的后端只看这里；空的不传，跟随 CLI。`permission` 和 `permission_mode` 的合法值由后端声明。默认后端不是 Claude，或项目用了默认以外的后端时，权限空着或是 `default` 任务不起，`status` 和 `doctor` 会说要写什么 |
@@ -116,8 +117,10 @@
 
 | 键 | 类型 | 缺键默认 | 作用 |
 | --- | --- | --- | --- |
-| `self_project` | 字符串 | 空 | agentq 源码所在的项目目录名。配了，agentq 自己反复出的问题写进那个项目（`self_grow_enabled` 开着时进「待做」接着做，关着时进「## 建议」等你回「做 N」）；空的只写 `~/.agentq/evolve/proposals.md`，配上后那里近 14 天还出现过的转过去一次。见[自我进化](commands.md#自我进化) |
+| `self_project` | 字符串 | 空 | agentq 源码所在的项目目录名。配了，agentq 自己反复出的问题写进那个项目（`self_grow_enabled` 开着时进「待做」接着做，关着时进「## 建议」等你回「做 N」）；空的只写 `~/.agentq/evolve/proposals.md`，配上后那里近 14 天还出现过的转过去一次。它的任务排最后：别的项目还有没卡住的待做、或有开发任务在跑、在过门时不起它的（`agentq run` 点名的照常）。见[自我进化](commands.md#自我进化) |
 | `self_grow_enabled` | 布尔 | `true` | 自己长大：配了 `self_project` 时，自身问题直接进待做接着做，合并过了评测门的修复空闲时用安装引擎升级自己，之后几个任务变差就回滚。关掉和以前一样：只提案、不升级。没配 `self_project` 时开着也不起作用。见[自己长大](commands.md#自己长大) |
+| `release_repos` | 对象 | 空 | 自动发版：键是项目目录名，值是公开仓 `owner/repo`。只认这台机器的配置，项目文件里写了规则也要在这里登记才发（别人 clone 了带规则的仓库不会替作者发版）；登记了就算你点名，`exclude_projects` 里的也发。见[自动发版](features.md#自动发版) |
+| `site_project` | 字符串 | 空 | 官网项目的目录名。`self_project` 发了新版本后往它的「待做」写一条「对齐新版本」；空的不写。见[自动发版](features.md#自动发版) |
 | `auto_update` | 布尔 | `false` | 自动更新：发行版每天最多看一次发布地址，有更新的版本就在空闲时照 `agentq update` 装上（沿用安装时的代理和镜像），之后几个任务变差就回滚、这个版本不再自动装。关着时不联网。源码构建、配了 `self_project` 的机器不管。见[自动更新](commands.md#自动更新) |
 
 ## 不在配置文件里的设置

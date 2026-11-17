@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"agentq/internal/fsx"
 	"agentq/internal/gate"
+	"agentq/internal/state"
 	"agentq/internal/testkit"
 )
 
@@ -218,5 +220,75 @@ func TestEvalGateNewCaseAndFixNeedsCase(t *testing.T) {
 	j = f.claim("做事", "agent/x", map[string]string{"go.mod": "module agentq\n\ngo 1.22\n"}, fixReady)
 	if res := f.run(j); res.Outcome != "merged" {
 		t.Fatalf("只升 Go 版本、依赖的修复不要求加题：%+v", res)
+	}
+}
+
+// 变差的全是这次没跑起来的题：照旧挡（档位不变），结果标上 Unjudged，卡片按检查出故障说；混着真答错的就不标。
+func TestEvalGateUnjudgedMarked(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		v    gate.EvalVerdict
+		want bool
+	}{
+		{"只有没跑起来的", gate.EvalVerdict{Cases: 8, Baseline: true, Compared: 8, Worse: []string{"001-impl-go：这次判不了：agentq setup 退出码 1"}, Unjudged: []string{"001-impl-go"}}, true},
+		{"还有真答错的", gate.EvalVerdict{Cases: 8, Baseline: true, Compared: 8, Worse: []string{"001-impl-go：这次判不了", "002-fix-revert：分数 100 → 0"}, Unjudged: []string{"001-impl-go"}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFix(t, fixBacklog)
+			f.selfRepo(&tc.v)
+			j := f.claim("做事", "agent/x", map[string]string{"internal/textfmt/a.go": "package textfmt\n"}, ready("agent/x"))
+			res := f.run(j)
+			r := evalResult(t, res)
+			if res.Outcome != "fail" || r.Outcome != gate.Fail || r.Unjudged != tc.want {
+				t.Fatalf("%+v", r)
+			}
+		})
+	}
+}
+
+// 只有环境问题（取依赖、网络）判不了、没有变差：不退回，和上游瞬时错误一样过一会儿重跑；次数用完判不了，等人看，不算退回轮数。
+// 混着真变差的照旧退回，报告里写清哪题是环境问题。
+func TestEvalGateEnvDefers(t *testing.T) {
+	env := gate.EvalVerdict{Cases: 8, Baseline: true, Compared: 7, Failed: []string{"001-impl-go"}, Env: []string{"001-impl-go（取锁定的第三方依赖失败）"}}
+	f := newFix(t, fixBacklog)
+	f.selfRepo(&env)
+	j := f.claim("做事", "agent/x", map[string]string{"internal/textfmt/a.go": "package textfmt\n"}, ready("agent/x"))
+	base := f.a.Now()
+	res := f.run(j)
+	r := evalResult(t, res)
+	if res.Outcome != "defer" || r.Outcome != gate.Unknown || !r.Upstream || !r.Unjudged || !strings.Contains(r.Defer, "环境问题") || !strings.Contains(r.Summary, "不是改动变差") {
+		t.Fatalf("环境问题不算变差，过一会儿重跑：%+v", r)
+	}
+	if !strings.Contains(strings.Join(r.Evidence, "\n"), "环境问题：判不了，不算变差：001-impl-go（取锁定的第三方依赖失败）") {
+		t.Errorf("报告要写清是环境问题：%v", r.Evidence)
+	}
+	f.collect(j, res)
+	if j.Gate.State != state.GateQueued || j.Gate.Upstream != 1 || j.Gate.Round != 0 {
+		t.Fatalf("排回去重跑，不算退回：%+v", j.Gate)
+	}
+	if d := j.Gate.NotBefore.Sub(base); d < 14*time.Minute || d > 16*time.Minute {
+		t.Errorf("第一次隔 15 分钟：%s", d)
+	}
+
+	j.Gate.Upstream = gate.MaxUpstream
+	res = f.run(j)
+	r = evalResult(t, res)
+	if res.Outcome != "unknown" || r.Defer != "" || !r.Unjudged || !strings.Contains(r.Summary, "环境问题") || !strings.Contains(r.Summary, "agentq gate rerun") {
+		t.Fatalf("重跑次数用完判不了：%+v", r)
+	}
+	f.collect(j, res)
+	if j.Gate.State != state.GateStuck || j.Gate.Round != 0 {
+		t.Fatalf("判不了等人看，不算退回轮数：%+v", j.Gate)
+	}
+
+	f = newFix(t, fixBacklog)
+	worse := env
+	worse.Worse = []string{"007-install-existing-skill：分数 100 → 0"}
+	f.selfRepo(&worse)
+	j = f.claim("做事", "agent/x", map[string]string{"internal/textfmt/a.go": "package textfmt\n"}, ready("agent/x"))
+	res = f.run(j)
+	r = evalResult(t, res)
+	if res.Outcome != "fail" || r.Outcome != gate.Fail || r.Defer != "" || r.Unjudged || !strings.Contains(r.Summary, "007-install-existing-skill") {
+		t.Fatalf("真变差照旧退回：%+v", r)
 	}
 }

@@ -179,6 +179,7 @@ On a new install these features are off and only run once you turn on their swit
 | **Review** | `review_enabled` | Reviews recent commits and failed tasks and writes the morning report at 06:30 every day |
 | **Patrol** | `patrol_enabled` | Checks services, backups, stuck tasks, quota and disk every hour, and starts one read-only analysis when something new goes wrong |
 | **Auto update** | `auto_update` | A release installed with the one-line script checks for a new version at most once a day and installs it when no task is running; if things get worse afterwards it rolls back to the previous generation and won't auto-install that version again. See the [command reference](docs/reference/commands.md#自动更新) (in Chinese) |
+| **Auto release** | `release_repos` | For public projects you maintain: when `CHANGELOG.md` has unreleased entries, the public repo's CI is green, the last release is at least 7 days old and no task is running, it runs the project's own `.agentq/release` to publish a new version, checks the docs first and sends one message when done. See the [feature reference](docs/reference/features.md#自动发版) (in Chinese) |
 
 ## Support
 

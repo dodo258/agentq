@@ -13,12 +13,12 @@ import (
 	"agentq/internal/textfmt"
 )
 
-// notifyPatrol：新发现、没自动处理的问题推给用户（合成一条「巡逻发现」）。「等用户决定」由 tick 的 watchDecisions 推，
-// 额度由读额度时推，基础设施类由看门狗推，这里不重复。
+// notifyPatrol：新发现、该推的问题推给用户（合成一条「巡逻发现」），推哪些见 policy.go。
 func (a *Service) notifyPatrol(r *PatrolReport) {
 	var list []notify.Notice
+	open := openSet(r.New, r.Old)
 	for _, is := range r.New {
-		if is.Check == "decide" || is.Check == "usage" || is.infra() || is.handled {
+		if !is.pushed(open) {
 			continue
 		}
 		n := notify.Notice{Cat: "patrol", Key: "patrol:" + is.Fingerprint, Text: is.Title, JobID: is.jobID}

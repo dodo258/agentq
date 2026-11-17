@@ -505,5 +505,5 @@ func (a *Service) write(p backlog.Project, r *Record) {
 	}
 	a.Logf("产品经理：%s 写了 %d 条下一步进「建议」", p.Name, len(written))
 	a.Notify.Notify(notify.Notice{Cat: "suggest", Key: "pm:" + p.Name + ":" + day.Format("20060102"),
-		Text: fmt.Sprintf("%s：产品经理调研了同类，写了 %d 条下一步进「建议」", p.Name, len(written)), Lines: suggest.SuggestNotice(written)})
+		Text: fmt.Sprintf("%s：产品经理调研了同类，写了 %d 条下一步进「建议」", p.Name, len(written)), Lines: a.Suggest.SuggestNotice(written)})
 }

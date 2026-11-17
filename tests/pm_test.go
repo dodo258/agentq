@@ -218,8 +218,8 @@ func TestPMSkippedProjects(t *testing.T) {
 	e.atNoon()
 	ex := gateRepo(t, e, "ex", "- [ ] 排除的 READYMERGE —— BRANCH=agent/t-x FILE=x.txt")
 	gateRepo(t, e, "me", "- [ ] 自己的 READYMERGE —— BRANCH=agent/t-m FILE=m.txt")
+	e.mustRun("tick") // 先起 self_project 的：别的项目有任务在跑时它要排后面
 	e.mustRun("run", "ex", "排除的")
-	e.mustRun("tick")
 	for _, title := range []string{"排除的 READYMERGE", "自己的 READYMERGE"} {
 		waitExit(t, e.jobByTitle(title).PID, 20*time.Second)
 	}

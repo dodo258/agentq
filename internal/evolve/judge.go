@@ -87,8 +87,12 @@ func (s *Service) cmdJudge(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	fmt.Fprintf(s.Out, "评判 %s：%d 题（%s），题目和判分取自运行中这一代，调模型：否\n", s.Tilde(bin), len(cases), countKinds(cases))
-	scores, err := s.runCases(ctx, s.newHarness(bin, ModeFake), cases)
+	h := s.newHarness(bin, ModeFake)
+	scores, err := s.runCases(ctx, h, cases)
 	if err != nil {
+		return err
+	}
+	if scores, err = s.retryEnv(ctx, h, cases, scores); err != nil {
 		return err
 	}
 	var before, after []Score
@@ -130,8 +134,35 @@ func (s *Service) cmdJudge(args []string) error {
 		fmt.Fprintf(s.Out, "变差了 %d 处\n", len(v.Worse))
 		return env.ErrLogged
 	}
+	if len(v.Env) > 0 {
+		fmt.Fprintf(s.Out, "没有变差；%d 题因为环境问题判不了（%s），评测门按判不了处理，过一会儿重跑\n", len(v.Env), strings.Join(v.Env, "、"))
+		return nil
+	}
 	fmt.Fprintln(s.Out, "没有变差")
 	return nil
+}
+
+// retryEnv 把因为环境问题（取依赖、网络）判不了的题重跑一次：多半是一时的网络抖动，真改坏了重跑照样判不了或答错。
+func (s *Service) retryEnv(ctx context.Context, h *harness, cases []Case, scores []Score) ([]Score, error) {
+	var again []Case
+	var at []int
+	for i, sc := range scores {
+		if envCause(sc.Error) != "" {
+			again, at = append(again, cases[i]), append(at, i)
+		}
+	}
+	if len(again) == 0 {
+		return scores, nil
+	}
+	fmt.Fprintf(s.Out, "%d 题因为环境问题判不了，重跑一次\n", len(again))
+	redo, err := s.runCases(ctx, h, again)
+	if err != nil {
+		return nil, err
+	}
+	for k, i := range at {
+		scores[i] = redo[k]
+	}
+	return scores, nil
 }
 
 // judgeVerdict 把这次的分和基线比成评测门的结论。基线里一题都比不上（比如只有 --real 的分）和没有基线一样：只记录。留出题只写编号。
@@ -159,7 +190,7 @@ func judgeVerdict(base []Score, hasBase bool, scores []Score) gate.EvalVerdict {
 		return v
 	}
 	v.Baseline, v.Compared = true, cmp.Compared
-	v.Worse, v.Better, v.Notes = cmp.Worse, cmp.Better, cmp.Notes
+	v.Worse, v.Unjudged, v.Env, v.Better, v.Notes = cmp.Worse, cmp.Unjudged, cmp.Env, cmp.Better, cmp.Notes
 	return v
 }
 

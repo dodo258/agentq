@@ -245,6 +245,15 @@ func writeIfMissing(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
+// lastRunes 留 s 的最后 n 个字：setup 先打一大段自检，出错原因在最后一行，从头截会把它截掉。
+func lastRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return "…" + string(r[len(r)-n:])
+}
+
 // runCase 跑一道题。判不了的（现场都布置不起来）记 Error，不当答错。
 func (h *harness) runCase(ctx context.Context, c Case) Score {
 	base := Score{Case: c.ID, Domain: c.Domain, Kind: c.Kind, Held: c.Held, Mode: h.mode, Model: h.model}
@@ -366,7 +375,7 @@ func (h *harness) install(ctx context.Context, sb *sandbox, c Case) error {
 		return err
 	}
 	if exit != 0 {
-		return fmt.Errorf("agentq setup 退出码 %d：%s", exit, textfmt.OneLine(tail, 400))
+		return fmt.Errorf("agentq setup 退出码 %d：%s", exit, lastRunes(textfmt.OneLine(tail, logTail), 400))
 	}
 	if h.mode == ModeFake && exists(c.fsys, fakeHomeDir) {
 		if err := copyCase(c.fsys, fakeHomeDir, sb.home); err != nil {

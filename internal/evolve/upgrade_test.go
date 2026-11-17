@@ -137,6 +137,45 @@ func TestUpgradeObservation(t *testing.T) {
 			t.Fatalf("每个都退回一轮要回滚：%+v", pl)
 		}
 	})
+	// 11-16 升到 dev-40466ea 后的三个任务都是升级前被门退回、升级后接着做的（带过来 3、1、1 轮），被当成这一代退回的回滚了。
+	chain := func(u *upRig, fp string, starts []time.Time, last *state.GateRecord) {
+		for i, s := range starts {
+			end := s.Add(10 * time.Minute)
+			j := &state.Job{ID: fp + string(rune('0'+i)), Project: "web", Title: fp, Fingerprint: fp, Status: state.StatusInterrupted,
+				StartedAt: s, EndedAt: &end, GateRound: i, Gate: &state.GateRecord{State: state.GateReturned, Round: i}}
+			if i == len(starts)-1 {
+				j.Status, j.Gate = state.StatusDone, last
+				last.Round = i
+			}
+			u.st.Jobs = append(u.st.Jobs, j)
+		}
+	}
+	merged := func() *state.GateRecord { return &state.GateRecord{State: state.GateMerged} }
+	t.Run("升级前退回的轮数不算进观察期", func(t *testing.T) {
+		u, at := setup(t)
+		chain(u, "fa", []time.Time{at.Add(-4 * time.Hour), at.Add(-3 * time.Hour), at.Add(-2 * time.Hour), at.Add(time.Hour)}, merged())
+		chain(u, "fb", []time.Time{at.Add(-90 * time.Minute), at.Add(2 * time.Hour)}, merged())
+		chain(u, "fc", []time.Time{at.Add(-time.Hour), at.Add(3 * time.Hour)}, &state.GateRecord{State: state.GateStuck})
+		pl := u.s.plan(t.Context(), u.st, u.now)
+		if pl.Action == EvRollback {
+			t.Fatalf("退回都发生在升级前，不该回滚：%+v", pl)
+		}
+		evs, _ := u.s.LoadUpgrades()
+		if last := evs[len(evs)-1]; last.Kind != EvKept || !strings.Contains(last.Why, "升级后 3 个任务，失败、超时或卡在门上 1 个，平均过门退回 0.0 轮") {
+			t.Fatalf("要记留下、升级后 0 轮：%+v", last)
+		}
+	})
+	t.Run("升级后退回的照算", func(t *testing.T) {
+		u, at := setup(t)
+		for i, fp := range []string{"fa", "fb", "fc"} {
+			s := at.Add(time.Duration(i+1) * time.Hour)
+			chain(u, fp, []time.Time{s, s.Add(20 * time.Minute)}, merged())
+		}
+		pl := u.s.plan(t.Context(), u.st, u.now)
+		if pl.Action != EvRollback || !strings.Contains(pl.Why, "升级后 3 个任务，失败、超时或卡在门上 0 个，平均过门退回 1.0 轮") {
+			t.Fatalf("升级后每个都退回一轮要回滚：%+v", pl)
+		}
+	})
 	t.Run("没变差留下", func(t *testing.T) {
 		u, at := setup(t)
 		u.job("p1", at.Add(time.Hour), state.StatusDone, 0)
@@ -283,5 +322,30 @@ func TestUpgradeSkipsDescendantsOfRollback(t *testing.T) {
 	u.s.Version = "dev-" + u.b[:7] // 用户自己装上了 B
 	if pl := u.s.plan(t.Context(), u.st, u.now); pl.Action != EvUpgrade || pl.Commit != f {
 		t.Fatalf("现在这一代已经带着 B，不再挡：%+v", pl)
+	}
+}
+
+// 发版看的观察期：最近一条升级、留下、回滚的记录是这一代的「留下」才算过了；演练、失败不算数。
+func TestObservedCommit(t *testing.T) {
+	u := newUpRig(t)
+	if c, why := u.s.ObservedCommit(); c != "" || !strings.Contains(why, "还没过观察期") {
+		t.Fatalf("没有记录：%q %q", c, why)
+	}
+	u.s.appendUpgrade(UpgradeEvent{At: u.now, Kind: EvUpgrade, To: u.s.Version})
+	if c, _ := u.s.ObservedCommit(); c != "" {
+		t.Fatalf("还在观察：%q", c)
+	}
+	u.s.appendUpgrade(UpgradeEvent{At: u.now, Kind: EvKept, To: u.s.Version})
+	u.s.appendUpgrade(UpgradeEvent{At: u.now, Kind: EvFail, Why: "演练没过"})
+	if c, why := u.s.ObservedCommit(); c != u.a[:7] {
+		t.Fatalf("留下了：%q %q", c, why)
+	}
+	u.s.appendUpgrade(UpgradeEvent{At: u.now, Kind: EvRollback, From: u.s.Version, To: "dev-1234567"})
+	if c, _ := u.s.ObservedCommit(); c != "" {
+		t.Fatalf("回滚之后不算：%q", c)
+	}
+	u.s.Version = "v0.3.0"
+	if c, why := u.s.ObservedCommit(); c != "" || !strings.Contains(why, "不是从提交构建的") {
+		t.Fatalf("发行版：%q %q", c, why)
 	}
 }

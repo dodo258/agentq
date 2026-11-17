@@ -30,6 +30,7 @@
 | `tick-guard.sh`、`guard-fails` | 服务调用的保护脚本和它记的连续失败次数，见[保护脚本](#保护脚本) | |
 | `inbox/` | 从 Telegram 收到、还没交给 claude 的附件 | |
 | `suggestions.json`、`suggestions.lock` | 「## 建议」的编号索引，见[建议](features.md#建议) | 备份，当空的 |
+| `release/<项目>.json`、`release/<项目>.lock`、`release/<项目>.log` | 自动发版：最近一次发版的版本、状态（发版中、发成、失败、说明书没过）、上次发成的时间、发失败过不再试的版本（`failed`）、上次联网查公开仓的时间和不发的原因；发版后台进程拿着的锁；`.agentq/release` 的输出。见[自动发版](features.md#自动发版) | 读不了或坏了这个项目不发，日志说明；删掉等于没发过（失败过的版本也会再试） |
 | `pm.json` | 每个项目的产品经理调研记录：上次什么时候调研、调研时已经合并了哪些任务、上次写进「建议」的标题、一时写不进去的建议（留 3 天，每次 tick 再写） | 读不了或坏了这次 tick 不调研，日志说明；删掉等于都没调研过 |
 | `discuss/<编号>.json`、`discuss/<编号>.answer` | 一次大方向商量：问题、默认答案、到点时间、结果；用户的回答（下次 tick 收走）。保留 90 天，还在商量的不清 | 坏了就不再问，按默认开工 |
 | `gate/<任务id>/` | 过门的 `plan.json`、`result.json`（下次 tick 收走后改名 `last.json`）、`decision.json`（卡片和 `agentq gate pass` 的决定）、门的输出 `test*.log`（权限 600，每个最多 2MB）、`smoke.log`、`ui.log`、评测门的 `eval-build.log`、`eval.log` 和结论 `eval/verdict.json`、截图 `ui-artifacts/`、交付单 `delivery.md`、`review-<次>/`、`ui-review-<次>/`、进程组号 `pgid`、活着的锁 `lock`，跑的时候还有一次性 worktree `wt/` | |
@@ -40,7 +41,7 @@
 | `evals/heldout/<题号>-<短名>/` | 留出题，和仓库 `evals/` 同样的格式，自己放，`list` 只显示数量 | |
 | `verify/<任务id>/` | 升级前合并后核验留下的，只等过期清掉 | |
 | `patrol.json` | 巡逻的现有问题（指纹、证据、处理、首次和最后发现时间）、上次巡逻时间、当天分析次数 | 备份一次，从空的开始，报过的问题会再报一次 |
-| `notify.json`、`notify.lock` | 推送队列、各类上次发送时间、今天推了几条、哪天推过早报、见过的待决定条目、Telegram 的 offset、排队等回答的消息、没发出去待补发的回答、回复链 `threads`、决策卡片 `cards`、最近的推送错误（不含 token） | 备份一次，从空的开始 |
+| `notify.json`、`notify.lock` | 推送队列、各类上次发送时间、今天推了几条、哪天推过早报、见过的待决定条目、Telegram 的 offset、排队等回答的消息、没发出去待补发的回答、回复链 `threads`、决策卡片 `cards`、发版后起草的 issue 回复和你点了什么 `issues`、最近的推送错误（不含 token） | 备份一次，从空的开始 |
 | `notify/` | 超过 12 行的推送全文（`<时间>-<类别>.txt`）、压缩后的录屏 `media/` | |
 | `replies/<任务id>.md` | 超过 600 字的回答全文 | |
 | `listen.lock`、`listen.pid` | 常驻监听拿着的锁和它的 pid。tick 据此知道它在不在跑 | |

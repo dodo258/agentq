@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -185,17 +186,37 @@ func TestReworkSignal(t *testing.T) {
 	r.noCLI()
 }
 
-func TestPathDomain(t *testing.T) {
-	for p, want := range map[string]string{
-		"web/App.tsx": DomainFrontend, "src/styles/main.css": DomainFrontend, "src/components/": DomainFrontend, "app/lib/x.ts": DomainFrontend,
-		"internal/evolve/": DomainBackend, "server/routes.ts": DomainBackend, "main.go": DomainBackend, "api": DomainBackend,
-		"docs/design/home.md": DomainDesign, "assets/logo.svg": DomainDesign, "Views/HomeView.swift": DomainFrontend,
-		"README.md": DomainDocs, "docs/": DomainDocs, "Models/Ledger.swift": "", "Makefile": "", "": "",
-	} {
-		if got := pathDomain(p); got != want {
-			t.Errorf("%q：%q，要 %q", p, got, want)
+// 合并提交顺手改的记录文件不算文档：11-16 两条不相干的返工（官网的样式、Flutter App 的密码页）因为合并提交都改了 DECISIONS.md，
+// 凑成了「文档返工反复出现」。
+func TestReworkRecordFilesNotDocs(t *testing.T) {
+	r := newSigRig(t, nil)
+	dir := testkit.MkProject(t, r.root, "tracker", "")
+	if err := os.MkdirAll(filepath.Join(dir, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "lib", "app_lock.dart"), []byte("x"), 0o644)
+	testkit.GitT(t, r.s.Home, dir, "add", "-A")
+	testkit.GitT(t, r.s.Home, dir, "commit", "-q", "-m", "init")
+	os.WriteFile(filepath.Join(dir, "lib", "app_lock.dart"), []byte("y"), 0o644)
+	os.WriteFile(filepath.Join(dir, "DECISIONS.md"), []byte("# 决定\n密码页的取舍\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "CHANGELOG.md"), []byte("# 变更\n- 密码页\n"), 0o644)
+	testkit.GitT(t, r.s.Home, dir, "add", "-A")
+	testkit.GitT(t, r.s.Home, dir, "commit", "-q", "-m", "密码页重做")
+	head := testkit.GitT(t, r.s.Home, dir, "rev-parse", "HEAD")
+	text := "# 待办\n\n## 待做\n\n- [ ] 验收 密码页重做 的意见 —— 改密码、关密码要有明确入口\n\n## 已完成\n\n- [x] 密码页重做 —— 合并提交 " + head[:12] + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "docs", "BACKLOG.md"), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.collect()
+	for _, sig := range r.signals(KindRework) {
+		if sig.Key == SignalKey(KindRework, DomainDocs, "") {
+			t.Fatalf("合并提交只顺手改了记录文件，不该记成文档返工：%+v", sig)
 		}
 	}
+	if len(r.signals(KindRework)) != 1 {
+		t.Fatalf("意见本身照记一次：%+v", r.signals(KindRework))
+	}
+	r.noCLI()
 }
 
 func (r *sigRig) patrol(issues ...map[string]any) {
@@ -351,6 +372,98 @@ func TestQuickStopSignal(t *testing.T) {
 	r.collect()
 	if quick = r.signals(KindQuickStop); quick[0].Seen != 3 || !strings.Contains(quick[0].Summary, "被停（来源没记），停时额度没记") {
 		t.Fatalf("%+v", quick)
+	}
+	r.noCLI()
+}
+
+// 用户停了任务、30 分钟内在同一个项目亲手再派一条（改了条目重派、换一条替它）：是改需求，不记 user-stop。
+// 停了不到 30 分钟又没重派的先不收，过了 30 分钟还没重派才记；后来自动接的、别的项目派的、超过 30 分钟才派的都不算重派。
+func TestUserStopRedoNotSignal(t *testing.T) {
+	r := newSigRig(t, nil)
+	at := func(d time.Duration) *time.Time { x := r.now.Add(d); return &x }
+	stop := func(id, project string, start, end time.Duration) {
+		r.meta(&state.Job{ID: id, Project: project, Title: "条目 " + id, Manual: true, Status: state.StatusKilled,
+			StartedAt: *at(start), EndedAt: at(end), Summary: "被 agentq stop 停止（SIGTERM）"})
+	}
+	run := func(id, project string, start time.Duration, manual bool) {
+		r.meta(&state.Job{ID: id, Project: project, Title: "条目 " + id, Manual: manual, StartedAt: *at(start), EndedAt: at(start + 10*time.Minute)})
+	}
+	stop("改了重派", "web", -3*time.Hour, -170*time.Minute)
+	run("重派", "web", -169*time.Minute, true)
+	stop("换一条", "api", -2*time.Hour, -110*time.Minute)
+	run("替它的", "api", -110*time.Minute+redoWithin, true)
+	stop("自动接的不算", "ios", -3*time.Hour, -170*time.Minute)
+	run("tick 挑的", "ios", -169*time.Minute, false)
+	run("别的项目", "ops", -169*time.Minute, true)
+	stop("太晚才派", "cli", -3*time.Hour, -170*time.Minute)
+	run("隔了很久", "cli", -170*time.Minute+redoWithin+time.Second, true)
+	stop("刚停", "web", -20*time.Minute, -10*time.Minute)
+	r.collect()
+	got := ""
+	for _, sig := range r.signals(KindUserStop) {
+		got += strings.Join(sig.Evidence, "\n")
+	}
+	for _, want := range []string{"自动接的不算", "太晚才派"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("没重派要记「%s」：\n%s", want, got)
+		}
+	}
+	for _, not := range []string{"改了重派", "换一条", "刚停"} {
+		if strings.Contains(got, not) {
+			t.Errorf("「%s」不该记：\n%s", not, got)
+		}
+	}
+	// 刚停的：过了 30 分钟还是没人重派，下次收集记上
+	r.now = r.now.Add(time.Hour)
+	if !r.collect() {
+		t.Fatal("先不收的那条下次要再看")
+	}
+	if sigs := r.signals(KindUserStop); len(sigs) != 1 || sigs[0].Seen != 3 || !strings.Contains(strings.Join(sigs[0].Evidence, " "), "刚停") {
+		t.Fatalf("%+v", sigs)
+	}
+	r.unchanged()
+	r.noCLI()
+}
+
+// 11-10 到 11-15 那条 user-stop 是按旧规则记的：两次停完几分钟内亲手重派（改需求），一次启动 7 秒就停（现在归 quick-stop）。
+// 每次收信号按现在的规则重判按任务记录判的信号：这些证据从 user-stop 去掉，一份不剩的删掉；真停的、刚启动就停的照留。
+func TestStaleStopSignalRechecked(t *testing.T) {
+	r := newSigRig(t, nil)
+	at := func(d time.Duration) *time.Time { x := r.now.Add(d); return &x }
+	stopped := func(id, project string, start, end time.Duration) {
+		r.meta(&state.Job{ID: id, Project: project, Title: "条目 " + id, Manual: true, Status: state.StatusKilled,
+			StartedAt: *at(start), EndedAt: at(end), Summary: "被 agentq stop 停止（SIGTERM）"})
+	}
+	day := -48 * time.Hour
+	stopped("改了重派", "web", day, day+6*time.Minute)
+	r.meta(&state.Job{ID: "重派", Project: "web", Manual: true, StartedAt: *at(day + 7*time.Minute), EndedAt: at(day + 30*time.Minute)})
+	stopped("七秒", "app", day, day+7*time.Second)
+	stopped("真停", "api", day, day+10*time.Minute)
+	stopped("只剩重派", "cli", day, day+5*time.Minute)
+	r.meta(&state.Job{ID: "替它", Project: "cli", Manual: true, StartedAt: *at(day + 9*time.Minute), EndedAt: at(day + 20*time.Minute)})
+	ev := func(id, project string) string {
+		return "任务 " + id + "（" + project + "）「条目 " + id + "」"
+	}
+	r.collect() // 先按现在的规则读一遍任务记录，再换成按旧规则记下的信号
+	st := r.store()
+	when := r.now.Add(day)
+	userStop := SignalKey(KindUserStop, "待做", "")
+	st.Signals = []Signal{
+		{Kind: KindUserStop, Key: userStop, Summary: "用户停了待做任务", Evidence: []string{ev("改了重派", "web"), ev("七秒", "app"), ev("真停", "api")},
+			Seen: 3, First: when, Last: when, Proposed: true},
+		{Kind: KindUserStop, Key: SignalKey(KindUserStop, "新项目", ""), Summary: "用户停了新项目任务", Evidence: []string{ev("只剩重派", "cli")}, Seen: 1, First: when, Last: when},
+		{Kind: KindQuickStop, Key: SignalKey(KindQuickStop, "", ""), Summary: "亲手派的刚启动就被停", Evidence: []string{ev("七秒", "app") + "启动 7 秒后被停"}, Seen: 1, First: when, Last: when, Proposed: true},
+	}
+	r.write(r.s.SignalsPath(), st)
+	r.now = r.now.Add(2 * time.Hour)
+	r.meta(&state.Job{ID: "新数据", Project: "ops"})
+	r.collect()
+	stops := r.signals(KindUserStop)
+	if len(stops) != 1 || stops[0].Key != userStop || stops[0].Seen != 1 || !slices.Equal(stops[0].Evidence, []string{ev("真停", "api")}) {
+		t.Fatalf("user-stop 只剩真停的那份，只剩重派的那条删掉：%+v", stops)
+	}
+	if quick := r.signals(KindQuickStop); len(quick) != 1 || quick[0].Seen != 1 {
+		t.Fatalf("刚启动就停的照留：%+v", quick)
 	}
 	r.noCLI()
 }

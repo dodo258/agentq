@@ -20,5 +20,6 @@
   "self_grow_enabled": true,
   "discuss_enabled": true,
   "pm_enabled": true,
+  "suggest_auto_after": "24h",
   "retention_days": 90
 }

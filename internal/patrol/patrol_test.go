@@ -89,6 +89,77 @@ func TestPatrolNotifies(t *testing.T) {
 	}
 }
 
+// 早报「出问题」：拍板（有自己的推送）和基础设施类（看门狗推）不列，别的都列。
+func TestPatrolMorningIssues(t *testing.T) {
+	e := newPatrolFixture(t)
+	ps := &PatrolState{Issues: []PatrolIssue{
+		{Fingerprint: "disk", Check: "disk", Title: "磁盘"},
+		{Fingerprint: "backup:x", Check: "backup", Title: "备份"},
+		{Fingerprint: "autopush:a@x", Check: "autopush", Title: "推送"},
+		{Fingerprint: "launchd:x", Check: "launchd", Title: "退出码"},
+		{Fingerprint: "launchd:x.night:missing", Check: "launchd", Title: "没装上"},
+		{Fingerprint: "report:review:x", Check: "report", Title: "缺早报"},
+		{Fingerprint: "report:night:x", Check: "report", Title: "缺夜班报告"},
+		{Fingerprint: "job:2", Check: "job", Title: "任务失败"},
+		{Fingerprint: "stall:3", Check: "stall", Title: "卡住"},
+		{Fingerprint: "usage", Check: "usage", Title: "额度"},
+		{Fingerprint: "decide:x", Check: "decide", Title: "拍板"},
+		{Fingerprint: "backlog-dirty:p", Check: "backlog", Title: "BACKLOG 没提交"},
+		{Fingerprint: "vuln:m", Check: "vuln", Title: "漏洞"},
+	}}
+	if err := e.a.SavePatrol(ps); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(e.a.MorningIssues(), "|"); got != "没装上|缺夜班报告|任务失败|卡住|额度|BACKLOG 没提交|漏洞" {
+		t.Fatalf("早报的出问题：%s", got)
+	}
+}
+
+// 10-12：01:00 的夜班任务因为后端登录被拒失败，08:32 又报缺夜班报告。缺报告是那次失败的后果：记着、写汇总，
+// 但不再推一遍、不再为它起一次分析、早报只列任务失败那一条；任务失败那条照常推、照常分析。
+// 那条任务失败已经不在现有问题里时（比如过了 24 小时窗口），缺报告照常推。
+func TestPatrolEchoOfReportedJob(t *testing.T) {
+	e := newPatrolFixture(t)
+	e.now = time.Date(2026, 10, 12, 8, 32, 0, 0, time.Local)
+	e.write(e.nightlyFile(""), "早报\n")
+	os.Remove(e.nightlyFile("-night"))
+	start := time.Date(2026, 10, 12, 1, 0, 8, 0, time.Local)
+	e.st.Jobs = []*state.Job{{ID: "n1", Kind: config.KindNight, Project: "夜班", Title: "agentq night", Status: state.StatusFailed,
+		Summary: "Your organization has disabled Claude subscription access for Claude Code", StartedAt: start, EndedAt: patrolAgo(start, -12*time.Second)}}
+	r := e.patrol()
+	rep := patrolFind(t, r.New, "report:night:2026-10-12")
+	if rep.CausedBy != "job:n1" || rep.Anomaly {
+		t.Errorf("缺夜班报告是任务 n1 失败的后果，不算新异常：%+v", rep)
+	}
+	if !patrolFind(t, r.New, "job:n1").Anomaly {
+		t.Error("任务失败照常是异常")
+	}
+	if len(e.analyzed) != 1 || strings.Contains(e.analyzed[0], "夜班报告") || !strings.Contains(e.analyzed[0], "任务失败") {
+		t.Errorf("分析只看任务失败：%q", e.analyzed)
+	}
+	ns, err := e.a.Notify.LoadNotify()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, n := range ns.Pending {
+		keys = append(keys, n.Key)
+	}
+	if got := strings.Join(keys, ","); got != "patrol:job:n1" {
+		t.Errorf("只推任务失败：%s", got)
+	}
+	if got := strings.Join(e.a.MorningIssues(), "|"); got != "任务失败：夜班「agentq night」" {
+		t.Errorf("早报只列任务失败：%s", got)
+	}
+	if !strings.Contains(e.summary(), "巡逻发现：08:00 后还没有当天的夜班报告") {
+		t.Errorf("缺报告照常写汇总：\n%s", e.summary())
+	}
+	// 任务失败那条不在现有问题里了：缺报告自己推
+	if got := patrolFind(t, []PatrolIssue{rep}, rep.Fingerprint); got.echoOf(map[string]bool{}) {
+		t.Error("原因不在现有问题里，不算后果")
+	}
+}
+
 // wirePatrol 建模块实例。
 func wirePatrol(e *env.Env) *Service {
 	k := stack.New(e)
@@ -288,6 +359,12 @@ func TestPatrolNoIssues(t *testing.T) {
 	if r := e.patrol(); len(r.New) != 0 {
 		t.Errorf("夜班还在跑不该报缺报告：%v", patrolFPs(r.New))
 	}
+	// 跑完了说做完、却没写报告：是 agentq 自己的问题，不记成任务失败的后果
+	ended := e.now.Add(-time.Minute)
+	e.st.Jobs[len(e.st.Jobs)-1].Status, e.st.Jobs[len(e.st.Jobs)-1].EndedAt = state.StatusDone, &ended
+	if is := patrolFind(t, e.patrol().New, "report:night:2026-10-11"); is.CausedBy != "" {
+		t.Errorf("夜班做完了没写报告，不是别的问题的后果：%q", is.CausedBy)
+	}
 }
 
 // 每类检查都有问题：逐条带证据报出来、写进汇总和 patrol.json，有异常就启动一次分析（分析里不含拍板和额度）。
@@ -299,7 +376,7 @@ func TestPatrolFindsEachCheck(t *testing.T) {
 	e.launchd = "PID\tStatus\tLabel\n-\t1\t" + LaunchdPrefix + "backup\n-\t0\t" + LaunchdPrefix + "agentq\n-\t0\t" + LaunchdPrefix + "agentq.review\n77\t-9\t" + LaunchdPrefix + "keep\n"
 	// backup 服务的 plist 和日志：证据里带日志末尾
 	logp := filepath.Join(e.a.Home, "backup.log")
-	e.write(logp, "第一行\n备份：5 个仓库已推到 GitHub 私有备份，**1 个失败**\n")
+	e.write(logp, "第一行\nbackup.sh: line 3: gh: command not found\n") // 不是备份总结：退出码照报（是备份总结的交给备份报告，见 TestPatrolBackupServiceDefersToReport）
 	e.write(e.a.Service.PlistPathFor(LaunchdPrefix+"backup"), `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict><key>Label</key><string>`+LaunchdPrefix+`backup</string><key>StandardErrorPath</key><string>`+logp+`</string></dict></plist>
@@ -341,7 +418,7 @@ func TestPatrolFindsEachCheck(t *testing.T) {
 			t.Fatalf("问题\n got %v\nwant %v", got, want)
 		}
 	}
-	backupEvidence := "**1 个失败**" // 日志末尾
+	backupEvidence := "gh: command not found" // 日志末尾
 	if runtime.GOOS != "darwin" {
 		backupEvidence = "上次退出码 1" // 从 plist 取日志路径靠 plutil，只有 macOS 有
 	}
@@ -367,6 +444,25 @@ func TestPatrolFindsEachCheck(t *testing.T) {
 		if is.Action == "" {
 			t.Errorf("%s 应写处理说明", c.fp)
 		}
+	}
+	// 复盘任务中断了，缺早报是它的后果（自我进化按任务那一类算）；没有夜班任务记录的缺报告不是别的问题的后果
+	if got := patrolFind(t, r.New, "report:review:2026-10-11").CausedBy; got != "job:r1" {
+		t.Errorf("缺早报应记成任务 r1 的后果：%q", got)
+	}
+	if got := patrolFind(t, r.New, "report:night:2026-10-11").CausedBy; got != "" {
+		t.Errorf("没有夜班任务记录，缺报告不该记成别的问题的后果：%q", got)
+	}
+	// 起分析的异常：拍板、额度不算；缺早报是复盘任务 r1 中断的后果，r1 自己已是异常，不另算
+	var anomalies []string
+	for _, is := range r.New {
+		if is.Anomaly {
+			anomalies = append(anomalies, is.Fingerprint)
+		}
+	}
+	sort.Strings(anomalies)
+	if got, want := strings.Join(anomalies, ","), "autopush:/p/other/.git@2026-10-11T10:00:00,backup:2026-10-11,disk,job:f1,job:i1,job:r1,job:t1,launchd:"+LaunchdPrefix+"agentq.night:missing,"+
+		"launchd:"+LaunchdPrefix+"backup,launchd:"+LaunchdPrefix+"keep,report:night:2026-10-11,stall:s1"; got != want {
+		t.Errorf("异常\n got %s\nwant %s", got, want)
 	}
 	// 汇总：每个新问题一行，带证据；疑似卡住和额度 tick 自己写过，不重复写
 	s := e.summary()
@@ -974,16 +1070,16 @@ func TestPatrolGoneEdges(t *testing.T) {
 	}
 }
 
-// patrol.json 的键：只有带标签的字段落盘，内部标记（job、jobID、quiet、handled、gone）不写，字段顺序也固定。
+// patrol.json 的键：只有带标签的字段落盘，内部标记（job、jobID、excluded、handled、gone）不写，字段顺序也固定。
 func TestPatrolJSONKeys(t *testing.T) {
 	at := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
 	is := PatrolIssue{Fingerprint: "f", Check: "c", Title: "t", Evidence: []string{"e"}, Action: "a", Anomaly: true, FirstSeen: at, LastSeen: at,
-		job: &state.Job{ID: "j"}, jobID: "j", quiet: true, handled: true, gone: "g"}
+		CausedBy: "job:j", job: &state.Job{ID: "j"}, jobID: "j", excluded: true, handled: true, gone: "g"}
 	b, err := json.Marshal(is)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"fingerprint":"f","check":"c","title":"t","evidence":["e"],"action":"a","anomaly":true,"first_seen":"2026-10-11T12:00:00Z","last_seen":"2026-10-11T12:00:00Z"}`
+	want := `{"fingerprint":"f","check":"c","title":"t","evidence":["e"],"action":"a","anomaly":true,"first_seen":"2026-10-11T12:00:00Z","last_seen":"2026-10-11T12:00:00Z","caused_by":"job:j"}`
 	if string(b) != want {
 		t.Fatalf("got  %s\nwant %s", b, want)
 	}
@@ -998,5 +1094,57 @@ func TestPatrolAutopushOffByDefault(t *testing.T) {
 		if is.Check == "autopush" {
 			t.Errorf("没配路径不该报：%+v", is)
 		}
+	}
+}
+
+// 备份脚本有仓库没推上时退出码 1，同一次失败当天的备份报告已经报了；手动重跑修好后报告更新，launchd 退出码要等下次定点运行才变。
+// 11-10、11-14 两次 launchd:<前缀>backup 就是这样和 backup:<日期> 重复报，报告修好后还一直挂着。
+// 要的是：日志末尾是备份总结、退出码 1 的不按 launchd 报（之前报过的悄悄去掉，不写「已恢复」），备份报告照报；
+// 日志不是备份总结、或退出码不是 1（脚本自己崩了）的照报。
+func TestPatrolBackupServiceDefersToReport(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("从 plist 取日志路径靠 plutil，只有 macOS 有")
+	}
+	e := newPatrolFixture(t)
+	for _, name := range []string{"backup", "crash", "other"} {
+		logp := filepath.Join(e.a.Home, name+".log")
+		e.write(e.a.Service.PlistPathFor(LaunchdPrefix+name), `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>Label</key><string>`+LaunchdPrefix+name+`</string><key>StandardOutPath</key><string>`+logp+`</string></dict></plist>
+`)
+	}
+	summary := "备份：6 个仓库已推到 GitHub 私有备份\n备份：10 个仓库已推到 GitHub 私有备份，**1 个失败**；没配备份的： x\n"
+	e.write(filepath.Join(e.a.Home, "backup.log"), summary)
+	e.write(filepath.Join(e.a.Home, "crash.log"), summary) // 同样的日志，退出码 2：总结之后脚本自己出错了
+	e.write(filepath.Join(e.a.Home, "other.log"), "error: something else\n")
+	e.write(e.nightlyFile("-backup"), "备份：10 个仓库已推到 GitHub 私有备份，**1 个失败**\n\n- a：已推送\n- b：**推送失败**：remote: This repository was archived so it is read-only.\n")
+	base := e.launchd
+	e.launchd = base + "-\t1\t" + LaunchdPrefix + "backup\n-\t2\t" + LaunchdPrefix + "crash\n-\t1\t" + LaunchdPrefix + "other\n"
+	// 升级前那一代报过的 launchd 问题还记在 patrol.json 里
+	if err := e.a.SavePatrol(&PatrolState{Issues: []PatrolIssue{{Fingerprint: "launchd:" + LaunchdPrefix + "backup", Check: "launchd", Title: "旧的",
+		FirstSeen: e.now.Add(-time.Hour), LastSeen: e.now.Add(-time.Hour)}}}); err != nil {
+		t.Fatal(err)
+	}
+	r := e.patrol()
+	want := "backup:" + e.now.Format("2006-01-02") + ",launchd:" + LaunchdPrefix + "crash,launchd:" + LaunchdPrefix + "other"
+	if got := strings.Join(patrolFPs(r.New), ","); got != want {
+		t.Fatalf("新问题\n got %s\nwant %s", got, want)
+	}
+	for _, is := range r.Gone {
+		if is.gone != "" {
+			t.Errorf("交给备份报告的服务不该写「%s」：%s", is.gone, is.Fingerprint)
+		}
+	}
+	if strings.Contains(e.summary(), "巡逻：已恢复") {
+		t.Errorf("汇总不该写已恢复：%s", e.summary())
+	}
+
+	// 手动重跑修好了：当天报告没有失败，launchd 退出码还是 1。什么都不报。
+	e.now = e.now.Add(time.Hour)
+	e.launchd = base + "-\t1\t" + LaunchdPrefix + "backup\n"
+	e.write(e.nightlyFile("-backup"), "备份：11 个仓库已推到 GitHub 私有备份\n\n- a：已推送\n")
+	r = e.patrol()
+	if len(r.New) != 0 || len(r.Old) != 0 {
+		t.Fatalf("报告修好后不该再报：new %v old %v", patrolFPs(r.New), patrolFPs(r.Old))
 	}
 }

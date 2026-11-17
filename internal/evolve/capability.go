@@ -127,30 +127,6 @@ func jobRef(j *state.Job) string {
 	return j.Project + "|" + j.ID
 }
 
-// filesDomains：这些文件和目录归到的领域，排好序，归不了的不算。
-func filesDomains(paths []string) []string {
-	var out []string
-	for _, f := range paths {
-		if d := pathDomain(f); d != "" && !slices.Contains(out, d) {
-			out = append(out, d)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// wordDomains：路径归不了时看文字。
-func wordDomains(text string) []string {
-	var out []string
-	for d, re := range domainWords {
-		if re.MatchString(text) {
-			out = append(out, d)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
 func (st *SignalStore) addDomain(at time.Time, domains []string, kind, ref, ev string) {
 	for _, d := range domains {
 		if slices.ContainsFunc(st.Domains, func(e DomainEvent) bool { return e.Domain == d && e.Kind == kind && e.Ref == ref }) {

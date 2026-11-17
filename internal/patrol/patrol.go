@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"agentq/internal/backend"
 	"agentq/internal/backlog"
 	"agentq/internal/config"
 	"agentq/internal/env"
@@ -62,36 +61,25 @@ var LaunchdPrefix = config.LaunchdLabel[:strings.LastIndex(config.LaunchdLabel, 
 
 type PatrolIssue struct {
 	Fingerprint string   `json:"fingerprint"`
-	Check       string   `json:"check"` // launchd、autopush、backup、job、stall、usage、report、decide、disk
+	Check       string   `json:"check"` // launchd、autopush、backup、job、stall、usage、report、decide、backlog、disk、vuln；怎么处置见 policy.go
 	Title       string   `json:"title"`
 	Evidence    []string `json:"evidence"`
 	// Action：已经怎么处理、用户要不要做什么。
 	Action string `json:"action,omitempty"`
-	// Anomaly：是不是异常（要不要启动分析）。「等用户决定」的新条目、额度快用完只是要用户知道，不分析。
-	Anomaly   bool       `json:"anomaly,omitempty"`
-	FirstSeen time.Time  `json:"first_seen"`
-	LastSeen  time.Time  `json:"last_seen"`
-	job       *state.Job // 中断/失败/超时的待做任务：新发现时看要不要写接手的待做
-	jobID     string     // 这个问题只点名一个任务时的任务 id，推送带上，回复能接上那个任务
-	// quiet：tick 发现时已经在汇总里写过一行（疑似卡死、额度档位变化），巡逻不再重复写。
-	quiet bool
+	// Anomaly：要不要起分析，由 policy.go 按检查种类和下面的事实定。
+	Anomaly   bool      `json:"anomaly,omitempty"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+	// CausedBy：这个问题是另一个问题（指纹）的后果，例如今天的夜班任务失败了所以没有夜班报告。
+	// 原因还在现有问题里时这一条不另推、不另分析、不进早报；自我进化按原因那一类算，不另记一次。
+	CausedBy string     `json:"caused_by,omitempty"`
+	job      *state.Job // 中断/失败/超时的待做任务：新发现时看要不要写接手的待做
+	jobID    string     // 这个问题只点名一个任务时的任务 id，推送带上，回复能接上那个任务
+	// excluded：任务所在项目在 exclude_projects 里（不起分析）。
+	excluded bool
 	// handled：已经自动处理（写了接手的待做、或已有任务在接手），不推给用户。
 	handled bool
 	gone    string // 消失时：已恢复 / 已处理
-}
-
-// infra：基础设施类问题，看门狗也查得到。照常检查、写进 patrol.json 和当天汇总，但不推给用户（巡逻推送和早报的「出问题」都不带），
-// 由看门狗推。看门狗查不到的照常推：launchd 服务没装上（它只看列表里有的服务的退出码和常驻服务的 pid）、夜班报告缺失（它只查早报）。
-func (is PatrolIssue) infra() bool {
-	switch is.Check {
-	case "autopush", "backup", "disk":
-		return true
-	case "launchd":
-		return !strings.HasSuffix(is.Fingerprint, ":missing")
-	case "report":
-		return strings.HasPrefix(is.Fingerprint, "report:"+config.KindReview+":")
-	}
-	return false
 }
 
 type PatrolState struct {
@@ -124,8 +112,9 @@ func (a *Service) MorningIssues() []string {
 		return nil
 	}
 	var titles []string
+	open := openSet(ps.Issues)
 	for _, is := range ps.Issues {
-		if is.Check != "decide" && !is.infra() { // 基础设施类由看门狗推
+		if is.inMorning(open) {
 			titles = append(titles, textfmt.TruncRunes(is.Title, 40))
 		}
 	}
@@ -280,7 +269,7 @@ func (a *Service) RunPatrol(st *state.State, ps *PatrolState) (*PatrolReport, er
 		}
 	}
 	for _, is := range r.New {
-		if !is.quiet {
+		if !is.policy().quiet {
 			a.Ledger.AppendNightlyLine(now, "巡逻发现："+is.nightlyText())
 		}
 	}
@@ -304,64 +293,6 @@ func (a *Service) RunPatrol(st *state.State, ps *PatrolState) (*PatrolReport, er
 	return r, nil
 }
 
-const (
-	goneFixed   = "已恢复"
-	goneHandled = "已处理"
-	goneKeep    = "keep" // 还说不准好没好：照旧记着
-)
-
-// goneHow：上次报过的问题这次没再出现，是真的好了（已恢复）、拍板条目被处理了（已处理）、还说不准（goneKeep，照旧记着），
-// 还是只是过了时间窗口、换了一天、服务卸掉了（返回空：悄悄去掉，不写「已恢复」）。
-func (a *Service) goneHow(st *state.State, r *PatrolReport, is PatrolIssue, now time.Time) string {
-	switch is.Check {
-	case "job":
-		return ""
-	case "autopush": // 之后同仓库推成功了才算恢复；过了 24 小时窗口的悄悄去掉
-		if !r.pushOK[is.Fingerprint] {
-			return ""
-		}
-	case "decide":
-		if decs, fails := a.Notify.Decisions(); len(fails) == 0 {
-			for _, d := range decs {
-				if d.Fingerprint == is.Fingerprint && d.Waiting {
-					return "" // 条目还在，只是加上了等条件标记：悄悄去掉，不写「已处理」
-				}
-			}
-		}
-		return goneHandled
-	case "stall":
-		id := strings.TrimPrefix(is.Fingerprint, "stall:")
-		for _, j := range st.Running() {
-			if j.ID == id {
-				return goneFixed // 会话记录又在长了
-			}
-		}
-		return "" // 任务结束了：失败、超时由任务那一类报
-	case "backup":
-		if !strings.HasSuffix(is.Fingerprint, ":"+now.Format("2006-01-02")) {
-			return "" // 前一天的，换天了
-		}
-	case "report": // report:<kind>:<日期>：报告文件真的有了才算恢复；补跑还没写出来（或开关刚关）就照旧记着
-		f := strings.Split(is.Fingerprint, ":")
-		if len(f) != 3 || f[2] != now.Format("2006-01-02") {
-			return ""
-		}
-		if _, err := os.Stat(filepath.Join(a.ReportDir(), f[2]+config.Routines[f[1]].Report+".md")); err != nil {
-			return goneKeep
-		}
-	case "launchd": // launchd:<服务>[:missing|:down]：服务还在列表里（退出码回到 0、缺的装上了、又在跑了）才算恢复，从列表里卸掉了不算
-		label := strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(is.Fingerprint, "launchd:"), ":missing"), ":down")
-		if !r.launchd[label] {
-			return ""
-		}
-	case "usage": // 一个窗口重置了，别的窗口仍 ≥90% 时不算恢复（那个窗口会作为新指纹报出来）
-		if lvl, _, _ := backend.UsageLevel(st.UsageOf(a.Cfg.Backend), now, a.Cfg.UsagePolicy()); lvl >= backend.UsageStop {
-			return ""
-		}
-	}
-	return goneFixed
-}
-
 // patrolChecks 依次跑各项检查。检查本身没做成时，在 r.Notes 记原因、返回它的指纹前缀（那一类上次的问题照旧记着）。
 func (a *Service) patrolChecks(st *state.State, ps *PatrolState, now time.Time, r *PatrolReport) ([]PatrolIssue, []string) {
 	var out []PatrolIssue
@@ -380,7 +311,7 @@ func (a *Service) patrolChecks(st *state.State, ps *PatrolState, now time.Time, 
 	out = append(out, a.CheckDirtyBacklogs(now, fail)...)
 	out = append(out, a.checkDisk(fail)...)
 	out = append(out, a.checkVuln(ps, now)...)
-	return out, failed
+	return settleAll(out, openSet(out)), failed
 }
 
 // PatrolStatus：status 里的一行，上次巡逻时间和现有问题数（读 patrol.json，不拿锁）。

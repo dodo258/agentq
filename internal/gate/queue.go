@@ -77,7 +77,7 @@ func (a *Service) Bypassed(st *state.State, j *state.Job, r Ready, head string) 
 	if err != nil { // 能走到这里说明刚认出来过：理由里的名字不要紧
 		def = "默认分支"
 	}
-	a.stuck(st, j, bypassReason(def, head))
+	a.stuck(st, j, bypassReason(def, head), RunResult{Outcome: outBypass})
 	a.dropStrayReady(j)
 }
 
@@ -312,18 +312,18 @@ func (a *Service) collectOne(st *state.State, j *state.Job) {
 	case outMerged:
 		a.merged(st, j, res)
 	case outBypass:
-		a.stuck(st, j, res.Reason)
+		a.stuck(st, j, res.Reason, res)
 		a.dropStrayReady(j)
 	case outFail:
 		a.failed(st, j, res)
 	case outHold:
-		a.hold(j, res.Reason)
+		a.hold(j, res)
 	case outWait:
 		a.waitMain(j, res)
 	case outDefer:
 		a.deferRun(st, j, res)
 	default:
-		a.stuck(st, j, res.Reason)
+		a.stuck(st, j, res.Reason, res)
 	}
 	a.Ledger.WriteMeta(j)
 }
@@ -365,6 +365,12 @@ func (a *Service) merged(st *state.State, j *state.Job, res RunResult) {
 	}
 	a.Logf("%s", msg)
 	a.Ledger.AppendNightlyLine(a.Now(), msg)
+	agent, byAgent := resultNamed(res.Results, HoldReviewGate)
+	byAgent = byAgent && agent.Outcome == Pass && g.Override == ""
+	if byAgent {
+		a.auditAs("", fmt.Sprintf("独立审查代放行 %s %s「%s」分支 %s 提交 %s 合并提交 %s：%s", j.ID, j.Project, textfmt.TruncRunes(j.Title, 40), g.Branch, g.Head, short,
+			textfmt.OneLine(strings.TrimPrefix(agent.Summary, "独立审查代放行："), 300)))
+	}
 	for _, r := range res.Results { // warn 档只记录：这里就是记录
 		if r.Level == LevelWarn && r.Outcome != Pass {
 			note := fmt.Sprintf("门：%s「%s」%s 门（warn）%s：%s", j.Project, textfmt.TruncRunes(j.Title, 40), r.Gate, r.Outcome, textfmt.OneLine(r.Summary, 200))
@@ -387,6 +393,10 @@ func (a *Service) merged(st *state.State, j *state.Job, res RunResult) {
 		}
 	}
 	cat, text := "done", j.Project+"「"+textfmt.TruncRunes(j.Title, 30)+"」做完了，已合并"
+	if byAgent { // 本来要等你拍板，独立审查代看过放行了：完成通知里说清，不带按钮
+		text += "（独立审查代替你看过，放行了）"
+		lines = append(lines, "为什么没等你："+holdWhy(res)+"；"+textfmt.OneLine(agent.Summary, 200))
+	}
 	if j.NewReport != nil {
 		text = "新项目第一版合并了：" + j.Project + "「" + textfmt.TruncRunes(j.Title, 30) + "」"
 	}
@@ -478,11 +488,11 @@ func (a *Service) failed(st *state.State, j *state.Job, res RunResult) {
 	// 用户放行之后还没过（只会是合并冲突）：条目标着卡住，退回没人接得上，再让用户定。再审没过同理，也不算退回轮数。
 	// 被排除的项目 tick 只续跑用户亲手启动的和自己长大派的，别的自动起的退回了没人接，直接让用户定
 	if g.Override != "" || g.Rerun || (a.Backlog.Excluded(j.Project) && !j.Manual && !j.SelfGrow) || (be.Caps().Resume && j.SessionID == "" && !first) {
-		a.stuck(st, j, res.Reason)
+		a.stuck(st, j, res.Reason, res)
 		return
 	}
 	if g.Round >= MaxRounds { // 退回用完还没过：再改一轮多半也不行，是条目拆法或验收的问题
-		a.stuck(st, j, planReason(g.Round, res.Reason))
+		a.stuck(st, j, planReason(g.Round, res.Reason), res)
 		return
 	}
 	g.State, g.Scope = state.GateReturned, res.Scope
@@ -561,7 +571,7 @@ func (a *Service) crashed(st *state.State, j *state.Job, why string) {
 	g.Crashes++
 	g.PID = 0
 	if g.Crashes >= maxCrashes {
-		a.stuck(st, j, fmt.Sprintf("门进程连续 %d 次没留下结果，最后一次：%s", g.Crashes, why))
+		a.stuck(st, j, fmt.Sprintf("门进程连续 %d 次没留下结果，最后一次：%s", g.Crashes, why), RunResult{Outcome: outUnknown})
 		a.Ledger.WriteMeta(j)
 		return
 	}
@@ -570,14 +580,9 @@ func (a *Service) crashed(st *state.State, j *state.Job, why string) {
 	a.Ledger.WriteMeta(j)
 }
 
-// stuck：判不了或轮数用完。保留分支，条目标卡住（下次 RetryStuckMarks 写），发决定卡片：审查报告的结论之外，带上任务最后一轮自己写的说明，
-// 用户不用翻日志就知道它怎么看这些意见、改到哪了。同项目下一条照常做。
-func (a *Service) stuck(st *state.State, j *state.Job, why string) {
-	var extra []string
-	if own := a.ownWords(j); own != "" {
-		extra = append(extra, "任务自己的说明："+own)
-	}
-	a.park(j, why, "门没过", "没过，等你定", "B", extra...)
+// stuck：判不了或轮数用完。保留分支，条目标卡住（下次 RetryStuckMarks 写），发决定卡片。res 是这次过门的结果，卡片按它说清是哪种停下。同项目下一条照常做。
+func (a *Service) stuck(st *state.State, j *state.Job, why string, res RunResult) {
+	a.park(j, why, "门没过", "没过，等你定", res)
 }
 
 // ownWords：任务这一轮结束时结果的最后一段（agent-task 要求写合并情况、没好的原因和对审查意见的分析）。读不到返回空。
@@ -591,13 +596,13 @@ func (a *Service) ownWords(j *state.Job) string {
 	return ""
 }
 
-// hold：门没挡，但改错了难撤回，或影响面广又没有确定性检查。和卡住一样等用户定，agentq gate pass 才合。不推荐选项：要用户自己看过。
-func (a *Service) hold(j *state.Job, why string) {
-	a.park(j, why, "等你拍板", "等你拍板", "")
+// hold：门没挡，但改错了难撤回，或影响面广又没有确定性检查。和卡住一样等用户定，agentq gate pass 才合。
+func (a *Service) hold(j *state.Job, res RunResult) {
+	a.park(j, res.Reason, "等你拍板", "等你拍板", res)
 }
 
-// park 是卡住和等拍板共用的：标卡住、写日志和当天汇总、发决定卡片。head 是标记和通知标题里的说法，logHead 是日志里的。
-func (a *Service) park(j *state.Job, why, head, logHead, recommend string, extra ...string) {
+// park 是卡住和等拍板共用的：标卡住、写日志和当天汇总、发决定卡片。head 是标记里的说法，logHead 是日志里的；卡片上的话见 card.go。
+func (a *Service) park(j *state.Job, why, head, logHead string, res RunResult) {
 	g := j.Gate
 	g.State, g.Override, g.Rerun = state.GateStuck, "", false
 	g.Report = textfmt.OneLine(why, 300)
@@ -608,15 +613,14 @@ func (a *Service) park(j *state.Job, why, head, logHead, recommend string, extra
 	a.Logf("%s", msg)
 	a.Ledger.AppendNightlyLine(a.Now(), msg)
 	options := []notify.DecideOption{{Label: "A", Text: "放行"}, {Label: "B", Text: "退回"}, {Label: "C", Text: "放弃"}}
-	how := "放行：合并这一次；退回：任务再改一轮；放弃：标卡住，不再管"
 	if rerunRefusal(j) == "" {
 		options = append(options, notify.DecideOption{Label: "D", Text: "再审一次"})
-		how += "；再审一次：不改代码重新跑门，不算退回轮数"
 	}
+	card := plainCard(j, res, options)
 	a.Notify.Notify(notify.Notice{Cat: "decide", Key: "gate:" + j.ID, JobID: j.ID,
-		Text:  j.Project + "　「" + textfmt.TruncRunes(j.Title, 40) + "」" + head,
-		Lines: append(append([]string{textfmt.OneLine(why, 200)}, extra...), "分支 "+g.Branch+" 留着；详情 agentq gate report "+j.ID, how),
-		Card:  &notify.DecideCard{Project: j.Project, Fingerprint: j.Fingerprint, Title: j.Title, Recommend: recommend, GateJob: j.ID, Options: options}})
+		Text:  j.Project + "　「" + textfmt.TruncRunes(j.Title, 40) + "」" + card.Head,
+		Lines: card.Lines,
+		Card:  &notify.DecideCard{Project: j.Project, Fingerprint: j.Fingerprint, Title: j.Title, Recommend: card.Recommend, GateJob: j.ID, Options: options}})
 }
 
 // followBranch：用户看过门的结论，可能在分支上补了提交再要再审。分支最新的提交带着合格的交付单，就改看它（放行也只合它）；
@@ -734,6 +738,19 @@ func (a *Service) Decide(id, action, reason string) error {
 		return err
 	}
 	return fsx.WriteFileAtomic(decisionPath(a.Dir(id)), b)
+}
+
+// PendingDecision：已经记下、下次 tick 才落的决定。没有、读不出都返回 ok=false。
+func (a *Service) PendingDecision(id string) (action, reason string, ok bool) {
+	b, err := os.ReadFile(decisionPath(a.Dir(id)))
+	if err != nil {
+		return "", "", false
+	}
+	var d decision
+	if json.Unmarshal(b, &d) != nil || d.Action == "" {
+		return "", "", false
+	}
+	return d.Action, d.Reason, true
 }
 
 func decisionPath(dir string) string { return filepath.Join(dir, "decision.json") }
@@ -927,9 +944,12 @@ func (a *Service) markAbandoned(p backlog.Project, def, fp, title, id string) er
 }
 
 // audit 留痕：人工放行、退回、放弃都记。
-func (a *Service) audit(line string) {
-	a.Logf("门：用户%s", line)
-	a.Ledger.AppendNightlyLine(a.Now(), "门：用户"+line)
+func (a *Service) audit(line string) { a.auditAs("用户", line) }
+
+// auditAs 写一行审计。who 是日志里的称呼，审计文件里只写 line：独立审查代的行以「独立审查代放行」开头，认得出不是用户点的。
+func (a *Service) auditAs(who, line string) {
+	a.Logf("门：%s%s", who, line)
+	a.Ledger.AppendNightlyLine(a.Now(), "门："+who+line)
 	path := a.auditPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		a.Logf("门：审计行没写上：%v", err)
@@ -1229,6 +1249,9 @@ func (a *Service) printReport(j *state.Job) error {
 	}
 	if text := a.reportText(j); text != "" {
 		fmt.Fprintf(w, "\n%s", text)
+	}
+	if own := a.ownWords(j); own != "" && g.State == state.GateStuck {
+		fmt.Fprintf(w, "\n任务最后一轮自己的说明：%s\n", own)
 	}
 	if b, err := os.ReadFile(filepath.Join(a.Dir(j.ID), DeliveryFile)); err == nil {
 		fmt.Fprintf(w, "\n%s", b)

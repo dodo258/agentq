@@ -84,12 +84,21 @@ type Config struct {
 	DiscussEnabled bool `json:"discuss_enabled"`
 	// 产品经理调研（pm_enabled，默认开）：项目第一版合并后、之后待做清空时，只读联网调研同类，写 1–3 条下一步进「## 建议」，同一项目 14 天最多一次（见 internal/pm）。
 	PMEnabled bool `json:"pm_enabled"`
+	// SuggestAutoAfter（默认 24h）：「## 建议」里的条目写进去这么久还没回「做 N」「不做 N」，tick 就照「做 N」移进待做并推一条通知，一个项目一次最多 1 条。
+	// 写 0 表示一直等用户回：有人想每条亲手点头（见 internal/suggest/auto.go）。
+	SuggestAutoAfter Duration `json:"suggest_auto_after"`
 	// Backend：用哪个 CLI 后端，不写就是 claude，已有配置不用动。写了不认识的名字不回退：任务不启动，status 和 doctor 说明。
 	Backend string `json:"backend,omitempty"`
 	// ProjectBackends：按项目换后端。放用户配置，不放项目仓库：项目文件可能来自别人，不能让它决定代码发给哪家。
 	ProjectBackends map[string]string `json:"project_backends,omitempty"`
 	// Backends：每个后端自己的路径、模型、强度、权限。顶层的 model、effort、permission_mode 这些是默认后端的，别的后端只看这里，见 ForBackend。
 	Backends map[string]BackendConfig `json:"backends,omitempty"`
+
+	// ReleaseRepos：自动发版的项目（项目目录名 → 公开仓 owner/repo）。只在这台机器的配置里登记，项目文件说了不算：
+	// 别人 clone 了带「自动发版」规则的仓库，不会替原作者发版（见 internal/release）。登记了就算用户点名，被排除的项目也发。
+	ReleaseRepos map[string]string `json:"release_repos,omitempty"`
+	// SiteProject：官网项目的目录名。self_project 发了新版本后往它的「待做」写一条「对齐新版本」；空的不写。
+	SiteProject string `json:"site_project,omitempty"`
 
 	// 下面是写死的默认值：不从 config.json 读写，值在 Default() 里定；留成字段让测试能调（进程内直接改，真实二进制用 TestTuningEnv）。
 
@@ -390,6 +399,8 @@ func Default() Config {
 		PMEnabled:       true,
 		SelfGrowEnabled: true,
 
+		SuggestAutoAfter: Duration{24 * time.Hour},
+
 		TickAfterJob:    true,
 		BreakerStreak:   3,
 		BreakerQuick:    Duration{3 * time.Minute},
@@ -459,6 +470,9 @@ func (c Config) Validate() error {
 	if c.Timeout.Duration <= 0 || c.RetryAfter.Duration <= 0 || c.LimitCooldown.Duration <= 0 {
 		bad = append(bad, "timeout、retry_after、limit_cooldown 都要大于 0")
 	}
+	if c.SuggestAutoAfter.Duration < 0 {
+		bad = append(bad, "suggest_auto_after 不能是负数（0 表示一直等用户回）")
+	}
 	if !(c.UsageStopSessionPct >= 1 && c.UsageStopSessionPct <= 97) || !(c.UsageStopWeekPct >= 1 && c.UsageStopWeekPct <= 97) {
 		bad = append(bad, "usage_stop_session_pct、usage_stop_week_pct 要在 1 到 97 之间（到 98% 连 agentq run 都拒绝）")
 	}
@@ -470,6 +484,15 @@ func (c Config) Validate() error {
 	}
 	if c.SelfProject != "" && (strings.TrimSpace(c.SelfProject) == "" || c.SelfProject == "." || c.SelfProject == ".." || strings.ContainsAny(c.SelfProject, `/\`)) {
 		bad = append(bad, "self_project 要写项目目录名，不能带路径")
+	}
+	if c.SiteProject != "" && !projectName(c.SiteProject) {
+		bad = append(bad, "site_project 要写项目目录名，不能带路径")
+	}
+	for name, repo := range c.ReleaseRepos {
+		if !projectName(name) || !regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`).MatchString(repo) {
+			bad = append(bad, "release_repos 要写 项目目录名 到 owner/repo")
+			break
+		}
 	}
 	for _, dir := range c.ExtraProjects {
 		if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir || dir == string(filepath.Separator) {
@@ -503,6 +526,11 @@ func (c Config) Validate() error {
 		return errors.New(strings.Join(bad, "；"))
 	}
 	return nil
+}
+
+// projectName：是一个项目目录名（不空、不带路径）。
+func projectName(s string) bool {
+	return strings.TrimSpace(s) != "" && s != "." && s != ".." && !strings.ContainsAny(s, `/\`)
 }
 
 // permissionProblem：权限值由后端自己声明。没注册的后端（写错了，status 和 doctor 会说）和不声明的后端查不了，放过。

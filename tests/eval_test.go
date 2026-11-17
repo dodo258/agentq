@@ -3,6 +3,7 @@ package tests
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -103,11 +104,25 @@ func TestEvalFakeFullFlow(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("退出码 %d：\n%s", code, out)
 	}
-	if !strings.Contains(out, "要跑 35 题（程序题 25，模型题 10），后端：假 CLI，调模型：否") {
+	// 题数从仓库里的 evals/ 数：每加一道题不用再改这里，各任务分支并行加题合并后也不会对不上。
+	cases, err := evolve.LoadCases(os.DirFS("evals"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	program := 0
+	for _, c := range cases {
+		if c.Kind == evolve.KindProgram {
+			program++
+		}
+	}
+	if len(cases) < 40 || program == 0 || program == len(cases) {
+		t.Fatalf("evals/ 读出 %d 题（程序题 %d），不对", len(cases), program)
+	}
+	if want := fmt.Sprintf("要跑 %d 题（程序题 %d，模型题 %d），后端：假 CLI，调模型：否", len(cases), program, len(cases)-program); !strings.Contains(out, want) {
 		t.Errorf("开跑前要说清跑几题、用哪个后端：\n%s", out)
 	}
 	run := lastRun(t, home)
-	if len(run.Scores) != 35 {
+	if len(run.Scores) != len(cases) {
 		t.Fatalf("%d 题：\n%s", len(run.Scores), out)
 	}
 	byID := map[string]evolve.Score{}
@@ -142,7 +157,7 @@ func TestEvalFakeFullFlow(t *testing.T) {
 	if out, code := runEval(t, home, tmp, "compare"); code == 0 || !strings.Contains(out, "还没有基线") {
 		t.Errorf("没基线不能比：%d %s", code, out)
 	}
-	if out, code := runEval(t, home, tmp, "baseline"); code != 0 || !strings.Contains(out, "35 题") {
+	if out, code := runEval(t, home, tmp, "baseline"); code != 0 || !strings.Contains(out, fmt.Sprintf("%d 题", len(cases))) {
 		t.Fatalf("%d %s", code, out)
 	}
 	if out, code := runEval(t, home, tmp, "compare"); code != 0 || !strings.Contains(out, "没有变差") {

@@ -64,6 +64,10 @@ type Result struct {
 	Usage *backend.JobUsage `json:"usage,omitempty"`
 	// Hold 非空：这道门没挡，但这次改动不能自动合并（比如候选改了评判它的尺子），等用户放行。原因写在这里。
 	Hold string `json:"hold,omitempty"`
+	// Ruler：Hold 是因为改了评判的尺子。只有这种（和新增删数据语句的难撤回）停下能先让独立审查代看，见 holdreview.go。
+	Ruler bool `json:"ruler,omitempty"`
+	// Unjudged：没过是因为检查自己没跑成（比如评测题这次连现场都布置不起来），不是改动被判错。档位照旧，卡片按「判不了」说。
+	Unjudged bool `json:"unjudged,omitempty"`
 	// Caps：能力门这次用上的每项能力和它的检查结果，见 capability.go。
 	Caps []CapRun `json:"caps,omitempty"`
 }
@@ -103,6 +107,8 @@ type Candidate struct {
 	Fresh bool
 	// Upstream：前面已经因为上游瞬时错误重跑了几次。
 	Upstream int
+	// Appended：和默认分支的冲突只在只追加的记录文件里、引擎自动合好的那几个文件。
+	Appended []string
 	// Prior 是这次已经跑完的门的结果，比如让审查门看到测试门标出的事。
 	Prior []Result
 	// Risk 是改错了多难撤回，引擎在跑门前定，见 risk.go。

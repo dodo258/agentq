@@ -51,6 +51,17 @@ func TestClassify(t *testing.T) {
 		{name: "产品代码照样算（同一次也改了测试）", files: []string{"internal/store/s.go", "internal/store/s_test.go"}, added: map[string]string{"internal/store/s.go": `db.Exec("DROP TABLE users")`, "internal/store/s_test.go": "DROP TABLE x"}, want: gate.RiskIrreversible, reason: "internal/store/s.go（DROP TABLE）"},
 		{name: "测试目录里的 sql 文件按路径规则照样算", files: []string{"tests/fixtures/seed.sql"}, want: gate.RiskIrreversible, reason: "*.sql"},
 		{name: "代码里的 Truncate( 不算", files: []string{"a.go"}, added: map[string]string{"a.go": "f.Truncate(0)\nos.Truncate(p, 0)"}, want: gate.RiskLocal},
+		{name: "前端文件里的 Tailwind truncate 类名不算", files: []string{"parent-web/src/components/StatusSheet.tsx", "web/a.vue", "web/b.html", "web/c.css"}, added: map[string]string{
+			"parent-web/src/components/StatusSheet.tsx": `<p className="truncate text-sm">{name}</p>`,
+			"web/a.vue":  `<span class="truncate max-w-xs">x</span>`,
+			"web/b.html": `<div class="truncate table-cell">x</div>`,
+			"web/c.css":  ".name { @apply truncate font-medium; }",
+		}, want: gate.RiskLocal},
+		{name: "前端文件里 TRUNCATE TABLE 照样算", files: []string{"web/Admin.tsx"}, added: map[string]string{"web/Admin.tsx": "await sql`TRUNCATE TABLE users`"}, want: gate.RiskIrreversible, reason: "web/Admin.tsx（TRUNCATE）"},
+		{name: "前端文件里 DELETE FROM、DROP TABLE 照样算", files: []string{"web/a.jsx", "web/b.svelte"}, added: map[string]string{"web/a.jsx": `db.run("DELETE FROM users")`, "web/b.svelte": `db.exec("drop table logs")`}, want: gate.RiskIrreversible, reason: "web/a.jsx（DELETE FROM）、web/b.svelte（DROP TABLE）"},
+		{name: "go 里 TRUNCATE users 照样算", files: []string{"internal/store/s.go"}, added: map[string]string{"internal/store/s.go": `db.Exec("TRUNCATE users")`}, want: gate.RiskIrreversible, reason: "internal/store/s.go（TRUNCATE）"},
+		{name: "sql 里 TRUNCATE users 照样算", files: []string{"db/reset.sql"}, added: map[string]string{"db/reset.sql": "TRUNCATE users;"}, want: gate.RiskIrreversible, reason: "db/reset.sql（TRUNCATE）"},
+		{name: "其他文件里 truncate 后跟名字照样算", files: []string{"scripts/reset.py"}, added: map[string]string{"scripts/reset.py": `cur.execute("truncate users")`}, want: gate.RiskIrreversible, reason: "scripts/reset.py（TRUNCATE）"},
 		{name: "条目标了（难撤回）", files: []string{"a.go"}, item: "（难撤回）清理旧数据 —— 删掉过期记录", want: gate.RiskIrreversible, reason: "（难撤回）"},
 		{name: "条目标题结尾标（难撤回）", files: []string{"a.go"}, item: "清理旧数据（难撤回） —— 删掉过期记录", want: gate.RiskIrreversible, reason: "（难撤回）"},
 		{name: "正文顺带提到难撤回不算", files: []string{"a.go"}, item: "改提示 —— 这事不算难撤回，照常合", want: gate.RiskLocal},
@@ -167,7 +178,7 @@ func TestRiskIrreversibleWaitsForPass(t *testing.T) {
 	for _, n := range s.Pending {
 		if n.Card != nil && n.Card.GateJob == j.ID {
 			found = true
-			if n.Card.Recommend != "" || !strings.Contains(n.Text, "等你拍板") || !strings.Contains(strings.Join(n.Lines, " "), "难撤回") {
+			if n.Card.Recommend != "A" || !strings.Contains(n.Text, "等你拍板") || !strings.Contains(strings.Join(n.Lines, " "), "难撤回") {
 				t.Errorf("卡片：%+v", n)
 			}
 		}

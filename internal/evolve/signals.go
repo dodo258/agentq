@@ -24,7 +24,9 @@ import (
 //   - 来源：门的结果（gate/<任务>/last.json）、任务记录（jobs/<任务>/meta.json）按文件记，只读新出现或改过的；巡逻（patrol.json）只看上次之后首次发现的问题。
 //   - 同类归并：Key 是种类 + 门名 + 去掉路径、哈希、数字后的原因前 60 字。同一份证据（任务、巡逻问题）只算一次。
 //   - 门 error 档没过、退回了任务的拦截先记着；这一条后来合并了（门是对的）或用户放弃了，才算确认，并进项目约束（constraints.go）。
-//     用户放行、再审过了的不算：放行记成 gate-override 信号，是门的问题；门都过了、只因为改了尺子等人看而放行的不记（heldOnPurpose）；记过的每次收信号按现在的规则重判（recheckOverrides）。
+//     用户放行、再审过了的不算：放行记成 gate-override 信号，是门的问题，按门当时停在哪归类（overrideStop），不按放行理由；
+//     门都过了、只因为改了尺子等人看而放行的不记（heldOnPurpose）。
+//     放行、亲手停、刚启动就停这几类按任务记录判，规则只在 jobCounts 一处，记过的每次收信号按现在的规则重判（usersignals.go）。
 //   - agentq 自己的信号（见 selfKind）同一 Key 出现两次以上，写一条提案（proposal.go），同一 Key 只提一次。
 //   - 用户和真实使用里冒出来的问题（亲手 stop、刚启动就被停、门卡片上退回或放弃、验收后返工、巡逻疑似误报、retry_after 挡太久）见 usersignals.go。
 //   - tick 每小时最多收一次；没有新数据就什么都不写，下次 tick 再看（stat 门结果和任务记录，读一次 patrol.json）。
@@ -272,7 +274,7 @@ func gateWord(name string) string {
 	return name + " 门"
 }
 
-// CollectIfDue：tick 调用。开关开着、离上次收到新数据满一小时才收；出错只记日志，不影响 tick。
+// CollectIfDue：tick 调用。开关开着、离上次收到新数据满一小时才收；再看评测基线要不要补新题（basefill.go）。出错只记日志，不影响 tick。
 func (s *Service) CollectIfDue() {
 	defer func() { // 收集出了没想到的错也不能让 tick 非 0 退出
 		if p := recover(); p != nil {
@@ -282,6 +284,7 @@ func (s *Service) CollectIfDue() {
 	if _, err := s.Collect(false); err != nil {
 		s.Logf("自我进化：%v", err)
 	}
+	s.FillBaselineIfDue()
 }
 
 // Collect 收一次信号。force 为假时离上次收到新数据不满一小时就不收。返回这次有没有新数据（有才写文件）。
@@ -344,7 +347,7 @@ func (s *Service) Collect(force bool) (bool, error) {
 	for _, w := range in.retry {
 		s.absorbRetryWait(st, w, now)
 	}
-	s.recheckOverrides(st)
+	s.recheckJobSignals(st)
 	for project, cs := range learned {
 		if err := s.learn(project, cs, now); err != nil {
 			s.Logf("自我进化：%s 的约束没存下：%v", project, err)
@@ -374,6 +377,7 @@ type patrolIssue struct {
 	Check       string    `json:"check"`
 	Title       string    `json:"title"`
 	FirstSeen   time.Time `json:"first_seen"`
+	CausedBy    string    `json:"caused_by,omitempty"`
 }
 
 type scanned struct {
@@ -445,9 +449,17 @@ func (s *Service) scan(ctx context.Context, st *SignalStore, now time.Time) *sca
 		if !ok {
 			continue
 		}
-		if j := s.readMeta(p); j != nil {
-			ms = append(ms, metaAt{j, at})
+		j := s.readMeta(p)
+		if j == nil {
+			continue
 		}
+		if s.jobUndecided(j, now) { // 不记成读过：下次收集再看
+			if rel, err := filepath.Rel(s.DataDir(), p); err == nil {
+				delete(in.files, rel)
+			}
+			continue
+		}
+		ms = append(ms, metaAt{j, at})
 	}
 	sort.SliceStable(ms, func(a, b int) bool { return ms[a].at.Before(ms[b].at) })
 	for _, m := range ms {
@@ -460,7 +472,7 @@ func (s *Service) scan(ctx context.Context, st *SignalStore, now time.Time) *sca
 		}
 		if json.Unmarshal(b, &ps) == nil {
 			in.patrol, in.patrolRead = ps.Issues, true
-			if slices.ContainsFunc(ps.Issues, func(is patrolIssue) bool { return is.FirstSeen.After(st.PatrolAfter) && selfPatrol(is.Check) }) {
+			if slices.ContainsFunc(ps.Issues, func(is patrolIssue) bool { return is.FirstSeen.After(st.PatrolAfter) && selfPatrol(is) }) {
 				in.touched = true
 			}
 			s.scanPatrolGone(st, ps.Issues, now, in)
@@ -548,14 +560,14 @@ func (s *Service) absorbMeta(st *SignalStore, j *state.Job, now time.Time) []con
 			st.fixedSelfItem(j, g.Merge)
 			pend := st.takePending(j)
 			switch {
-			case (g.Passes > 0 || g.Override != "") && !s.heldOnPurpose(j):
+			case s.jobCounts(KindGateOverride, j):
 				// 用户放行：门拦错了，不学；记成门的问题。合并后收尾还会再写 meta.json：这个任务记过一次就不再记，
 				// 不然第二次读时等确认的拦截已经取走，Key 变了，同一次放行会算成另一类
 				if slices.ContainsFunc(st.Signals, func(sig Signal) bool { return sig.Kind == KindGateOverride && slices.Contains(sig.Evidence, ev) }) {
 					break
 				}
 				// 放行的是这个任务自己被拦下的那次；前面几轮（退回后换了任务号）的拦截任务已经改过、门也过了，不是这次放行的对象
-				gateName, why := "", g.Override
+				gateName, why := s.overrideStop(j)
 				if i := slices.IndexFunc(pend, func(p pendingFail) bool { return p.Job == j.ID }); i >= 0 {
 					gateName, why = pend[i].Gate, pend[i].Summary
 				}
@@ -611,7 +623,15 @@ func (s *Service) heldOnPurpose(j *state.Job) bool {
 	if j.Gate.Reruns > 0 {
 		return false
 	}
-	files, _ := filepath.Glob(filepath.Join(s.Gate.Dir(j.ID), "passed-*.json")) // 模式是固定的，不会报错
+	return slices.ContainsFunc(s.passedRuns(j.ID), func(rs []gate.Result) bool {
+		return slices.ContainsFunc(rs, func(r gate.Result) bool { return r.Hold != "" })
+	})
+}
+
+// passedRuns：这个任务门目录里门都过了的记录（passed-<tree>.json），每份是那次各门的结果。读不了的跳过。
+func (s *Service) passedRuns(id string) [][]gate.Result {
+	files, _ := filepath.Glob(filepath.Join(s.Gate.Dir(id), "passed-*.json")) // 模式是固定的，不会报错
+	var out [][]gate.Result
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
@@ -620,35 +640,48 @@ func (s *Service) heldOnPurpose(j *state.Job) bool {
 		var rec struct {
 			Results []gate.Result `json:"results"`
 		}
-		if json.Unmarshal(b, &rec) == nil && slices.ContainsFunc(rec.Results, func(r gate.Result) bool { return r.Hold != "" }) {
-			return true
+		if json.Unmarshal(b, &rec) == nil {
+			out = append(out, rec.Results)
 		}
 	}
-	return false
+	return out
 }
 
-// recheckOverrides 按现在的规则重判记过的放行信号：规则后来改了（比如加了 heldOnPurpose），改之前记下、现在不算的证据去掉，
-// 一份不剩的信号删掉。不然这些按旧规则记的信号还会凑够次数提案，配上 self_project 后复审旧提案也会把它们原样转进待做。
-func (s *Service) recheckOverrides(st *SignalStore) {
-	for i := range st.Signals {
-		sig := &st.Signals[i]
-		if sig.Kind != KindGateOverride {
-			continue
+// overrideStop：用户放行时门停在哪（门名、原因），放行信号按它归类。放行理由不进归类：Telegram 按钮放行都是「Telegram 按钮放行」，
+// 按它归类会把门停的原因各不相同的放行凑成「反复出现」（11-13 审查判不了、11-16 难撤回等人看，两次都点了按钮）。
+// 按任务记录上各门的结论（Tally）认：error 档没过、判不了的门；都过了又有门都过了的记录，是按改错的代价等人看，写 last.json 的风险档位和依据。
+// 认不出的（升级前的记录没有 Tally）才用放行理由。这个任务自己被拦下的那次有记录时调用方用那次的门和原因。
+func (s *Service) overrideStop(j *state.Job) (string, string) {
+	g := j.Gate
+	var names []string
+	failed := false
+	for name, t := range g.Tally {
+		if t != nil && t.Fail+t.Unknown > t.WouldBlock { // warn 档没过不挡合并
+			names = append(names, name)
+			failed = failed || t.Fail > t.WouldBlock
 		}
-		n := len(sig.Evidence)
-		sig.Evidence = slices.DeleteFunc(sig.Evidence, func(ev string) bool {
-			id, ok := evidenceJob(ev)
-			if !ok {
-				return false
-			}
-			j := s.readMeta(filepath.Join(s.JobDir(id), "meta.json"))
-			return j != nil && j.Gate != nil && j.Gate.State == state.GateMerged && s.heldOnPurpose(j)
-		})
-		sig.Seen -= n - len(sig.Evidence)
 	}
-	st.Signals = slices.DeleteFunc(st.Signals, func(sig Signal) bool {
-		return sig.Kind == KindGateOverride && (len(sig.Evidence) == 0 || sig.Seen <= 0)
-	})
+	if len(names) > 0 {
+		slices.Sort(names)
+		if failed {
+			return strings.Join(names, "、"), "没过"
+		}
+		return strings.Join(names, "、"), "判不了"
+	}
+	if len(g.Tally) == 0 || len(s.passedRuns(j.ID)) == 0 {
+		return "", g.Override
+	}
+	why := "门都过了，等人看"
+	var last gate.RunResult
+	if b, err := os.ReadFile(s.gateLast(j.ID)); err == nil && json.Unmarshal(b, &last) == nil && last.Risk != nil {
+		switch last.Risk.Level {
+		case gate.RiskIrreversible:
+			why = "难撤回：" + strings.Join(last.Risk.Reasons, "；")
+		case gate.RiskBroad:
+			why = "影响面广：" + strings.Join(last.Risk.Reasons, "；")
+		}
+	}
+	return "", why
 }
 
 // evidenceJob 从「任务 <任务号>（<项目>）」这样的证据里取任务号。
@@ -664,10 +697,15 @@ func evidenceJob(ev string) (string, bool) {
 // patrolVuln 是巡逻 govulncheck 那一类问题的 check（internal/patrol 的 vuln.go）。
 const patrolVuln = "vuln"
 
-// selfPatrol：这类巡逻问题算 agentq 的问题。等用户决定、额度、任务失败（任务记录里已经有）、磁盘、外部推送脚本不算。
-func selfPatrol(check string) bool {
-	switch check {
-	case "decide", "usage", "job", "disk", "autopush":
+// selfPatrol：这个巡逻问题算 agentq 的问题。等用户决定、额度、任务失败（任务记录里已经有）、磁盘、外部推送和备份脚本
+// （autopush 是提交后的自动推送，backup 是每天定时备份写的报告）不算：改 agentq 修不好，连着几天失败是那边的仓库或脚本出了事。
+// 别的问题的后果（CausedBy，如夜班任务失败了所以缺夜班报告）按那个问题算，也不算。
+func selfPatrol(is patrolIssue) bool {
+	if is.CausedBy != "" {
+		return false
+	}
+	switch is.Check {
+	case "decide", "usage", "job", "disk", "autopush", "backup":
 		return false
 	}
 	return true
@@ -676,7 +714,7 @@ func selfPatrol(check string) bool {
 // absorbPatrol：巡逻上次之后新发现的问题。
 func (s *Service) absorbPatrol(st *SignalStore, issues []patrolIssue, now time.Time) {
 	for _, is := range issues {
-		if !is.FirstSeen.After(st.PatrolAfter) || !selfPatrol(is.Check) {
+		if !is.FirstSeen.After(st.PatrolAfter) || !selfPatrol(is) {
 			continue
 		}
 		if is.Check == patrolVuln { // 按模块归并，不压掉标题里的版本和编号

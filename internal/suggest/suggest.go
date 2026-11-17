@@ -484,17 +484,22 @@ func (a *Service) DoSuggestApplies(m *telegram.TgMsg, nums []int) bool {
 // DoSuggestions 把编号对应的建议从「建议」移进「待做」并逐个提交，返回回复用户的消息（HTML）。
 // 条目已被删、改过或移走、编号不存在都算失效，不报错；提交失败（主目录脏、不在 main）的留着，下次还能做。
 func (a *Service) DoSuggestions(nums []int) string {
-	done, gone, failed := a.eachSuggestion(nums, "做", func(p backlog.Project, e SuggestEntry) error {
-		return a.Backlog.CommitBacklog(p, "待办："+textfmt.TruncRunes(e.Title, 40)+"（闲时建议，用户确认）", func(old string) (string, error) {
+	done, gone, failed := a.moveToTodo(nums, "做", "（闲时建议，用户确认）", "用户确认了")
+	return a.suggestReply("已移进「待做」", done, gone, failed)
+}
+
+// moveToTodo 是「做 N」那条路：逐个移进「待做」并提交，成功的从索引里去掉。why 写进提交说明，who 写进日志。
+func (a *Service) moveToTodo(nums []int, verb, why, who string) (done, gone, failed []string) {
+	return a.eachSuggestion(nums, verb, func(p backlog.Project, e SuggestEntry) error {
+		return a.Backlog.CommitBacklog(p, "待办："+textfmt.TruncRunes(e.Title, 40)+why, func(old string) (string, error) {
 			return moveSuggestion(old, e.Fingerprint, e.Title)
 		})
 	}, func(n int, e SuggestEntry) {
 		if err := a.WithSuggest(func(s *SuggestStore) error { s.remove(n); return nil }); err != nil {
 			a.Logf("建议：编号 %d 处理完了，但索引没改成：%v", n, err)
 		}
-		a.Logf("建议：用户确认了建议 %d，%s 的「%s」已移进待做", n, e.Project, textfmt.TruncRunes(e.Title, 30))
+		a.Logf("建议：%s建议 %d，%s 的「%s」已移进待做", who, n, e.Project, textfmt.TruncRunes(e.Title, 30))
 	})
-	return a.suggestReply("已移进「待做」", done, gone, failed)
 }
 
 // retireSuggestion：编号作废，标题留着继续判重。

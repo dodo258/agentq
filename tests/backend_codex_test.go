@@ -743,7 +743,7 @@ func TestCodexInstallerProjectsSkills(t *testing.T) {
 	if err := i.Doctor(); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	testkit.AssertContains(t, out.String(), "后端：codex", "已登录（ChatGPT）", "美元上限：无", "额度查询：无", "命令行进程标记：无", "关掉的任务：", "大方向商量", setup.PermissionDefaultHint, "permission_mode=danger-full-access")
+	testkit.AssertContains(t, out.String(), "后端：codex", "已登录（ChatGPT）", "美元上限：无", "额度查询：有", "命令行进程标记：无", "关掉的任务：", "大方向商量", setup.PermissionDefaultHint, "permission_mode=danger-full-access")
 	if strings.Contains(out.String(), "待做和 new（要合并）") {
 		t.Errorf("Codex 能做要合并的任务：\n%s", out.String())
 	}

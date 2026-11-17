@@ -21,7 +21,7 @@ const (
 	RiskLocal Risk = "local"
 	// RiskBroad：影响面广。确定性门（patch、test、smoke）warn 当 error；测试门没跑就判不了，等用户定。
 	RiskBroad Risk = "broad"
-	// RiskIrreversible：难撤回。门照跑，无论结论都不自动合并，等用户 agentq gate pass。没有配置能让它自动合。
+	// RiskIrreversible：难撤回。门照跑，门都过了也要人看过才合：只命中删数据语句的先让独立审查代看（holdreview.go），它放行才合；其余等用户 agentq gate pass。没有配置能让它自动合。
 	RiskIrreversible Risk = "irreversible"
 )
 
@@ -51,9 +51,18 @@ var (
 	// schemaFiles：接口和数据结构定义。
 	schemaFiles = []string{"*.proto", "openapi*.yaml", "openapi*.yml", "*.graphql", "schema*.json"}
 	// dangerSQL：新增行里删数据的语句，不分大小写。TRUNCATE 要后面跟表名，免得 f.Truncate(0) 这种代码误判。
-	dangerSQL = regexp.MustCompile(`(?i)\b(drop\s+table|drop\s+column|delete\s+from|truncate\s+(table\s+)?[\w"` + "`" + `\[])`)
+	dangerSQL = regexp.MustCompile(`(?i)\b(` + deleteStmts + `|truncate\s+(table\s+)?` + sqlName + `)`)
+	// markupSQL：前端模板和样式文件用的。Tailwind 有 truncate 类名（className="truncate text-sm"），TRUNCATE 要带 TABLE 才算。
+	markupSQL = regexp.MustCompile(`(?i)\b(` + deleteStmts + `|truncate\s+table\s+` + sqlName + `)`)
+	// markupExts：按 markupSQL 扫的前端文件，只比扩展名。
+	markupExts = []string{".tsx", ".jsx", ".vue", ".svelte", ".astro", ".html", ".htm", ".css", ".scss", ".sass", ".less"}
 	// deterministicGates：影响面广时 warn 升 error 的门。审查和界面门调模型，不算确定性的。
 	deterministicGates = []string{"patch", "test", "smoke"}
+)
+
+const (
+	deleteStmts = `drop\s+table|drop\s+column|delete\s+from`
+	sqlName     = `[\w"` + "`" + `\[]` // 表名的头一个字符：字母数字、引号、反引号、方括号
 )
 
 const (
@@ -74,15 +83,16 @@ func Classify(files, deleted []string, added func(path string) string, item stri
 	if added != nil {
 		var sql []string
 		for _, f := range files {
-			if notExecuted(f) {
+			re := dangerPattern(f)
+			if re == nil {
 				continue
 			}
-			if m := dangerSQL.FindString(added(f)); m != "" {
+			if m := re.FindString(added(f)); m != "" {
 				sql = append(sql, f+"（"+sqlKeyword(m)+"）")
 			}
 		}
 		if len(sql) > 0 {
-			hard = append(hard, "新增行有删数据的语句："+listFiles(sql))
+			hard = append(hard, sqlReason+listFiles(sql))
 		}
 	}
 	if backlog.IrreversibleItem(item) {
@@ -125,6 +135,18 @@ func Classify(files, deleted []string, added func(path string) string, item stri
 		return RiskBroad, broad
 	}
 	return RiskLocal, nil
+}
+
+// dangerPattern：按文件种类选扫新增行的规则，nil 是不扫。同一个词在不同文件里意思不同：
+// 文档和测试里的语句不会执行；前端模板和样式里 truncate 是类名；其余文件按 dangerSQL。
+func dangerPattern(f string) *regexp.Regexp {
+	switch {
+	case notExecuted(f):
+		return nil
+	case slices.Contains(markupExts, strings.ToLower(path.Ext(f))):
+		return markupSQL
+	}
+	return dangerSQL
 }
 
 // notExecuted：文档和测试文件，里面写到删数据的语句不会在用户的数据上执行，不扫新增行。路径规则照样算。

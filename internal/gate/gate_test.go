@@ -669,7 +669,7 @@ func TestFailReturnsThenStuck(t *testing.T) {
 	if j.Gate.State != state.GateReturned {
 		t.Fatalf("%+v", j.Gate)
 	}
-	// 第 3 次：用完了。卡片带上任务最后一轮自己的说明，不只是门的结论
+	// 第 3 次：用完了。卡片用人话说没过的是测试；任务最后一轮自己的说明在 gate report 里
 	os.MkdirAll(f.a.JobDir(j.ID), 0o755)
 	os.WriteFile(filepath.Join(f.a.JobDir(j.ID), "result.json"), []byte(`{"type":"result","subtype":"success","is_error":false,"result":"改了测试数据。\n\n没合并；审查说的竞态我不同意：加了 -race 连跑 20 次都过。","session_id":"s"}`+"\n"), 0o644)
 	j.Status, j.ResumePending = state.StatusDone, false
@@ -695,13 +695,23 @@ func TestFailReturnsThenStuck(t *testing.T) {
 	for _, n := range s.Pending {
 		if n.Card != nil {
 			card = n.Card
-			if lines := strings.Join(n.Lines, "\n"); !strings.Contains(lines, "测试没过") || !strings.Contains(lines, "任务自己的说明：没合并；审查说的竞态我不同意") {
-				t.Errorf("卡片要带门的结论和任务自己的说明：\n%s", lines)
+			if lines := strings.Join(n.Lines, "\n"); !strings.Contains(lines, "测试没过") {
+				t.Errorf("卡片要说清没过的是什么：\n%s", lines)
 			}
 		}
 	}
 	if card == nil || card.GateJob != j.ID || len(card.Options) != 3 || card.Options[0].Text != "放行" || card.Options[1].Text != "退回" || card.Options[2].Text != "放弃" {
 		t.Fatalf("决定卡片：%+v", card)
+	}
+	if err := state.Save(f.a.StatePath(), f.st); err != nil {
+		t.Fatal(err)
+	}
+	f.out.Reset()
+	if err := f.a.CmdGate([]string{"report", j.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.out.String(), "任务最后一轮自己的说明：没合并；审查说的竞态我不同意") {
+		t.Errorf("报告要带任务自己的说明：\n%s", f.out.String())
 	}
 }
 

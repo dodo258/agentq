@@ -100,7 +100,7 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 		"tick": {0, 0}, "run": {1, 2}, "new": {1, 3}, "discuss": {0, 3}, "status": {0, 0}, "logs": {1, 1},
 		"stop": {1, 1}, "pause": {0, 0}, "resume": {0, 0}, "install": {0, 0}, "uninstall": {0, 0},
 		"night": {0, 0}, "review": {0, 0}, "backlog": {2, 3}, "stats": {0, 1}, "patrol": {0, 0}, "notify": {0, 30}, "listen": {0, 0},
-		"init": {0, 1}, "add": {1, 4}, "start": {0, 2}, "env": {1, 1}, "projects": {0, 0}, "gate": {0, 4}, "health": {0, 1}, "eval": {0, 30}, "evolve": {0, 2}, app.GateProcToken: {0, 1},
+		"init": {0, 1}, "add": {1, 4}, "start": {0, 2}, "env": {1, 1}, "projects": {0, 0}, "gate": {0, 4}, "health": {0, 1}, "eval": {0, 30}, "evolve": {0, 2}, app.GateProcToken: {0, 1}, app.ReleaseProcToken: {2, 2},
 	}
 	n, ok := want[cmd]
 	if !ok {
@@ -141,6 +141,8 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 	switch cmd {
 	case app.GateProcToken: // 过门的后台进程，内部用，不列在用法里
 		return a.RunGate(rest, stderr)
+	case app.ReleaseProcToken: // 自动发版的后台进程，内部用，不列在用法里
+		err = a.Release.Run(rest)
 	case "gate":
 		err = a.Gate.CmdGate(rest)
 	case "health":

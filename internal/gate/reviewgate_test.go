@@ -77,8 +77,13 @@ func reply(verdict string, findings ...map[string]any) string {
 	return string(b) + "\n"
 }
 
+// finding：blocker 是一个问题（kind 写 wrong），别的是说明（note）。
 func finding(file string, line int, severity, evidence, repro string) map[string]any {
-	return map[string]any{"file": file, "line": line, "severity": severity, "evidence": evidence, "repro": repro}
+	kind := "note"
+	if severity == "blocker" {
+		kind = "wrong"
+	}
+	return kindFinding(file, line, kind, evidence, repro)
 }
 
 const newFile = "new.txt"
@@ -191,6 +196,62 @@ func TestReviewNoEvidenceDoesNotBlock(t *testing.T) {
 	f.commit(wt, nil, ready("agent/x"))
 	if res := f.run(j); res.Outcome != "fail" {
 		t.Fatalf("%+v", res)
+	}
+}
+
+func kindFinding(file string, line int, kind, evidence, repro string) map[string]any {
+	return map[string]any{"file": file, "line": line, "kind": kind, "evidence": evidence, "repro": repro}
+}
+
+// 要不要阻塞由引擎按类别和证据定，不听模型的 verdict：任务 1115-192048-gps-tracker 的审查找到了带复现的静默丢点，
+// 自己标成「提示」、verdict 写 pass，门照样放过去，只因为删数据要人看才被用户在卡片上退回。
+func TestReviewProblemKindBlocksDespitePass(t *testing.T) {
+	for _, kind := range []string{"wrong", "crash", "data-loss", "security", "regression", "rule", "design"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newReviewFix(t, fixBacklog, testkit.AllCaps(), reply("pass", kindFinding(newFile, 1, kind, "上传期间裁剪删掉最老点，之后按 MIN(id) 删的是没上传的下一条", "攒满后补传，上传 A 时来新点")))
+			j := f.job(newFiles())
+			before := f.main()
+			res := f.run(j)
+			r := reviewResult(t, res)
+			if res.Outcome != "fail" || r.Outcome != gate.Fail || f.main() != before {
+				t.Fatalf("%+v", res)
+			}
+			if ev := strings.Join(r.Evidence, "；"); !strings.Contains(ev, "new.txt:1 上传期间裁剪") || !strings.Contains(ev, "攒满后补传") {
+				t.Errorf("%s", ev)
+			}
+		})
+	}
+}
+
+// note 是不影响使用的说明：有证据也不阻塞，记成提示；不是 note 的拿不出证据也只记提示。
+func TestReviewNoteDoesNotBlock(t *testing.T) {
+	cases := map[string]string{
+		"说明":    reply("pass", kindFinding(newFile, 1, "note", "需求原文认可在第一次升级前演练", "看 evolve upgrades 第一行")),
+		"问题没复现": reply("pass", kindFinding(newFile, 1, "data-loss", "可能丢数据", "")),
+	}
+	for name, out := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newReviewFix(t, fixBacklog, testkit.AllCaps(), out)
+			res := f.run(f.job(newFiles()))
+			r := reviewResult(t, res)
+			if res.Outcome != "merged" || r.Outcome != gate.Pass || !strings.Contains(strings.Join(r.Evidence, "；"), "提示：new.txt:1") {
+				t.Fatalf("%+v", res)
+			}
+		})
+	}
+}
+
+// 审查要写类别，不再自己定阻不阻塞；提示词说清低概率、任务自己写成取舍都不能算 note。
+func TestReviewAsksForKind(t *testing.T) {
+	f := newFix(t, fixBacklog)
+	req := gate.ReviewRequest(f.a.Cfg, gate.Candidate{Project: "demo", Dir: "/wt", Merge: "m", Base: "b", Item: "活"})
+	if !strings.Contains(req.Schema, `"data-loss"`) || !strings.Contains(req.Schema, `"note"`) || strings.Contains(req.Schema, "severity") {
+		t.Errorf("schema：%s", req.Schema)
+	}
+	for _, want := range []string{"data-loss 丢数据", "要不要阻塞由引擎定", "都不能把问题写成 note"} {
+		if !strings.Contains(req.Prompt, want) {
+			t.Errorf("提示词缺 %s：%s", want, req.Prompt)
+		}
 	}
 }
 
@@ -400,7 +461,7 @@ func TestReviewSeesPriorFlags(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 	args := testkit.ReadFile(t, f.args)
-	for _, want := range []string{"首次由任务新增", "新增跳过 a_test.go", "外网用例先跳过", "不成立算 blocker"} {
+	for _, want := range []string{"首次由任务新增", "新增跳过 a_test.go", "外网用例先跳过", "不成立算 rule"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("缺 %s：%s", want, args)
 		}

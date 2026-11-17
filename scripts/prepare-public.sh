@@ -2,7 +2,7 @@
 # 公开发布前，在导出的候选目录里运行：scripts/prepare-public.sh <owner/repo>
 # 把主页和文档里的 <owner>/agentq 换成真实仓库，打开公开后才有意义的徽章，删掉「公开之前」的说明。
 # 源码仓库不写账号，所以只在候选目录做，不要提交回源码仓库。
-# 还剩 <owner> 时退出码 1，并列出位置，要人看一眼再发布。
+# 还剩 <owner> 时退出码 1，并列出位置，要人看一眼再发布。说明里的通用写法 <owner>/<repo>（任意项目的仓库）不算没填。
 set -eu
 
 if [ "$#" -ne 1 ]; then
@@ -45,7 +45,7 @@ if command -v python3 >/dev/null 2>&1 && [ -f scripts/render-readme-art.py ]; th
 fi
 
 # shellcheck disable=SC2086 # 文件名都是仓库内路径，没有空格
-left=$(grep -Hn '<owner>' $files || true)
+left=$(grep -Hn '<owner>' $files | sed 's#<owner>/<repo>#OWNER/REPO#g' | grep '<owner>' || true)
 if [ -n "$left" ]; then
 	echo '还有没填的 <owner>，改掉再发布：' >&2
 	echo "$left" >&2

@@ -52,6 +52,10 @@ type DecideCard struct {
 	GateJob string `json:"gate_job,omitempty"`
 	// DiscussKey 非空：开工前商量大方向的卡片，按钮的回答交给 discuss。
 	DiscussKey string `json:"discuss_key,omitempty"`
+	// IssueURL 非空：发版后 issue 回复草稿的卡片，按钮交给 AnswerIssue（见 issues.go）。
+	IssueURL string `json:"issue_url,omitempty"`
+	// MessageID：发出去的那条消息，门在别处定过后 tick 把它改成结论（见 settleGateCards）。
+	MessageID int64 `json:"message_id,omitempty"`
 }
 
 var (
@@ -212,6 +216,7 @@ func (a *Service) sendDecideCards(s *State, st *state.State, c *telegram.TgCreds
 		if s.Cards == nil {
 			s.Cards = map[string]*DecideCard{}
 		}
+		card.MessageID = sentID
 		s.Cards[card.ID] = &card
 		s.PruneCards(now)
 		if th, ok := a.noticeThread(st, n); ok {
@@ -247,4 +252,100 @@ func (a *Service) CardCurrent(card *DecideCard) bool {
 		}
 	}
 	return false
+}
+
+// GatePassByCard：门卡片上点放行时写给门的理由；卡片收起时据此认出是在 Telegram 上定的。
+const GatePassByCard = "Telegram 按钮放行"
+
+// GateOutcome：门卡片对应的任务的门是怎么定的。Choice 是选了什么（放行、退回、放弃、再审一次），空的是没人选、任务自己不在门上了。
+type GateOutcome struct {
+	Choice string
+	Reason string // 放行的理由、退回的意见
+	Note   string // 现在怎样了
+}
+
+// Text：给人看的一句，带上谁定的。理由是 GatePassByCard 的是 Telegram 上定的，其余是命令行或会话里定的。
+func (o GateOutcome) Text() string {
+	if o.Choice == "" {
+		return o.Note
+	}
+	who, why := "在命令行或会话里", textfmt.OneLine(o.Reason, 80)
+	if o.Reason == GatePassByCard {
+		who, why = "在 Telegram 上", ""
+	}
+	s := who + "选了" + o.Choice
+	if why != "" {
+		s += "（" + why + "）"
+	}
+	if o.Note != "" {
+		s += "，" + o.Note
+	}
+	return s
+}
+
+// GateSettled：任务 jobID 已经不停在门上时说清怎么定的（state.json 里没有它是任务记录已经不在了）；还停在门上返回 false。
+// 只看 state.json；已经记下、下次 tick 才落的决定由点按钮的一方另问门。
+func GateSettled(st *state.State, jobID string) (GateOutcome, bool) {
+	var j *state.Job
+	for _, x := range st.Jobs {
+		if x.ID == jobID {
+			j = x
+		}
+	}
+	if j == nil {
+		return GateOutcome{Note: "任务记录已经不在了"}, true
+	}
+	g := j.Gate
+	if g == nil {
+		return GateOutcome{Note: "任务已经不停在门上了，现在：" + state.JobLabel(j)}, true
+	}
+	switch g.State {
+	case state.GateStuck:
+		return GateOutcome{}, false
+	case state.GateAbandoned:
+		return GateOutcome{Choice: "放弃", Note: "分支留着"}, true
+	case state.GateReturned:
+		return GateOutcome{Choice: "退回", Reason: g.ReturnWhy, Note: "任务接着改"}, true
+	case state.GateMerged:
+		if g.Override != "" {
+			return GateOutcome{Choice: "放行", Reason: g.Override, Note: "已经合并"}, true
+		}
+	case state.GateQueued, state.GateRunning:
+		if g.Override != "" {
+			return GateOutcome{Choice: "放行", Reason: g.Override, Note: "等合并"}, true
+		}
+		if g.Rerun {
+			return GateOutcome{Choice: "再审一次", Note: "正在重新过门"}, true
+		}
+	}
+	return GateOutcome{Note: "任务已经不停在门上了，现在：" + state.JobLabel(j)}, true
+}
+
+// SettledCardText：门在别处定过的卡片改成的结论。
+func (a *Service) SettledCardText(card *DecideCard, text string) string {
+	return a.RenderMessage("done", a.Now(), []MsgSection{{Emoji: "🟢", Head: "已经定过了　" + card.Project + "　" + textfmt.TruncRunes(card.Title, 60),
+		Lines: []string{textfmt.OneLine(text, 200)}}}, "agentq")
+}
+
+// settleGateCards：门卡片对应的任务已经不停在门上（命令行、会话里定过，或门自己往下走了）时，记下结论，有消息号的把消息改成结论、去掉按钮。
+// 改不成只记日志，不重试。调用方拿着 notify.lock。
+func (a *Service) settleGateCards(s *State, st *state.State, c *telegram.TgCreds) {
+	for _, card := range s.Cards {
+		if card == nil || card.GateJob == "" || card.Decided != "" {
+			continue
+		}
+		o, settled := GateSettled(st, card.GateJob)
+		if !settled {
+			continue
+		}
+		card.Decided = o.Text()
+		if card.MessageID == 0 {
+			continue
+		}
+		if err := a.Telegram.TgEdit(c, card.MessageID, a.SettledCardText(card, card.Decided)); err != nil {
+			a.Logf("推送：任务 %s 的门已经定过，卡片没改成结论（不重试）：%v", card.GateJob, c.Redact(err.Error()))
+			continue
+		}
+		a.Logf("推送：任务 %s 的门已经定过（%s），卡片改成结论", card.GateJob, textfmt.TruncRunes(card.Decided, 60))
+	}
 }

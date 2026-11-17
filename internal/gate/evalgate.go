@@ -21,7 +21,7 @@ import (
 //   - 用合并态构建候选二进制，由运行中这一代跑 agentq eval judge：题目和判分是运行中这一代编译进去的，候选分支上改的题不算。
 //   - 跑法是 --fake（含程序题），不调模型；和 ~/.agentq/evals/baseline.json 比，任一题或任一领域变差就退回。
 //   - 没有能比的基线只记录不挡。
-//   - 候选改了评测题、判分、门的判定或 .agentq/，门过了也不自动合并，等用户放行。只是新加整道题（evals/ 下基点没有的新目录）不算改尺子：题只加不改。
+//   - 候选改了评测题、判分、门的判定或 .agentq/，门过了也不自动合并：先让独立审查代看（holdreview.go），它放行才合，不然等用户放行。只是新加整道题（evals/ 下基点没有的新目录）不算改尺子：题只加不改。
 //   - 修过就记住：type 是 fix、改了 Go 代码的，必须同时新加一道题（能复现它，修之前那一代会判没过），没有就退回。
 //   - 长能力（type 是 capability）：能力清单要新登记一项，并新加这个领域的考题，没有就退回；新题由运行中这一代分别在自己和候选上跑，
 //     这个领域加上新题后的通过率或平均分要比基线（运行中这一代）高，别的领域照常不许变差，见 evolve 的 capabilityVerdict。
@@ -36,7 +36,11 @@ type EvalVerdict struct {
 	Hint     string `json:"hint,omitempty"`
 	Compared int    `json:"compared"`
 	// Worse 非空就是变差了：哪题、哪个领域、从多少到多少。
-	Worse  []string `json:"worse,omitempty"`
+	Worse []string `json:"worse,omitempty"`
+	// Unjudged 是 Worse 里这次没跑起来的题（现场布置不起来、撞限）：不是答错，是检查自己没跑成。
+	Unjudged []string `json:"unjudged,omitempty"`
+	// Env 是因为环境问题（取依赖、网络）判不了的题和原因，重跑过一次还是这样：不算变差，门按判不了处理，过一会儿重跑。
+	Env    []string `json:"env,omitempty"`
 	Better []string `json:"better,omitempty"`
 	Notes  []string `json:"notes,omitempty"`
 }
@@ -116,6 +120,7 @@ func (g evalGate) Run(ctx context.Context, c Candidate) Result {
 	}
 	if hit := changedJudge(c.Files, added); len(hit) > 0 {
 		r.Hold = "改了评测题、判分或门的判定（" + listFiles(hit) + "）：评判的尺子不让候选自己改，门过了也不自动合并，等你看过再放行"
+		r.Ruler = true
 		r.Evidence = append(r.Evidence, "改到的尺子："+strings.Join(hit, "、"))
 	}
 	return r
@@ -176,19 +181,32 @@ func (g evalGate) judge(ctx context.Context, c Candidate, extra []string) (Resul
 		return Result{Outcome: Unknown, Summary: "评测没给出结论（" + r.Note + "）：" + textfmt.OneLine(err.Error(), 200) + "，看日志", Evidence: evidence}, build
 	}
 	evidence = append(evidence, "结论 "+g.d.Tilde(out))
-	return verdictResult(v, evidence), build
+	return verdictResult(v, evidence, c.Upstream), build
 }
 
-// verdictResult 把评测结论换成门的结果。
-func verdictResult(v EvalVerdict, evidence []string) Result {
+// verdictResult 把评测结论换成门的结果。retried 是前面因为上游、环境问题已经排回去重跑了几次。
+// 真变差照旧退回；没变差、只有环境问题判不了的，和审查撞上游瞬时错误一样过一会儿重跑，连续用完 MaxUpstream 次才判不了。
+func verdictResult(v EvalVerdict, evidence []string, retried int) Result {
 	for _, l := range v.Worse {
 		evidence = append(evidence, "变差："+l)
+	}
+	for _, l := range v.Env {
+		evidence = append(evidence, "环境问题：判不了，不算变差："+l)
 	}
 	for _, l := range v.Notes {
 		evidence = append(evidence, "注意："+l)
 	}
 	if len(v.Worse) > 0 {
-		return Result{Outcome: Fail, Summary: fmt.Sprintf("评测比基线变差 %d 处：%s", len(v.Worse), strings.Join(firstN(v.Worse, 4), "；")), Evidence: evidence}
+		return Result{Outcome: Fail, Summary: fmt.Sprintf("评测比基线变差 %d 处：%s", len(v.Worse), strings.Join(firstN(v.Worse, 4), "；")), Evidence: evidence,
+			Unjudged: len(v.Unjudged) == len(v.Worse)}
+	}
+	if len(v.Env) > 0 && v.Baseline {
+		why := fmt.Sprintf("评测判不了：%d 题是环境问题（%s），重跑过一次还是这样；不是改动变差", len(v.Env), strings.Join(firstN(v.Env, 4), "、"))
+		if retried >= MaxUpstream {
+			return Result{Outcome: Unknown, Unjudged: true, Evidence: evidence,
+				Summary: fmt.Sprintf("%s。已经隔开重跑了 %d 次，网络好了用 agentq gate rerun 再判；一直这样就看看候选是不是改坏了取依赖", why, retried)}
+		}
+		return Result{Outcome: Unknown, Unjudged: true, Upstream: true, Evidence: evidence, Summary: why, Defer: why + "，过一会儿重跑"}
 	}
 	failed := ""
 	if len(v.Failed) > 0 {

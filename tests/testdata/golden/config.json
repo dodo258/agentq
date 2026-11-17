@@ -28,5 +28,10 @@
   ],
   "discuss_enabled": true,
   "pm_enabled": true,
-  "retention_days": 54
+  "suggest_auto_after": "33m",
+  "release_repos": {
+    "Config.ReleaseRepos.key-35": "Config.ReleaseRepos.value-36"
+  },
+  "site_project": "Config.SiteProject-37",
+  "retention_days": 60
 }

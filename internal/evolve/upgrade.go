@@ -31,6 +31,7 @@ import (
 //   - 第一次升级前先在真实服务上演练一次整代回滚：用这一代自己再装一代、再 rollback 回来（两代代码一样，中间跑 tick 也无妨）。
 //   - 观察期：升级后开始的 observeTasks 个任务结束，和升级前最近 baselineTasks 个比（失败、超时或卡在门上的比例，还在过门的不算、过门轮数）。
 //     变差就 rollback 回上一代、推通知，写一条待做去修；带着回滚过的提交的版本不再升，直到修它的那一条合并（或用户自己装上）。
+//     过门轮数只算升级后退回的：升级前退回、升级后接着做的任务，带过来的轮数不算（carriedRounds）。
 //     observeMaxDays 天还凑不够，按已有的判。有要做的事时不接新活，最多挡 holdMax。
 //   - 每次演练、升级、留下、回滚、失败记一行 ~/.agentq/evolve/upgrades.jsonl，agentq evolve upgrades 看。
 const (
@@ -241,7 +242,26 @@ func windows(jobs []*state.Job, at time.Time) (before, after observation) {
 	if len(post) > observeTasks {
 		post = post[:observeTasks]
 	}
-	return observe(pre), observe(post)
+	after = observe(post)
+	for _, j := range post {
+		after.Rounds -= carriedRounds(jobs, j, at)
+	}
+	return observe(pre), after
+}
+
+// carriedRounds：任务 j 升级前就被门退回过的轮数。退回后续跑、接手的任务轮数接着算（runner.carryGate），
+// 升级前那几轮是上一代的门退回的，不能算到这一代头上。同一条目升级后开始的任务里最小的轮数，就是升级那会儿已经退回的轮数。
+func carriedRounds(jobs []*state.Job, j *state.Job, at time.Time) int {
+	if j.Fingerprint == "" {
+		return 0
+	}
+	n := j.GateRound
+	for _, o := range jobs {
+		if o.Kind == "" && o.StartedAt.After(at) && state.SameItem(o, j.Project, j.Fingerprint) {
+			n = min(n, o.GateRound)
+		}
+	}
+	return n
 }
 
 // worse：观察期比升级前差。说不出来就是没变差。
@@ -270,6 +290,28 @@ func openUpgrade(evs []UpgradeEvent, version string) *UpgradeEvent {
 		}
 	}
 	return nil
+}
+
+// ObservedCommit：本机这一代（源码构建 dev-<提交>）装上后观察期满了、没变差（最近一条升级、留下、回滚的记录是它的「留下」）时返回它的提交；
+// 否则返回空和原因。self_project 自动发版前看（见 internal/release）。
+func (s *Service) ObservedCommit() (commit, why string) {
+	m := devVersionRe.FindStringSubmatch(s.Version)
+	if m == nil {
+		return "", "本机这一代 " + s.Version + " 不是从提交构建的，没有观察期"
+	}
+	evs, err := s.LoadUpgrades()
+	if err != nil {
+		return "", "升级记录读不了：" + err.Error()
+	}
+	for i := len(evs) - 1; i >= 0; i-- {
+		if k := evs[i].Kind; k == EvKept || k == EvUpgrade || k == EvRollback {
+			if k == EvKept && evs[i].To == s.Version {
+				return m[1], ""
+			}
+			break
+		}
+	}
+	return "", "本机这一代 " + s.Version + " 还没过观察期"
 }
 
 // recentFail：这个提交（空的是演练）或发行版本 upgradeRetry 内没做成过，先不再试。
@@ -408,17 +450,6 @@ func (s *Service) selfPlan(ctx context.Context, st *state.State, now time.Time) 
 	return upgradePlan{Note: note}
 }
 
-// activeJobs：在跑的任务和正在过门、排队过门的任务。安装引擎会卸载重装服务、换掉程序，这些都做完才动。
-func activeJobs(st *state.State) int {
-	n := 0
-	for _, j := range st.Jobs {
-		if j.Status == state.StatusRunning || j.Gate != nil && (j.Gate.State == state.GateQueued || j.Gate.State == state.GateRunning) {
-			n++
-		}
-	}
-	return n
-}
-
 // holdMark 记下这次升级（或回滚）从什么时候开始挡着接新活，超过 holdMax 就放开。
 type holdMark struct {
 	Key   string    `json:"key"`
@@ -471,7 +502,7 @@ func (s *Service) SelfUpdate(st *state.State) (hold bool, note string) {
 	}
 	key := pl.Action + ":" + pl.Commit + pl.Release
 	_, _, applying := fsx.LockHolder(s.upgradeLockPath())
-	n := activeJobs(st)
+	n := st.ActiveJobs()
 	if !applying && n == 0 { // 空闲：现在就做，挡新活从这时算起
 		if err := s.spawnApply(); err != nil {
 			s.Logf("自己长大：起不来 agentq evolve apply：%v", err)

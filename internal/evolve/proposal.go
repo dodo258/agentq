@@ -162,7 +162,7 @@ func (s *Service) proposeToProject(p backlog.Project, props []proposal, now time
 			s.Ledger.AppendNightlyLine(now, "自我进化：提案写进「建议」："+w)
 		}
 		s.Notify.Notify(notify.Notice{Cat: "suggest", Key: "evolve-propose:" + now.Format("20060102-1504"),
-			Text: fmt.Sprintf("自我进化：agentq 自己反复出的 %d 个问题写进 %s 的「建议」", len(written), p.Name), Lines: suggest.SuggestNotice(written)})
+			Text: fmt.Sprintf("自我进化：agentq 自己反复出的 %d 个问题写进 %s 的「建议」", len(written), p.Name), Lines: s.Suggest.SuggestNotice(written)})
 	}
 	out := []proposal{}
 	for _, i := range settled {

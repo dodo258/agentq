@@ -88,7 +88,7 @@ agentq 把活交给一个 CLI 去做。CLI 的差别都收在 `internal/backend.
 | 引擎审查 | 有。`ProfileReview` 用 `workspace-write` 沙箱：能跑测试，`.git` 只读提交不了（实测），默认不联网 | 跑不了要联网的测试时模型判 hint 或 unknown，unknown 不放行 |
 | 用量 | 只有 token，每次 exec 是本次的 | 金额写未知，合计注明 |
 | 美元、回合上限 | 无 | 只有超时兜底，运行中也看不到用量 |
-| 额度查询 | 无（`app-server` 的接口标 experimental，没接） | 只在撞限后冷却 |
+| 额度查询 | 有，不调模型。起一次 `codex app-server`（stdio 一行一条 JSON-RPC），`initialize` 后发 `account/rateLimits/read`（[官方](https://learn.chatgpt.com/docs/app-server)，这个方法没标 experimental），取 `rateLimits` 的 `primary`、`secondary`：窗口不超过一天的算会话窗口（Codex 是 5 小时），按 `usage_stop_session_pct`；更长的算周，按 `usage_stop_week_pct`；账号没有的窗口是 null，不编。在临时目录里跑，只带 `CODEX_HOME`，约 1 秒（实测 codex-cli 0.169.0：Pro 账号只返回一个 10080 分钟的周窗口）。和 Claude 一样缓存 10 分钟 | 报错、老版本不认这个方法、没登录 ChatGPT、30 秒没回：当未知照常跑，只在撞限后冷却 |
 | 撞限 | 只有文字（`turn.failed`、stderr），不扫模型正文 | 厂商改文案就认不出，落到普通失败和熔断 |
 | 认证 | `login status` 只看本地凭据（实测令牌坏了也说已登录），`Unverified`。401 由 `Parse` 认出 | 暂停到 `limit_cooldown`，删暂停记录提前恢复 |
 | 只读、无工具 | 无。`read-only` 只禁写不限读 | 大方向商量不问、按默认开工，追问回退普通对话（按原任务的后端判断，别的后端的任务照常追问），巡逻不分析，产品经理调研不起 |

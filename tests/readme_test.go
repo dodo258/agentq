@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"agentq/internal/testkit"
 )
 
 // 公开文档里的相对链接和图片都要真的存在，也不能指向 private_paths：公开候选里没有那些文件。代码块里的不算链接。
@@ -152,5 +154,36 @@ func TestPreparePublicRefusesLeftovers(t *testing.T) {
 		if out, code := runPrepare(dir, bad); code != 2 {
 			t.Errorf("%q 应报用法错：%d\n%s", bad, code, out)
 		}
+	}
+}
+
+// 说明里的通用写法 <owner>/<repo>（任意项目的仓库）不是没填的占位，不拦发布；同一行、docs 里单独的 <owner> 照样拦。
+func TestPreparePublicGenericExample(t *testing.T) {
+	example := "条目行尾带 `（issue：https://github.com/<owner>/<repo>/issues/<号>）`\n"
+	dir := prepareDir(t, "下载 <owner>/agentq\n"+example)
+	if out, code := runPrepare(dir, "someone/agentq"); code != 0 {
+		t.Fatalf("通用写法不该拦：退出码 %d\n%s", code, out)
+	}
+	if got := testkit.ReadFile(t, filepath.Join(dir, "README.md")); got != "下载 someone/agentq\n"+example {
+		t.Errorf("结果不对：\n%s", got)
+	}
+
+	dir = prepareDir(t, "x\n")
+	testkit.WriteInstall(t, filepath.Join(dir, "docs", "reference", "a.md"), "例 <owner>/<repo>，把 `<owner>` 换成账号\n", 0o644)
+	if out, code := runPrepare(dir, "someone/agentq"); code != 1 || !strings.Contains(out, "docs/reference/a.md:1") {
+		t.Errorf("通用写法旁边没填的 <owner> 应退出码 1 并列出位置：%d\n%s", code, out)
+	}
+}
+
+// 仓库里真的公开文档过 prepare-public：每天的公开同步会跑它，这里先拦，不等到同步失败才知道。
+func TestPreparePublicRealDocs(t *testing.T) {
+	dir := prepareDir(t, "")
+	for _, p := range publicFiles(t) {
+		if strings.HasSuffix(p, ".md") || strings.HasSuffix(p, ".txt") {
+			testkit.WriteInstall(t, filepath.Join(dir, p), testkit.ReadFile(t, p), 0o644)
+		}
+	}
+	if out, code := runPrepare(dir, "someone/agentq"); code != 0 {
+		t.Fatalf("公开文档过不了 prepare-public：退出码 %d\n%s", code, out)
 	}
 }

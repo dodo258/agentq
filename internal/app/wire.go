@@ -128,6 +128,12 @@ func Wire(a *App, assets Assets) *App {
 	a.PM.Notify = a.Notify
 	a.PM.Runner = a.Runner
 	a.PM.Suggest = a.Suggest
+	a.Release = orNew(a.Release)
+	a.Release.Env = a.Env
+	a.Release.Backlog = a.Backlog
+	a.Release.Evolve = a.Evolve
+	a.Release.Gitx = a.Gitx
+	a.Release.Notify = a.Notify
 	a.Sched = orNew(a.Sched)
 	a.Sched.Env = a.Env
 	a.Sched.Backlog = a.Backlog
@@ -138,11 +144,13 @@ func Wire(a *App, assets Assets) *App {
 	a.Sched.Ledger = a.Ledger
 	a.Sched.Newproj = a.Newproj
 	a.Sched.Notify = a.Notify
+	a.Sched.Release = a.Release
 	a.Sched.Orphan = a.Orphan
 	a.Sched.Patrol = a.Patrol
 	a.Sched.PM = a.PM
 	a.Sched.Routine = a.Routine
 	a.Sched.Runner = a.Runner
+	a.Sched.Suggest = a.Suggest
 	a.Sched.Telegram = a.Telegram
 	a.Onboard = orNew(a.Onboard)
 	a.Onboard.Env = a.Env

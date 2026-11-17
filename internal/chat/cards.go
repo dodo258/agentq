@@ -1,12 +1,14 @@
 package chat
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
 	"agentq/internal/discuss"
 	"agentq/internal/gate"
 	"agentq/internal/notify"
+	"agentq/internal/state"
 	"agentq/internal/telegram"
 	"agentq/internal/textfmt"
 )
@@ -46,6 +48,10 @@ func (a *Service) handleCallback(c *telegram.TgCreds, q *telegram.TgCallback) {
 		answer(notify.CardExpired)
 		return
 	}
+	if card.Decided != "" && card.GateJob != "" {
+		answer(textfmt.TruncRunes("已经定过了："+card.Decided, 190))
+		return
+	}
 	if card.Decided != "" {
 		answer("已经定了：" + card.Decided)
 		return
@@ -66,6 +72,10 @@ func (a *Service) handleCallback(c *telegram.TgCreds, q *telegram.TgCallback) {
 	}
 	if card.DiscussKey != "" {
 		a.discussCallback(c, q, m[1], card, m[2], answer)
+		return
+	}
+	if card.IssueURL != "" {
+		a.issueCallback(c, q, m[1], card, m[2], choice, answer)
 		return
 	}
 	if !a.Notify.CardCurrent(&card) {
@@ -151,24 +161,39 @@ func (a *Service) editDecided(c *telegram.TgCreds, q *telegram.TgCallback, card 
 	}
 }
 
-// gateCallback：门卡住的任务的按钮。决定写给门，下次 tick 落。
+// gateButtons：门卡片的按钮（字母见 gate 发卡片时的选项）。
+var gateButtons = map[string]struct{ action, name string }{
+	"A": {gate.DecidePass, "放行"}, "B": {gate.DecideReturn, "退回"}, "C": {gate.DecideAbandon, "放弃"}, "D": {gate.DecideRerun, "再审一次"},
+}
+
+// gateCallback：门卡住的任务的按钮。决定写给门，下次 tick 落。门已经有了决定（命令行、会话里定过）或任务不再停在门上时不再写，回已经定过、消息改成结论。
 func (a *Service) gateCallback(c *telegram.TgCreds, q *telegram.TgCallback, id string, card notify.DecideCard, label, choice string, answer func(string)) {
-	action, reason := "", ""
-	switch label {
-	case "A":
-		action, reason = gate.DecidePass, "Telegram 按钮放行"
-	case "B":
-		action = gate.DecideReturn
-	case "C":
-		action = gate.DecideAbandon
-	case "D":
-		action = gate.DecideRerun
-	}
-	if action == "" {
+	b, ok := gateButtons[label]
+	if !ok {
 		answer(notify.CardExpired)
 		return
 	}
-	if err := a.Gate.Decide(card.GateJob, action, reason); err != nil {
+	settled, done, err := a.gateSettled(card.GateJob)
+	if err != nil {
+		a.Logf("Telegram：读不了任务 %s 的状态，按钮不生效：%v", card.GateJob, err)
+		answer("现在读不了任务状态，过一会儿再点")
+		return
+	}
+	if done {
+		a.markCardDecided(id, settled)
+		answer(textfmt.TruncRunes("已经定过了："+settled, 190))
+		if q.Message != nil {
+			if err := a.Telegram.TgEdit(c, q.Message.MessageID, a.Notify.SettledCardText(&card, settled)); err != nil {
+				a.Logf("Telegram：门已经定过，消息没改成结论（不重试）：%v", c.Redact(err.Error()))
+			}
+		}
+		return
+	}
+	reason := ""
+	if b.action == gate.DecidePass {
+		reason = notify.GatePassByCard
+	}
+	if err := a.Gate.Decide(card.GateJob, b.action, reason); err != nil {
 		a.Logf("Telegram：门的决定没记下（任务 %s）：%v", card.GateJob, err)
 		answer("没记下，过一会儿再点")
 		return
@@ -176,4 +201,45 @@ func (a *Service) gateCallback(c *telegram.TgCreds, q *telegram.TgCallback, id s
 	a.markCardDecided(id, choice)
 	answer("已定：" + textfmt.TruncRunes(choice, 100))
 	a.editDecided(c, q, card, choice, "下次 tick 生效，最多等 5 分钟")
+}
+
+// gateSettled：任务的门已经有了决定（记下了、下次 tick 落），或已经不停在门上时，返回怎么定的。状态文件读不了返回错误：当未知，不写决定。
+func (a *Service) gateSettled(jobID string) (string, bool, error) {
+	if action, why, ok := a.Gate.PendingDecision(jobID); ok {
+		o := notify.GateOutcome{Choice: action, Reason: why, Note: "下次 tick 生效"}
+		for _, b := range gateButtons {
+			if b.action == action {
+				o.Choice = b.name
+			}
+		}
+		return o.Text(), true, nil
+	}
+	st, err := state.Load(a.StatePath())
+	if err != nil {
+		return "", false, err
+	}
+	o, done := notify.GateSettled(st, jobID)
+	return o.Text(), done, nil
+}
+
+// issueCallback：发版后 issue 回复草稿的按钮。A 发、B 发并关闭、C 不发；只有 A、B 才调 gh 贴回复。没贴成可以再点。
+func (a *Service) issueCallback(c *telegram.TgCreds, q *telegram.TgCallback, id string, card notify.DecideCard, label, choice string, answer func(string)) {
+	act := map[string]string{"A": notify.IssueActSend, "B": notify.IssueActSendClose, "C": notify.IssueActSkip}[label]
+	if act == "" {
+		answer(notify.CardExpired)
+		return
+	}
+	note, err := a.Notify.AnswerIssue(context.Background(), card.IssueURL, act)
+	if errors.Is(err, notify.ErrIssueAnswered) {
+		answer("已经定了")
+		return
+	}
+	if err != nil {
+		answer(textfmt.TruncRunes("没贴成："+textfmt.OneLine(err.Error(), 120)+"。过一会儿再点", 190))
+		return
+	}
+	a.markCardDecided(id, choice)
+	a.Ledger.AppendNightlyLine(a.Now(), fmt.Sprintf("用户点按钮定了 issue 回复：%s %s：%s", card.Project, card.IssueURL, note))
+	answer(textfmt.TruncRunes(note, 190))
+	a.editDecided(c, q, card, choice, note)
 }

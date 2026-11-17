@@ -261,6 +261,9 @@ func (a *Service) Process(ctx context.Context, dir string, p Plan, timeout time.
 			usage = backend.AddUsage(usage, results[i].Usage)
 			results[i].Usage = nil
 		}
+		if len(c.Appended) > 0 {
+			notes = append([]string{"和最新 " + p.DefaultBranch + " 的冲突只在只追加的记录文件里，已自动合好（两边新加的都留着，" + p.DefaultBranch + " 的在前）：" + strings.Join(c.Appended, "、")}, notes...)
+		}
 		last = RunResult{Base: c.Base, Head: c.Head, Tree: c.Tree, Results: results, Notes: notes, Usage: usage, Tally: tally, Off: off, Risk: risk}
 		if blocked != "" {
 			if blocked == outFail {
@@ -273,8 +276,20 @@ func (a *Service) Process(ctx context.Context, dir string, p Plan, timeout time.
 			return last
 		}
 		if hold := holdReason(p, risk, results); hold != "" {
-			last.Outcome, last.Reason = outHold, hold
-			return last
+			if !holdReviewable(p, risk, results, c.Files) {
+				last.Outcome, last.Reason = outHold, hold
+				return last
+			}
+			r := a.reviewHold(ctx, dir, p, c, hold, results)
+			addTally(tally, []Result{r})
+			usage = backend.AddUsage(usage, r.Usage)
+			r.Usage = nil
+			results = append(slices.DeleteFunc(results, func(x Result) bool { return x.Gate == HoldReviewGate }), r)
+			last.Results, last.Usage = results, usage
+			if r.Outcome != Pass {
+				last.Outcome, last.Reason = outHold, hold+"；"+r.Summary
+				return last
+			}
 		}
 		out, moved := a.integrate(ctx, dir, p, c)
 		if moved {
@@ -385,6 +400,7 @@ func (a *Service) build(ctx context.Context, dir string, p Plan) (Candidate, Run
 		return fail(outUnknown, "建 worktree 失败："+err.Error())
 	}
 	ident := a.identity(ctx, p.ProjectDir)
+	var appended []string // 自动合了冲突的只追加记录文件
 	if _, err := a.git(ctx, wt, append(ident, "merge", "--no-ff", "--no-commit", "--no-edit", head)...); err != nil {
 		if ctx.Err() != nil {
 			return fail(outUnknown, "门进程被停了")
@@ -395,6 +411,9 @@ func (a *Service) build(ctx context.Context, dir string, p Plan) (Candidate, Run
 		}
 		// 默认分支上残留的 ready.json 和任务的撞了不算冲突：两份都不进 M，下面就删
 		conflicts := slices.DeleteFunc(strings.Split(names, "\n"), func(f string) bool { return f == ReadyFile })
+		if len(conflicts) > 0 && a.resolveAppendOnly(ctx, wt, conflicts) {
+			appended, conflicts = conflicts, nil
+		}
 		if len(conflicts) > 0 {
 			return conflict("和最新 "+def+" 有冲突："+textfmt.OneLine(strings.Join(conflicts, "、"), 300)+"；从最新 "+def+" 合入，解决后再写 ready.json", conflicts)
 		}
@@ -430,7 +449,7 @@ func (a *Service) build(ctx context.Context, dir string, p Plan) (Candidate, Run
 	}
 	return Candidate{JobID: p.JobID, Project: p.Project, ProjectDir: p.ProjectDir, Title: p.Title, Item: p.Item, Backend: p.Backend, Branch: p.Branch, DefaultBranch: def,
 		Head: head, Base: base, Merge: merge, Tree: tree, PatchID: a.patchID(ctx, wt, base, merge), Dir: wt, WorkDir: dir, Files: files,
-		Type: p.Ready.Type, Ready: p.Ready, Round: p.Round, Product: p.Product, Scope: p.Scope, ScopeFrom: p.ScopeFrom}, RunResult{}, true
+		Type: p.Ready.Type, Ready: p.Ready, Round: p.Round, Product: p.Product, Scope: p.Scope, ScopeFrom: p.ScopeFrom, Appended: appended}, RunResult{}, true
 }
 
 func outcomeOf(out string) Outcome {

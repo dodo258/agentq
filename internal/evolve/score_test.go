@@ -237,3 +237,56 @@ func TestMergeBaseline(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+// 判不了的题另记一份题名：门据此分清是检查没跑起来，还是候选真的答错了。
+func TestCompareListsUnjudged(t *testing.T) {
+	base := []Score{sc("a", "backend", 100, 0), sc("b", "backend", 100, 0)}
+	cur := []Score{{Case: "a", Domain: "backend", Mode: ModeReal, Error: "agentq setup 退出码 1"}, sc("b", "backend", 0, 0)}
+	cmp := Compare(base, cur)
+	if len(cmp.Unjudged) != 1 || cmp.Unjudged[0] != "a" || len(cmp.Worse) < 2 {
+		t.Fatalf("%+v", cmp)
+	}
+	if v := judgeVerdict(base, true, cur[:1]); len(v.Unjudged) != 1 || len(v.Worse) != 1 {
+		t.Fatalf("结论要带上判不了的题：%+v", v)
+	}
+}
+
+// 判不了的原因是环境问题（取依赖、网络）：不算变差，单列出来给门；别的判不了和真答错照旧算变差。
+func TestCompareEnvNotWorse(t *testing.T) {
+	fetch := "agentq setup 退出码 1：…\"authenticated\": true } Support interpreter: Python 3.14.5 agentq: fetch locked third party: exit status 128"
+	base := []Score{sc("a", "backend", 100, 0), sc("b", "backend", 100, 0), sc("c", "install", 100, 0)}
+	cur := []Score{{Case: "a", Domain: "backend", Mode: ModeReal, Error: fetch}, sc("b", "backend", 100, 0), sc("c", "install", 100, 0)}
+	cmp := Compare(base, cur)
+	if len(cmp.Worse) != 0 || len(cmp.Unjudged) != 0 || len(cmp.Env) != 1 || cmp.Env[0] != "a（取锁定的第三方依赖失败）" || cmp.Compared != 2 {
+		t.Fatalf("取依赖失败不算变差：%+v", cmp)
+	}
+	if !strings.Contains(strings.Join(cmp.Notes, "\n"), "a：环境问题") {
+		t.Errorf("注意里要写清是环境问题：%v", cmp.Notes)
+	}
+	v := judgeVerdict(base, true, cur)
+	if len(v.Worse) != 0 || len(v.Env) != 1 || len(v.Failed) != 1 {
+		t.Fatalf("%+v", v)
+	}
+
+	cur[1] = sc("b", "backend", 0, 0)
+	cur[2] = Score{Case: "c", Domain: "install", Mode: ModeReal, Error: "agentq setup 退出码 1：config.json 写坏了"}
+	cmp = Compare(base, cur)
+	worse := strings.Join(cmp.Worse, "\n")
+	if len(cmp.Env) != 1 || !strings.Contains(worse, "b：分数 100 → 0") || !strings.Contains(worse, "c：这次判不了") || len(cmp.Unjudged) != 1 {
+		t.Fatalf("真变差、不是环境问题的判不了照旧算变差：%+v", cmp)
+	}
+}
+
+func TestEnvCause(t *testing.T) {
+	for in, want := range map[string]string{
+		"fatal: unable to access 'https://github.com/x/y/': Could not resolve host: github.com": "域名解析不了",
+		"Failed to connect to github.com port 443 after 75000 ms":                               "连不上远端",
+		"dial tcp: lookup proxy.golang.org: i/o timeout":                                        "连接超时",
+		"agentq setup 退出码 1：config.json 写坏了":                                                    "",
+		"跑 agentq 超时或被取消：context deadline exceeded":                                             "",
+	} {
+		if got := envCause(in); got != want {
+			t.Errorf("%q：%q，要 %q", in, got, want)
+		}
+	}
+}

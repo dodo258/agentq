@@ -19,6 +19,7 @@ import (
 	"agentq/internal/patrol"
 	"agentq/internal/pm"
 	"agentq/internal/quality"
+	"agentq/internal/release"
 	"agentq/internal/routine"
 	"agentq/internal/runner"
 	"agentq/internal/sched"
@@ -51,10 +52,14 @@ type App struct {
 	Onboard  *onboard.Service
 	Evolve   *evolve.Service
 	PM       *pm.Service
+	Release  *release.Service
 }
 
 // GateProcToken 是过门后台进程的内部命令名。
 const GateProcToken = gate.ProcToken
+
+// ReleaseProcToken 是自动发版后台进程的内部命令名。
+const ReleaseProcToken = release.ProcToken
 
 // RunGate 是过门后台进程的入口，要配置和后端，所以在这里建。
 func (a *App) RunGate(args []string, stderr io.Writer) int { return a.Gate.RunShell(args, stderr) }

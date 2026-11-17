@@ -731,7 +731,7 @@ func TestIntegrationFailRoundsThenStuckThenPass(t *testing.T) {
 func TestIntegrationReviewBlocksThenPasses(t *testing.T) {
 	e := newEnv(t, nil)
 	dir := gateRepo(t, e, "demo", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
-	block := `{"type":"result","subtype":"success","is_error":false,"result":"有问题","session_id":"s-rv","structured_output":{"verdict":"block","summary":"会崩","findings":[{"file":"a.txt","line":1,"severity":"blocker","evidence":"第一行会崩","repro":"跑 a.txt 就崩"}]}}` + "\n"
+	block := `{"type":"result","subtype":"success","is_error":false,"result":"有问题","session_id":"s-rv","structured_output":{"verdict":"block","summary":"会崩","findings":[{"file":"a.txt","line":1,"kind":"crash","evidence":"第一行会崩","repro":"跑 a.txt 就崩"}]}}` + "\n"
 	review := filepath.Join(e.home, "fake-review.json")
 	os.WriteFile(review, []byte(block), 0o644)
 	e.mustRun("tick")

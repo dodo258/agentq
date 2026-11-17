@@ -190,6 +190,8 @@ type State struct {
 	Threads map[int64]Thread `json:"threads,omitempty"`
 	// Cards：发出去的决策卡片（短 id → 项目、指纹、选项），过期 14 天（见 cards.go）。
 	Cards map[string]*DecideCard `json:"cards,omitempty"`
+	// Issues：发版后起草的 issue 回复（issue 链接 → 草稿和用户点了什么），点过的同一个 issue 不再推（见 issues.go）。
+	Issues map[string]*IssueReply `json:"issues,omitempty"`
 	// LocalRetryAt：本机通知发不出（errLocalNotify）时，到这个时刻（Unix 秒）之前不再试，消息留在队列。
 	LocalRetryAt int64     `json:"local_retry_at,omitempty"`
 	LastError    string    `json:"last_error,omitempty"`
@@ -415,6 +417,9 @@ func (a *Service) FlushNotify(s *State, st *state.State, c *telegram.TgCreds, cr
 	}
 	if s.LastSent == nil {
 		s.LastSent = map[string]time.Time{}
+	}
+	if c != nil && st != nil {
+		a.settleGateCards(s, st, c)
 	}
 	if localNotifyWaiting(s, now, c, credErr) {
 		return

@@ -95,11 +95,15 @@ func OpenSuggestionKeys(text string) map[string]bool {
 	return keys
 }
 
-// SuggestNotice 是写进「建议」后推给用户的那几行：每条一行，最后一行教怎么回。
-func SuggestNotice(written []string) []string {
+// SuggestNotice 是写进「建议」后推给用户的那几行：每条一行，最后一行教怎么回；开着自动做时说多久不回就自动做。
+func (a *Service) SuggestNotice(written []string) []string {
 	var lines []string
 	for _, w := range written {
 		lines = append(lines, "建议 "+textfmt.TruncRunes(w, 56))
 	}
-	return append(lines, "回复「做 "+strings.Join(SuggestNumbers(written, 2), " ")+"」移进待做，「不做 N」以后不再提")
+	how := "回复「做 " + strings.Join(SuggestNumbers(written, 2), " ") + "」移进待做，「不做 N」以后不再提"
+	if d := a.Cfg.SuggestAutoAfter.Duration; d > 0 {
+		how += "；" + textfmt.FormatAge(d) + "不回就自动做"
+	}
+	return append(lines, how)
 }

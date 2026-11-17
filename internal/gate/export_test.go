@@ -18,6 +18,9 @@ var FindReview = findReview
 // FileChanges 给测试：解析 --numstat --summary 的输出。
 var FileChanges = parseFileChanges
 
+// CapApplies 给测试：清单里的启用条件按项目判断要不要用。
+var CapApplies = capApplies
+
 // PatchGate 给测试。
 func PatchGate(d Deps) Gate { return patchGate{d} }
 
@@ -90,3 +93,10 @@ func SetCapabilities(t *testing.T, caps []Capability, scripts map[string]string)
 	}
 	t.Cleanup(func() { capRegistry, capScript = oldReg, oldScript })
 }
+
+// HoldReviewable、HoldVerdict、HoldReviewRequest 给测试：独立审查代。
+var (
+	HoldReviewable    = holdReviewable
+	HoldVerdict       = holdVerdict
+	HoldReviewRequest = holdReviewRequest
+)

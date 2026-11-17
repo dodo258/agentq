@@ -42,6 +42,9 @@ func TestQuickStopFromCLI(t *testing.T) {
 			t.Fatalf("要记成命令行停、停时到了后台上限：%+v", j)
 		}
 	}
+	// 停了不到 30 分钟、还没重派的 user-stop 要等等再收（看是不是改需求重派），过了 30 分钟再收
+	later := now.Add(31 * time.Minute)
+	a.Now = func() time.Time { return later }
 	if _, err := a.Evolve.Collect(true); err != nil {
 		t.Fatal(err)
 	}

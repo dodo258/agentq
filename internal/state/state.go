@@ -103,6 +103,17 @@ func (st *State) HeldProject(name string) bool {
 
 const KindPatrol = "patrol"
 
+// ActiveJobs：在跑的任务和正在过门、排队过门的任务个数。升级、发版这类要等空闲的事看它。
+func (st *State) ActiveJobs() int {
+	n := 0
+	for _, j := range st.Jobs {
+		if j.Status == StatusRunning || j.Gate != nil && (j.Gate.State == GateQueued || j.Gate.State == GateRunning) {
+			n++
+		}
+	}
+	return n
+}
+
 func HasRunning(st *State, kind string) bool {
 	for _, j := range st.Running() {
 		if j.Kind == kind {

@@ -28,9 +28,11 @@ import (
 	"agentq/internal/orphan"
 	"agentq/internal/patrol"
 	"agentq/internal/pm"
+	"agentq/internal/release"
 	"agentq/internal/routine"
 	"agentq/internal/runner"
 	"agentq/internal/state"
+	"agentq/internal/suggest"
 	"agentq/internal/telegram"
 	"agentq/internal/textfmt"
 )
@@ -49,8 +51,10 @@ type Service struct {
 	Orphan   *orphan.Service
 	Patrol   *patrol.Service
 	PM       *pm.Service
+	Release  *release.Service
 	Routine  *routine.Service
 	Runner   *runner.Service
+	Suggest  *suggest.Service
 	Telegram *telegram.Service
 }
 
@@ -158,6 +162,9 @@ func (a *Service) Tick(after string) error {
 			a.Logf("%s：写状态文件失败：%v", name, err)
 		}
 	}
+	if !recovered && !a.Cfg.Paused {
+		a.Suggest.AutoDoDue() // 建议满 suggest_auto_after 没回的照「做 N」移进待做，放在挑活之前，这次就能接上
+	}
 	started, note := 0, ""
 	now := a.Now()
 	// 自己长大、自动更新：有要做的升级或回滚时不接新活，没任务在跑就交给 agentq evolve apply 去做（见 internal/evolve/upgrade.go、autoupdate.go）
@@ -165,6 +172,7 @@ func (a *Service) Tick(after string) error {
 	if !recovered && !a.Cfg.Paused {
 		hold, holdWhy = a.Evolve.SelfUpdate(st)
 	}
+	releasing := a.Release.Busy() // 发版要拿最新的默认分支打包，进行中不接新活（见 internal/release）
 	switch {
 	case recovered:
 		note = "状态文件损坏后按 meta.json 重建，本次只收尾不启动"
@@ -187,13 +195,16 @@ func (a *Service) Tick(after string) error {
 		if err := state.Save(a.StatePath(), st); err != nil {
 			a.Logf("%s：写状态文件失败：%v", name, err)
 		}
+	case releasing != "":
+		note = releasing
 	case st.AllCooling(a.Cfg, now):
 		note = "用量冷却中，到 " + textfmt.WhenCN(st.CooldownOf(a.Cfg.Backend)) + " 前不启动"
 	case now.Before(st.BreakerUntil):
 		note = "连环失败熔断中，到 " + textfmt.WhenCN(st.BreakerUntil) + " 前不启动"
 	default:
 		started, note = a.schedule(st, orphans, false)
-		a.PM.StartIfDue(st) // 接完待做再看：产品经理调研不占名额，同时只跑一个，额度到后台上限不起
+		a.PM.StartIfDue(st)      // 接完待做再看：产品经理调研不占名额，同时只跑一个，额度到后台上限不起
+		a.Release.StartIfDue(st) // 再看自动发版：要没有任务在跑、在过门，起了之后发完前不接新活（见 internal/release）
 		// 续跑会改被续跑任务的记录（ResumedBy、ResumePending），启动时只存了一次
 		if err := state.Save(a.StatePath(), st); err != nil {
 			a.Logf("%s：写状态文件失败：%v", name, err)
@@ -485,8 +496,17 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob, manualOn
 		}
 		return tripped
 	}
+	// self_project 排最后：别的项目还有活就不起它的（续跑、接手、自己长大、新条目都等），额度先给别的项目；用户亲手启动的照常
+	selfLast := a.selfWaits(st, projects)
+	if selfLast {
+		notes = append(notes, a.Cfg.SelfProject+" 是 agentq 自己的项目，别的项目还有待做，先做别的")
+	}
+	waitSelf := func(project string) bool { return selfLast && project == a.Cfg.SelfProject }
 	for _, orig := range st.PendingResumes() {
 		if manualOnly && !orig.Manual {
+			continue
+		}
+		if !orig.Manual && waitSelf(orig.Project) {
 			continue
 		}
 		if scanErr != nil && !slices.ContainsFunc(projects, func(p backlog.Project) bool { return p.Name == orig.Project }) {
@@ -570,6 +590,9 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob, manualOn
 		if ok, _ := state.Capacity(st, a.Cfg, ""); !ok || breaker() {
 			break
 		}
+		if waitSelf(o.Project.Name) {
+			continue
+		}
 		if runner.ScopeBlocked(st, a.Cfg, o.Project.Name, o.Item.Text) != "" { // 同上：先等接手，这次不挑新条目
 			resumed[o.Project.Name] = true
 			continue
@@ -611,6 +634,9 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob, manualOn
 		if ok, _ := state.Capacity(st, a.Cfg, ""); !ok || breaker() {
 			break
 		}
+		if waitSelf(it.Project) {
+			continue
+		}
 		if ok, _ := state.Capacity(st, a.Cfg, it.Project); !ok || resumed[it.Project] {
 			continue
 		}
@@ -651,7 +677,7 @@ projects:
 		if ok, _ := state.Capacity(st, a.Cfg, ""); !ok || breaker() {
 			break
 		}
-		if ok, _ := state.Capacity(st, a.Cfg, p.Name); !ok || resumed[p.Name] {
+		if ok, _ := state.Capacity(st, a.Cfg, p.Name); !ok || resumed[p.Name] || waitSelf(p.Name) {
 			continue
 		}
 		if newproj.NewProjectBusy(st, p.Name) { // 可能是 new 任务正在建的项目，第一条还没认领，或者第一版还没合并，别抢
@@ -737,4 +763,33 @@ func (a *Service) CmdSetPaused(paused bool) error {
 		fmt.Fprintln(a.Out, "已恢复：下次 tick 起照常接活")
 	}
 	return nil
+}
+
+// selfWaits：self_project 要不要等。别的项目（不算 exclude_projects 的）有开发任务在跑、在过门、等着续跑，或有现在就挑得出来的待做
+// （和挑活同一个口径：没卡住、没在做、依赖做完了、不在 retry_after 里；停掉的、正在新建的项目不算），就等：
+// agentq 自己的活和用户的项目抢同一份额度，先做用户的，别的项目都没活了才做自己的。夜班、复盘这类定点任务不算。没配 self_project 不等。
+func (a *Service) selfWaits(st *state.State, projects []backlog.Project) bool {
+	self := a.Cfg.SelfProject
+	if self == "" {
+		return false
+	}
+	for _, j := range st.Jobs {
+		if (j.Kind == "" || j.Kind == state.KindNew) && j.Project != self &&
+			(j.Status == state.StatusRunning || j.ResumePending || j.Gate != nil && (j.Gate.State == state.GateQueued || j.Gate.State == state.GateRunning)) {
+			return true
+		}
+	}
+	for _, p := range projects {
+		if p.Name == self || st.HeldProject(p.Name) || newproj.NewProjectBusy(st, p.Name) {
+			continue
+		}
+		items, err := p.Items() // 读不出的不算有活：别让一份坏 BACKLOG 把 agentq 自己的修复一直挡着
+		if err != nil {
+			continue
+		}
+		if _, ok := a.Runner.Pick(st, items, "", true); ok {
+			return true
+		}
+	}
+	return false
 }

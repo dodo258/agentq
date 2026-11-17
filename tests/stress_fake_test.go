@@ -6,6 +6,7 @@ package tests
 const stressFakeSrc = `package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -561,9 +562,9 @@ func reviewKind() {
 	b, _ := os.ReadFile(filepath.Join(fdir, "reviewmode"))
 	switch strings.TrimSpace(string(b)) {
 	case "block":
-		res(map[string]any{"result": "有问题", "structured_output": map[string]any{"verdict": "block", "summary": "有问题", "findings": []any{map[string]any{"file": ".agentq/verify", "line": 1, "severity": "blocker", "evidence": "假的问题", "repro": "假的复现"}}}})
+		res(map[string]any{"result": "有问题", "structured_output": map[string]any{"verdict": "block", "summary": "有问题", "findings": []any{map[string]any{"file": ".agentq/verify", "line": 1, "kind": "wrong", "evidence": "假的问题", "repro": "假的复现"}}}})
 	case "noevidence":
-		res(map[string]any{"result": "有问题", "structured_output": map[string]any{"verdict": "block", "summary": "说不清", "findings": []any{map[string]any{"file": "编的.go", "line": 0, "severity": "blocker", "evidence": "", "repro": ""}}}})
+		res(map[string]any{"result": "有问题", "structured_output": map[string]any{"verdict": "block", "summary": "说不清", "findings": []any{map[string]any{"file": "编的.go", "line": 0, "kind": "wrong", "evidence": "", "repro": ""}}}})
 	case "bad":
 		os.Stdout.WriteString("{\"type\":\"result\",\"is_error\":false,\"result\":\"不是 JSON\"}\n")
 	case "crash":
@@ -785,6 +786,24 @@ func main() {
 			hangHoldingPipe()
 		default:
 			fmt.Println("Logged in using ChatGPT")
+		}
+		return
+	}
+	// codex app-server：读额度（account/rateLimits/read）。fake/quota.json 有就原样回它，没有就回报错（额度未知，和以前一样照常跑）。
+	if len(args) > 0 && args[0] == "app-server" {
+		wd, _ := os.Getwd()
+		rec("quota", map[string]any{"args": strings.Join(args, " "), "cwd": wd, "codex_home": os.Getenv("CODEX_HOME"), "api_key": os.Getenv("OPENAI_API_KEY") + os.Getenv("CODEX_API_KEY")})
+		quota, err := os.ReadFile(filepath.Join(fdir, "quota.json"))
+		sc := bufio.NewScanner(os.Stdin)
+		for sc.Scan() {
+			if !strings.Contains(sc.Text(), "\"account/rateLimits/read\"") {
+				continue
+			}
+			if err != nil {
+				fmt.Println("{\"id\":1,\"error\":{\"code\":-32600,\"message\":\"fake: no rate limits\"}}")
+			} else {
+				fmt.Println(strings.TrimSpace(string(quota)))
+			}
 		}
 		return
 	}
