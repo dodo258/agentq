@@ -21,7 +21,7 @@ import (
 // 用户和真实使用里冒出来的问题（会话或用户发现、门和任务记录里看不出来的），都只读已经落盘的数据，不调模型：
 //   - 用户亲手停的任务（user-stop）；其中亲手派、启动 3 分钟内就被停的单算一类「刚启动就被停」（quick-stop），一次就写：
 //     多半是派活的人（常是 Claude、Codex 会话）被说明或输出带偏了，派完才发现不对。证据带上谁停的（命令行、Telegram）和停时的额度、
-//     后台上限。停了以后很快亲手重派的是改需求，不算。怎么判见下面「按任务记录判的信号」一节的 jobCounts。
+//     后台上限。停了以后很快亲手重派、把那一条撤出「待做」、接着做完的都是改计划，不算。怎么判见下面「按任务记录判的信号」一节的 jobCounts。
 //   - 门卡片上用户点了退回或放弃：门的审计日志 gate/audit.log 的「退回」「放弃」行（卡片和 gate 命令写的都是这一行）。
 //   - 返工：项目 BACKLOG 里出现「验收 <原条目标题> 的意见」（dispatch 的固定写法），按条目范围、原条目范围和提到的合并提交改了的文件归到领域。
 //   - 巡逻报过、当天又自己消失的问题（疑似误报）：信号文件记着上次还在的巡逻问题，这次不在了、首次发现是今天，就算。
@@ -68,14 +68,15 @@ var jobKinds = []string{KindUserStop, KindQuickStop, KindGateOverride}
 // jobCounts：这份任务记录按现在的规则算不算 kind 这一类。
 //   - quick-stop：亲手派、启动 3 分钟内（含）被用户停了。
 //   - user-stop：用户停了（agentq 按信号自动停的记中断，不算），不是刚启动就停的，停了以后 30 分钟内同一个项目也没有亲手再派
-//     （改了条目重派、换一条替它是改需求，不是 agentq 的问题）。停了还不到 30 分钟又没重派的看不出来，见 jobUndecided。
+//     （改了条目重派、换一条替它是改需求，不是 agentq 的问题），停的那一条也还在「待做」里（stopItemGone）。
+//     停了还不到 30 分钟又没重派的看不出来，见 jobUndecided。
 //   - gate-override：合并了、是用户放行的，不是门都过了只因为改了尺子等人看（heldOnPurpose）。
 func (s *Service) jobCounts(kind string, j *state.Job) bool {
 	switch kind {
 	case KindQuickStop:
 		return j.Status == state.StatusKilled && quickStop(j)
 	case KindUserStop:
-		return j.Status == state.StatusKilled && !quickStop(j) && s.stopRedo(j) == nil
+		return j.Status == state.StatusKilled && !quickStop(j) && s.stopRedo(j) == nil && !stopItemGone(j)
 	case KindGateOverride:
 		g := j.Gate
 		return g != nil && g.State == state.GateMerged && (g.Passes > 0 || g.Override != "") && !s.heldOnPurpose(j)
@@ -152,6 +153,24 @@ func (s *Service) stopRedo(j *state.Job) *state.Job {
 		}
 	}
 	return nil
+}
+
+// stopItemGone：用户停的待做任务，那一条在项目 BACKLOG 里待过（git 历史里有这个标题），现在已经不在「待做」里了。
+// 停了以后孤儿标记让用户二选一：不做就移走（移到「以后再说」、删掉，是撤回需求），要做就去掉标记接着做（做完合并移到
+// 「已完成」，停只是让路）；两种都是用户对计划的决定，不是这个任务做歪了。不是待做任务、没记项目目录、读不了 BACKLOG、
+// 历史里找不到这一条（看不出它去哪了）的，当还在。
+func stopItemGone(j *state.Job) bool {
+	if j.Kind != "" || j.ProjectDir == "" || j.Title == "" {
+		return false
+	}
+	p := backlog.Project{Dir: j.ProjectDir}
+	b, err := os.ReadFile(p.BacklogPath())
+	if err != nil || slices.ContainsFunc(backlog.ParseBacklog(string(b)), func(it backlog.Item) bool { return backlog.SameItemText(it, j.Fingerprint, j.Title) }) {
+		return false
+	}
+	rel, _ := filepath.Rel(p.Dir, p.BacklogPath()) // 同一个目录下拼出来的，不会报错
+	out, ok := gitFields(context.Background(), p.Dir, "log", "-1", "--format=%h", "-S"+j.Title, "--", rel)
+	return ok && len(out) > 0
 }
 
 func absorbQuickStop(st *SignalStore, j *state.Job, now time.Time) {
@@ -326,17 +345,23 @@ func (s *Service) reworkDomains(ctx context.Context, p backlog.Project, backlogT
 
 // changedFiles：这个提交（合并提交按第一父）改了的文件。不是提交、git 出错都当没有。
 func changedFiles(ctx context.Context, dir, commit string) []string {
+	out, _ := gitFields(ctx, dir, "diff", "--name-only", commit+"^", commit)
+	return out
+}
+
+// gitFields：在 dir 里跑 git，输出按空白切开；出错、超时 ok=false。
+func gitFields(ctx context.Context, dir string, args ...string) (out []string, ok bool) {
 	ctx, cancel := context.WithTimeout(ctx, gitShowWait)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", commit+"^", commit)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir, cmd.Env = dir, proc.ChildEnv()
 	proc.BoundCmd(cmd)
 	defer proc.ClearLeftovers(cmd)
-	out, err := cmd.Output()
+	b, err := cmd.Output()
 	if err != nil {
-		return nil
+		return nil, false
 	}
-	return strings.Fields(string(out))
+	return strings.Fields(string(b)), true
 }
 
 // absorbRework：一条返工意见，每个领域记一次（E7 按领域看返工）。

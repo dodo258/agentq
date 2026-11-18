@@ -467,3 +467,86 @@ func TestStaleStopSignalRechecked(t *testing.T) {
 	}
 	r.noCLI()
 }
+
+// 11-16 到 11-18 那条 user-stop 的三份证据：两次是派活的会话把只评估的建议写进了待做，tick 接了，用户停掉后一分钟内
+// 移到「以后再说」（撤回）；一次是让路给别的项目，之后去掉标记接着做完、合并进「已完成」。停的那一条已经不在「待做」里的
+// 都是改计划，不记，按旧规则记过的每次收信号去掉；还留在「待做」里的、不是待做任务的、看不到 BACKLOG 的照记。
+func TestUserStopItemGoneNotSignal(t *testing.T) {
+	r := newSigRig(t, nil)
+	at := func(d time.Duration) *time.Time { x := r.now.Add(d); return &x }
+	dir, home := t.TempDir(), os.Getenv("HOME")
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	testkit.GitT(t, home, dir, "init", "-q", "-b", "main")
+	backlogText := func(todo, later, done string) { // 写进 BACKLOG 并提交：停的那一条在不在 git 历史里要看提交
+		t.Helper()
+		text := "# 待办\n\n## 待做\n\n" + todo + "\n## 以后再说\n\n" + later + "\n## 已完成\n\n" + done
+		if err := os.WriteFile(filepath.Join(dir, "docs", "BACKLOG.md"), []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		testkit.GitT(t, home, dir, "add", "-A")
+		testkit.GitT(t, home, dir, "commit", "-q", "-m", "待办")
+	}
+	line := func(title string) string { return title + " —— 正文" }
+	stopped := func(id, title, kind, projectDir string, run time.Duration) {
+		r.meta(&state.Job{ID: id, Project: "reader", ProjectDir: projectDir, Title: title, Kind: kind, Fingerprint: backlog.Fingerprint("- [ ] " + line(title)),
+			Status: state.StatusKilled, StartedAt: *at(-2*time.Hour - run), EndedAt: at(-2 * time.Hour), Summary: "被 agentq stop 停止（SIGTERM）"})
+	}
+	stopped("撤回", "滚动误呼菜单", "", dir, 3*time.Minute)
+	stopped("十秒撤回", "左边缘滑动退出", "", dir, 10*time.Second)
+	stopped("让路", "门停住先审查", "", dir, 15*time.Minute)
+	stopped("还在待做", "书名识别", "", dir, 5*time.Minute)
+	stopped("没有目录", "旧任务", "", "", 5*time.Minute)
+	stopped("读不了", "别的项目", "", filepath.Join(dir, "没有这个目录"), 5*time.Minute)
+	stopped("新项目", "门停住先审查", state.KindNew, dir, 5*time.Minute)
+	stopped("从没待过", "加日志", "", dir, 5*time.Minute)
+	// 接活时四条都在待做；之后两条撤到「以后再说」（再删掉也一样）、一条接着做完合并、一条停着没人管
+	backlogText("- [ ] "+line("滚动误呼菜单")+"\n- [ ] "+line("左边缘滑动退出")+"\n- [ ] "+line("门停住先审查")+"\n- [ ] "+line("书名识别")+"\n", "", "")
+	backlogText(
+		"- [ ] "+line("书名识别")+"（进行中：agent/1118-title 2026-11-18 18:00）\n",
+		"- [ ] "+line("滚动误呼菜单")+"\n- [ ] "+line("左边缘滑动退出")+"\n",
+		"- [x] "+line("门停住先审查")+"；合并提交 abcdef123456\n")
+	r.collect()
+	ids := func() string {
+		var out []string
+		for _, sig := range r.signals(KindUserStop) {
+			for _, ev := range sig.Evidence {
+				id, _ := evidenceJob(ev)
+				out = append(out, id)
+			}
+		}
+		slices.Sort(out)
+		return strings.Join(out, " ")
+	}
+	if got, want := ids(), "从没待过 新项目 没有目录 读不了 还在待做"; got != want {
+		t.Fatalf("user-stop 证据 %q，要 %q", got, want)
+	}
+
+	// 按旧规则记过的：三份真实形状的证据和还在待做的那份。下次收信号时撤回、让路的去掉，还在待做的留着。
+	st := r.store()
+	key := SignalKey(KindUserStop, "待做", "")
+	ev := func(id, title string) string { return "任务 " + id + "（reader）「" + title + "」" }
+	when := r.now.Add(-2 * time.Hour)
+	st.Signals = slices.DeleteFunc(st.Signals, func(sig Signal) bool { return sig.Kind == KindUserStop })
+	st.Signals = append(st.Signals, Signal{Kind: KindUserStop, Key: key, Summary: "用户停了待做任务",
+		Evidence: []string{ev("让路", "门停住先审查"), ev("十秒撤回", "左边缘滑动退出"), ev("撤回", "滚动误呼菜单"), ev("还在待做", "书名识别")},
+		Seen:     4, First: when, Last: when, Proposed: true})
+	r.write(r.s.SignalsPath(), st)
+	r.now = r.now.Add(2 * time.Hour)
+	r.meta(&state.Job{ID: "新数据", Project: "ops"})
+	r.collect()
+	if sigs := r.signals(KindUserStop); len(sigs) != 1 || sigs[0].Seen != 1 || !slices.Equal(sigs[0].Evidence, []string{ev("还在待做", "书名识别")}) {
+		t.Fatalf("只剩还在待做的那份：%+v", sigs)
+	}
+
+	// 还在待做的那条后来也撤回、删掉了：再收一次，整条信号删掉
+	backlogText("", "", "")
+	r.now = r.now.Add(2 * time.Hour)
+	r.meta(&state.Job{ID: "又一条新数据", Project: "ops"})
+	r.collect()
+	if sigs := r.signals(KindUserStop); len(sigs) != 0 {
+		t.Fatalf("一份不剩要删掉：%+v", sigs)
+	}
+	r.noCLI()
+}
