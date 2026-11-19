@@ -117,7 +117,8 @@ func (a *Service) NotifyFile(args []string) error {
 // 推什么：每天的早报摘要（复盘写完、且不早于 08:00）、新的「等用户决定」条目、巡逻发现且没自动处理的问题、
 // 普通任务的结果（过门合并了、失败、中断、卡住）、成品送达（agentq notify send，夜班和 agent 调用）、额度 ≥90% 和连环失败熔断。
 // 怎么推：要推的消息先记进 ~/.agentq/notify.json 的队列，tick（和 notify send）按规则发：同类 30 分钟内只发一条，
-// 后来的攒着、到点合成一条；23:00–08:00 只攒着，08:00 后和早报一起发；每天最多 10 条，早报和「要你定」不受上限挡，
+// 后来的攒着、到点合成一条；23:00–08:00 只攒着，08:00 后和早报一起发；每天最多 10 条，早报和「要你定」不受上限挡
+// （「要你定」包括等用户决定的条目、门要人看、开工前商量大方向，和交给用户的卡住：任务标了卡住、放下了、接手后仍没做完），
 // 超出的普通消息不丢，跟着下一条发出的消息一起带上（或等早报、第二天）；
 // 安全问题（备份连续失败等）不等合并窗口、不管夜间和上限，当时就发。
 const (
@@ -822,7 +823,7 @@ func (a *Service) PushMorning(s *State, st *state.State, c *telegram.TgCreds, cr
 	held := append([]Notice(nil), s.Pending...)
 	sort.SliceStable(held, func(i, k int) bool { return CatRank(held[i].Cat) < CatRank(held[k].Cat) })
 	for _, n := range held {
-		if n.Cat == "decide" { // 下面「要你定」一段已经列了
+		if n.Cat == "decide" && (strings.HasPrefix(n.Key, "decide:") || n.Card != nil && c != nil) { // 「等用户决定」的条目下面一段列了；带按钮的卡片早报后单独发
 			continue
 		}
 		secs = append(secs, MsgSection{Emoji: NotifyCats[n.Cat].emoji, Head: n.Text})
@@ -1079,7 +1080,32 @@ func (a *Service) NotifyStatus() string {
 	if s.Day == a.Now().Format("2006-01-02") {
 		count = s.Count
 	}
-	return fmt.Sprintf("%s，今天已推 %d/%d 条，攒着 %d 条", via, count, NotifyDailyMax, len(s.Pending))
+	return fmt.Sprintf("%s，今天已推 %d/%d 条，攒着 %d 条%s", via, count, NotifyDailyMax, len(s.Pending), heldNote(s.Pending, count, a.Now()))
+}
+
+// heldNote：攒着的里面有没有要你定的、夜里攒着的几点发；到了上限说清只挡普通消息。
+func heldNote(pending []Notice, count int, now time.Time) string {
+	if len(pending) == 0 {
+		return ""
+	}
+	decide := 0
+	for _, n := range pending {
+		if bypassCap(n.Cat) {
+			decide++
+		}
+	}
+	capped := ""
+	if count >= NotifyDailyMax {
+		capped = "；到了上限只攒普通消息，要你定的照发"
+	}
+	switch {
+	case decide == 0:
+		return "，都不用你定" + capped
+	case IsQuiet(now):
+		return fmt.Sprintf("，其中要你定 %d 条，夜里攒着，%s 发%s", decide, textfmt.WhenCN(QuietEnd(now)), capped)
+	default:
+		return fmt.Sprintf("，其中要你定 %d 条%s", decide, capped)
+	}
 }
 
 // ErrLocalNotify：本机通知这次没送达，再试也多半一样（没有桌面会话）。调用方把消息留在队列，隔 localNotifyRetry 再试。

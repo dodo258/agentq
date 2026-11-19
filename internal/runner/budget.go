@@ -97,22 +97,15 @@ func (a *Service) budgetTaskNext(st *state.State, j *state.Job) string {
 
 // noticeBudget：撞预算推一条（new 由 noticeNew 推）。
 func (a *Service) noticeBudget(j *state.Job, stuck bool) {
-	label := backend.BudgetLabel(a.JobBudget(j.Kind))
-	name := j.Project + "「" + textfmt.TruncRunes(j.Title, 30) + "」"
-	n := notify.Notice{Cat: "alert", Key: "budget:" + j.ID, JobID: j.ID}
-	logs := "详情 agentq logs " + j.ID
+	label, name, key := backend.BudgetLabel(a.JobBudget(j.Kind)), jobName(j), "budget:"+j.ID
 	switch {
 	case j.ResumePending:
-		n.Text = name + " 撞到预算上限，会接着做一次"
-		n.Lines = []string{label + " 是失控兜底，分支和会话都留着；有名额时用同一会话续跑", logs}
+		a.tell(j, endNotice{endTell, key, name + " 撞到预算上限，会接着做一次", []string{label + " 是失控兜底，分支和会话都留着；有名额时用同一会话续跑", logsLine(j)}})
 	case stuck:
-		n.Text = name + " 续跑后又撞预算上限，放下了"
-		n.Lines = append([]string{label + " 是失控兜底，成果都留着"}, append(a.continueLines(j), logs)...)
+		a.tell(j, endNotice{endUser, key, name + " 续跑后又撞预算上限，放下了", append([]string{label + " 是失控兜底，成果都留着"}, append(a.continueLines(j), logsLine(j))...)})
 	default:
-		n.Text = name + " 撞到预算上限"
-		n.Lines = []string{textfmt.OneLine(j.Summary, 200), logs}
+		a.tell(j, endNotice{endTell, key, name + " 撞到预算上限", []string{textfmt.OneLine(j.Summary, 200), logsLine(j)}})
 	}
-	a.Notify.Notify(n)
 }
 
 // CheckLiveBudget：没有美元硬上限、但运行中读得到用量的后端，tick 替它看预算，超了发 SIGTERM，滞后最多一个 tick。
@@ -168,9 +161,8 @@ func (a *Service) autoStopRunaway(st *state.State, j *state.Job, h backend.Progr
 	if j.Kind != "" { // new 在 finish 里推过
 		return
 	}
-	a.Notify.Notify(notify.Notice{Cat: "alert", Key: "progress:" + j.ID + ":" + h.Signal, JobID: j.ID,
-		Text:  j.Project + "「" + textfmt.TruncRunes(j.Title, 30) + "」" + backend.ProgressNames[h.Signal] + "，自动停了",
-		Lines: append([]string{h.Evidence}, append(a.continueLines(j), "详情 agentq logs "+j.ID)...)})
+	a.tell(j, endNotice{endUser, "progress:" + j.ID + ":" + h.Signal, jobName(j) + backend.ProgressNames[h.Signal] + "，自动停了",
+		append([]string{h.Evidence}, append(a.continueLines(j), logsLine(j))...)})
 }
 
 // continueLines：放下的任务在通知里写清成果在哪、两种接法。

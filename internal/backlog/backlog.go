@@ -341,22 +341,27 @@ func ScopesOverlap(a, b []string) (string, string, bool) {
 	return "", "", false
 }
 
-// ParallelBlock：同项目有这些条目（running，任务记的条目原文）在跑时，it 能不能一起跑；能返回空，不能返回原因。
-// 要 it 写了范围、在跑的每条都写了范围、两两不重叠；没写范围的当会撞。
-func ParallelBlock(it Item, running []string) string {
+// Running 是同项目在跑的一条任务：标题（说原因用）和它这一轮会改的范围（空的当没写）。
+type Running struct {
+	Title string
+	Scope []string
+}
+
+// ParallelBlock：同项目有这些任务（running）在跑时，范围为 scope 的这一条能不能一起跑；能返回空，不能返回原因。
+// 要这一条写了范围、在跑的每条都有范围、两两不重叠；没写范围的当会撞。
+func ParallelBlock(scope []string, running []Running) string {
 	if len(running) == 0 {
 		return ""
 	}
-	if len(it.Scope) == 0 {
+	if len(scope) == 0 {
 		return "没写（范围：…），不和在跑的任务并行"
 	}
 	for _, r := range running {
-		sc := ItemScope(r)
-		if len(sc) == 0 {
-			return "在跑的「" + ItemTitle(r) + "」没写范围，不并行"
+		if len(r.Scope) == 0 {
+			return "在跑的「" + r.Title + "」没写范围，不并行"
 		}
-		if x, y, ok := ScopesOverlap(it.Scope, sc); ok {
-			return fmt.Sprintf("范围 %s 和在跑的「%s」的 %s 重叠，不并行", x, ItemTitle(r), y)
+		if x, y, ok := ScopesOverlap(scope, r.Scope); ok {
+			return fmt.Sprintf("范围 %s 和在跑的「%s」的 %s 重叠，不并行", x, r.Title, y)
 		}
 	}
 	return ""

@@ -97,7 +97,7 @@ func (a *Service) RunProject(st *state.State, project, keyword string) (RunResul
 	it, ok := a.Pick(st, items, keyword, false)
 	if !ok {
 		why := "已标进行中、卡住、正在跑或依赖没做完的不算"
-		if n := len(RunningItems(st, project)); n > 0 {
+		if n := len(RunningScopes(st, project)); n > 0 {
 			why += fmt.Sprintf("；项目已有 %d 个任务在跑，同项目再起一条要它和在跑的都写了（范围：…）且不重叠（per_project=%d）", n, a.Cfg.PerProject)
 		}
 		if keyword != "" {
@@ -387,39 +387,55 @@ func (a *Service) EnforceTimeouts(st *state.State) int {
 	return n
 }
 
-// ProjectSlot：还能不能在 project 起一个做 item（条目原文）的任务。先看全局和单项目名额（state.Capacity）；
-// 同项目已有任务在跑时还要范围不重叠（backlog.ParallelBlock）。没有条目的传空串，当没写范围。
-func ProjectSlot(st *state.State, cfg config.Config, project, item string) (bool, string) {
+// ProjectSlot：还能不能在 project 起一个改 scope 这些范围的任务。先看全局和单项目名额（state.Capacity）；
+// 同项目已有任务在跑时还要范围不重叠（backlog.ParallelBlock）。空的当没写范围。续跑传 ResumeScope。
+func ProjectSlot(st *state.State, cfg config.Config, project string, scope []string) (bool, string) {
 	if ok, why := state.Capacity(st, cfg, project); !ok {
 		return false, why
 	}
-	if why := ScopeBlocked(st, cfg, project, item); why != "" {
+	if why := ScopeBlocked(st, cfg, project, scope); why != "" {
 		return false, why
 	}
 	return true, ""
 }
 
 // ScopeBlocked：名额还有、只是和同项目在跑的任务范围冲突时返回原因，否则空。续跑、接手被它挡住时，项目这次不挑新条目，免得写了范围的新条目一直插队。
-func ScopeBlocked(st *state.State, cfg config.Config, project, item string) string {
+func ScopeBlocked(st *state.State, cfg config.Config, project string, scope []string) string {
 	if ok, _ := state.Capacity(st, cfg, project); !ok {
 		return ""
 	}
-	running := RunningItems(st, project)
-	if why := backlog.ParallelBlock(backlog.Item{Scope: backlog.ItemScope(item)}, running); why != "" {
+	running := RunningScopes(st, project)
+	if why := backlog.ParallelBlock(scope, running); why != "" {
 		return fmt.Sprintf("项目 %s 已有 %d 个任务在跑，%s", project, len(running), why)
 	}
 	return ""
 }
 
-// RunningItems：这个项目里占名额、在跑的任务记的条目原文。没有条目的（新项目）是空串，当没写范围。
-func RunningItems(st *state.State, project string) []string {
-	var out []string
+// RunningScopes：这个项目里占名额、在跑的任务和它们这一轮的范围（JobScope）。没有条目的（新项目）范围是空的，当没写范围。
+func RunningScopes(st *state.State, project string) []backlog.Running {
+	var out []backlog.Running
 	for _, j := range st.Tasks() {
 		if j.Project == project {
-			out = append(out, j.Item)
+			out = append(out, backlog.Running{Title: backlog.ItemTitle(j.Item), Scope: JobScope(j)})
 		}
 	}
 	return out
+}
+
+// JobScope：任务这一轮会改的范围。门退回限定了范围的轮次（GateScope）只改那些，比条目原文写的窄；否则是条目的（范围：…）。
+func JobScope(j *state.Job) []string {
+	if len(j.GateScope) > 0 {
+		return j.GateScope
+	}
+	return backlog.ItemScope(j.Item)
+}
+
+// ResumeScope：续跑 orig 起的那一轮会改的范围，和 carryGate 定的一致：退回的用退回时定的范围，同一轮中断的照旧。
+func ResumeScope(orig *state.Job) []string {
+	if _, scope, _ := nextGate(orig); len(scope) > 0 {
+		return scope
+	}
+	return backlog.ItemScope(orig.Item)
 }
 
 // InProgressItem 找「待做」里指纹为 fp、标着进行中的条目。同时标了卡住的不算：那是 agent 有意放下的，不是中断。
@@ -439,7 +455,7 @@ func (a *Service) Pick(st *state.State, items []backlog.Item, keyword string, ho
 		if !it.Eligible() || st.RunningFor(it.Project, it.Fingerprint) != nil {
 			continue
 		}
-		if len(it.DepsWaiting) > 0 || backlog.ParallelBlock(it, RunningItems(st, it.Project)) != "" {
+		if len(it.DepsWaiting) > 0 || backlog.ParallelBlock(it.Scope, RunningScopes(st, it.Project)) != "" {
 			continue
 		}
 		if keyword != "" && !strings.Contains(it.Text, keyword) {

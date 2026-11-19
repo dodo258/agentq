@@ -162,7 +162,7 @@ func (a *Service) serveReplies(s *notify.State, st *state.State, c *telegram.TgC
 				a.refuseMsgs(s, c, []notify.InMsg{m}, why)
 				continue
 			}
-			if ok, why := runner.ProjectSlot(st, a.Cfg, orig.Project, orig.Item); !ok {
+			if ok, why := runner.ProjectSlot(st, a.Cfg, orig.Project, runner.ResumeScope(orig)); !ok {
 				if !m.QueueNoted {
 					m.QueueNoted = true
 					a.replyPlain(c, m.ID, "排队了："+why+"。有名额时接着做任务 "+orig.ID+"。")

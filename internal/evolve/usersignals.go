@@ -21,7 +21,8 @@ import (
 // 用户和真实使用里冒出来的问题（会话或用户发现、门和任务记录里看不出来的），都只读已经落盘的数据，不调模型：
 //   - 用户亲手停的任务（user-stop）；其中亲手派、启动 3 分钟内就被停的单算一类「刚启动就被停」（quick-stop），一次就写：
 //     多半是派活的人（常是 Claude、Codex 会话）被说明或输出带偏了，派完才发现不对。证据带上谁停的（命令行、Telegram）和停时的额度、
-//     后台上限。停了以后很快亲手重派、把那一条撤出「待做」、接着做完的都是改计划，不算。怎么判见下面「按任务记录判的信号」一节的 jobCounts。
+//     后台上限。停了以后把那一条撤出「待做」（移走、删掉）或接着做完的是改计划，两类都不算；停了以后很快亲手重派是改需求，
+//     只是 user-stop 不算，quick-stop 照算（派错条目、改了说法再派，正是要查的说明问题）。怎么判见下面「按任务记录判的信号」一节的 jobCounts。
 //   - 门卡片上用户点了退回或放弃：门的审计日志 gate/audit.log 的「退回」「放弃」行（卡片和 gate 命令写的都是这一行）。
 //   - 返工：项目 BACKLOG 里出现「验收 <原条目标题> 的意见」（dispatch 的固定写法），按条目范围、原条目范围和提到的合并提交改了的文件归到领域。
 //   - 巡逻报过、当天又自己消失的问题（疑似误报）：信号文件记着上次还在的巡逻问题，这次不在了、首次发现是今天，就算。
@@ -66,7 +67,8 @@ func jobEvidence(j *state.Job) string {
 var jobKinds = []string{KindUserStop, KindQuickStop, KindGateOverride}
 
 // jobCounts：这份任务记录按现在的规则算不算 kind 这一类。
-//   - quick-stop：亲手派、启动 3 分钟内（含）被用户停了。
+//   - quick-stop：亲手派、启动 3 分钟内（含）被用户停了，停的那一条也还在「待做」里（stopItemGone）：派完马上停又把条目撤走，
+//     是用户改了主意（11-20 那次是派完同一秒用户说不做了），不是说明带偏。停了马上重派的照算，见文件头。
 //   - user-stop：用户停了（agentq 按信号自动停的记中断，不算），不是刚启动就停的，停了以后 30 分钟内同一个项目也没有亲手再派
 //     （改了条目重派、换一条替它是改需求，不是 agentq 的问题），停的那一条也还在「待做」里（stopItemGone）。
 //     停了还不到 30 分钟又没重派的看不出来，见 jobUndecided。
@@ -74,7 +76,7 @@ var jobKinds = []string{KindUserStop, KindQuickStop, KindGateOverride}
 func (s *Service) jobCounts(kind string, j *state.Job) bool {
 	switch kind {
 	case KindQuickStop:
-		return j.Status == state.StatusKilled && quickStop(j)
+		return j.Status == state.StatusKilled && quickStop(j) && !stopItemGone(j)
 	case KindUserStop:
 		return j.Status == state.StatusKilled && !quickStop(j) && s.stopRedo(j) == nil && !stopItemGone(j)
 	case KindGateOverride:

@@ -119,7 +119,7 @@ func waitingBranch(st *state.State, project string) string {
 func (a *Service) ResumeBlockLines(st *state.State) []string {
 	var out []string
 	for _, j := range st.PendingResumes() {
-		if why := ScopeBlocked(st, a.Cfg, j.Project, j.Item); j.Kind == "" && why != "" {
+		if why := ScopeBlocked(st, a.Cfg, j.Project, ResumeScope(j)); j.Kind == "" && why != "" {
 			out = append(out, fmt.Sprintf("等续跑：%s「%s」，任务 %s：%s；这个项目先不起新条目", j.Project, textfmt.TruncRunes(j.Title, 30), j.ID, why))
 		}
 		if j.DefaultBranch == "" {
@@ -320,18 +320,25 @@ func directionNote(item string) string {
 
 // carryGate：退回的任务接着做算下一轮，带上退回时定的范围和上一轮的分支尖（scope 门比较它之后的改动）；其余的续跑还是这一轮。
 func carryGate(j, orig *state.Job) {
-	if g := orig.Gate; g != nil && g.State == state.GateReturned {
-		j.GateRound, j.GateScope, j.GateScopeFrom = g.Round+1, nil, ""
-		if len(g.Scope) > 0 && g.Head != "" {
-			j.GateScope, j.GateScopeFrom = slices.Clone(g.Scope), g.Head
-		}
-		return
-	}
-	j.GateRound, j.GateScope, j.GateScopeFrom = orig.GateRound, nil, ""
-	if orig.Gate == nil { // 这一轮做到一半中断的续跑：范围照旧，进门前要过的门说明也算要过了。卡在门上的（用户去掉卡住标记重做）不再限定
-		j.GateScope, j.GateScopeFrom = slices.Clone(orig.GateScope), orig.GateScopeFrom
+	j.GateRound, j.GateScope, j.GateScopeFrom = nextGate(orig)
+	if orig.Gate == nil { // 这一轮做到一半中断的续跑：进门前要过的门说明也算要过了
 		j.NoteAsk = slices.Clone(orig.NoteAsk)
 	}
+}
+
+// nextGate：接着 orig 做的那一轮的轮数、范围和范围的起点。退回的算下一轮，带退回时定的范围（没定就不限定）；
+// 这一轮做到一半中断的范围照旧；卡在门上的（用户去掉卡住标记重做）不再限定。
+func nextGate(orig *state.Job) (round int, scope []string, from string) {
+	if g := orig.Gate; g != nil && g.State == state.GateReturned {
+		if len(g.Scope) > 0 && g.Head != "" {
+			return g.Round + 1, slices.Clone(g.Scope), g.Head
+		}
+		return g.Round + 1, nil, ""
+	}
+	if orig.Gate == nil {
+		return orig.GateRound, slices.Clone(orig.GateScope), orig.GateScopeFrom
+	}
+	return orig.GateRound, nil, ""
 }
 
 // GateTakeoverNote：接手任务接的是门退回的任务时，提示词后面要多门的报告，轮数接着算。

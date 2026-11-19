@@ -81,7 +81,7 @@ func todoProposal(sig *Signal, fixes []string) proposal {
 	case sig.Kind == KindRollback:
 		body += "：对照升级前后的任务记录找出这次升级带进来的改动里哪处让任务变差，在根因处修，加一道能复现它的评测题（evals/ 新目录，只加不改）；这一条合并之前，带着那次改动的版本不会再自动升级"
 	case sig.Kind == KindQuickStop:
-		body += "：对照证据里停的来源和当时的额度、后台上限，查是 agentq 的哪句说明（派活、agent-task 技能，命令输出、--help）让派活的人启动后马上停掉，把说法改得和实际行为一致，在根因处修；交付时加一道能复现它的评测题（evals/ 新目录，只加不改）"
+		body += "：先确认停的原因是不是用户改了主意（是的话说明没错，不用改）；不是的话对照证据里停的来源和当时的额度、后台上限，查是 agentq 的哪句说明（派活、agent-task 技能，命令输出、--help）让派活的人启动后马上停掉，把说法改得和实际行为一致，在根因处修；交付时加一道能复现它的评测题（evals/ 新目录，只加不改）"
 	case len(fixes) >= rewriteAfter:
 		body += fmt.Sprintf("：这一类已经修过 %d 次（合并提交 %s）还出现，按模块化规则重写这一块：先写清为什么老出错，用测试固定要保留的行为再重写，ready.json 的 type 写 rewrite；交付时加一道能复现它的评测题（evals/ 新目录，只加不改）",
 			len(fixes), strings.Join(fixes, "、"))

@@ -176,7 +176,7 @@ func TestNoticeEndedTable(t *testing.T) {
 		{name: "过门中：门说", status: state.StatusDone, job: state.Job{Gate: &state.GateRecord{State: state.GateQueued}}},
 		{name: "门卡住：卡片说", status: state.StatusDone, job: state.Job{Gate: &state.GateRecord{State: state.GateStuck}}},
 		{name: "放下了：StuckPending 有自己的通知", status: state.StatusInterrupted, job: state.Job{StuckPending: "连续两次报告做完"}},
-		{name: "任务标了卡住", todo: stuckTodo, status: state.StatusDone, cat: "alert", text: "「甲」卡住了"},
+		{name: "任务标了卡住：交给用户，算要你定", todo: stuckTodo, status: state.StatusDone, cat: "decide", text: "「甲」卡住了"},
 		{name: "跑完没合并", todo: "\n", status: state.StatusDone, cat: "alert", text: "「甲」跑完了，没有要合并的分支"},
 		{name: "新合同自己合并：绕过门的提醒说", todo: "\n", done: "- [x] 甲 —— 合并提交 abc1234\n", status: state.StatusDone, job: state.Job{GateContract: true}},
 		{name: "老合同自己合并", todo: "\n", done: "- [x] 甲 —— 合并提交 abc1234\n", status: state.StatusDone, cat: "done", text: "「甲」做完了，已合并"},

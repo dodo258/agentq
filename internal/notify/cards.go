@@ -124,12 +124,26 @@ func decideNotice(d Decision) Notice {
 		n.Lines = append(n.Lines, "回复这条消息说选哪个，就按你的决定接着做")
 		return n
 	}
-	for _, o := range opts {
-		n.Lines = append(n.Lines, textfmt.OneLine(optionLine(o, rec), 150))
-	}
-	n.Lines = append(n.Lines, "点按钮就定；想说别的就回复这条消息")
+	n.Lines = append(append(n.Lines, optionLines(opts, rec)...), "点按钮就定；想说别的就回复这条消息")
 	n.Card = &DecideCard{Project: d.Project, Fingerprint: d.Fingerprint, TextFP: decisionTextFP(d.Text), Title: d.Title, Options: opts, Recommend: rec}
 	return n
+}
+
+// DecideOptionLines：条目写了固定格式的选项时每个选项一行（推荐的标出来），没写或认不出返回空。
+func DecideOptionLines(text string) []string {
+	opts, rec, ok := ParseDecideOptions(text)
+	if !ok {
+		return nil
+	}
+	return optionLines(opts, rec)
+}
+
+func optionLines(opts []DecideOption, rec string) []string {
+	lines := make([]string, 0, len(opts))
+	for _, o := range opts {
+		lines = append(lines, textfmt.OneLine(optionLine(o, rec), 150))
+	}
+	return lines
 }
 
 func optionLine(o DecideOption, rec string) string {

@@ -525,7 +525,7 @@ func TestScanOrphansStuckAfterTakeover(t *testing.T) {
 		t.Fatalf("解析：%+v", it)
 	}
 	n := e.pending()
-	if len(n) != 1 || n[0].Cat != "alert" || n[0].JobID != "t" || !strings.Contains(n[0].Text, "甲") {
+	if len(n) != 1 || n[0].Cat != "decide" || n[0].JobID != "t" || !strings.Contains(n[0].Text, "甲") { // 交给用户了：算要你定，不受每天上限挡
 		t.Fatalf("应通知：%+v", n)
 	}
 	if _, err := os.Stat(wt); err != nil {

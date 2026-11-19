@@ -153,7 +153,7 @@ Telegram is optional. Once it's set up, you can message the bot with requests an
 - Reply to a task alert to pick that task back up.
 - `状态`, `额度`, `暂停` and `恢复` (status, quota, pause, resume) are answered by code and use no quota.
 
-At most 10 notifications go out a day. Messages between 23:00 and 08:00 wait for the morning, and messages of one kind within 30 minutes are combined. A merged task sends its merge commit, and failures, interruptions and stuck items are reported too. Without Telegram, agentq uses local desktop notifications.
+At most 10 notifications go out a day; anything waiting for your decision (new "waiting for you" items, gates that need you, direction questions before work starts, stuck items handed to you) is not held by that limit. Messages between 23:00 and 08:00 wait for the morning, and messages of one kind within 30 minutes are combined. A merged task sends its merge commit, and failures, interruptions and stuck items are reported too. Without Telegram, agentq uses local desktop notifications.
 
 Completion notices and decision card buttons work on real Telegram. Reply threads and full conversation round trips have only been tested against a fake service. [Setup](docs/guide/telegram.md) (in Chinese).
 

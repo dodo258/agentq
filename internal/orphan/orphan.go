@@ -351,7 +351,7 @@ func (a *Service) markOrphanStuck(p backlog.Project, it backlog.Item, f backlog.
 	if f.Branch != "" {
 		line = "分支 " + f.Branch + " 留着；" + line
 	}
-	a.Notify.Notify(notify.Notice{Cat: "alert", Key: "orphan:" + it.Fingerprint, JobID: last.ID,
+	a.Notify.Notify(notify.Notice{Cat: "decide", Key: "orphan:" + it.Fingerprint, JobID: last.ID,
 		Text: p.Name + "「" + textfmt.TruncRunes(it.Title, 30) + "」接手后仍未完成，标了卡住", Lines: []string{line}})
 }
 

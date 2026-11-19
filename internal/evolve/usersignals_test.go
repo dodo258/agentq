@@ -550,3 +550,55 @@ func TestUserStopItemGoneNotSignal(t *testing.T) {
 	}
 	r.noCLI()
 }
+
+// 11-20 那次 quick-stop：派活的会话亲手 run 了一条，用户同一秒说「别做了」，会话 5 秒后 stop、十几秒后把那一条撤出待做。
+// 是用户改了主意，不是说明带偏，不记 quick-stop；按旧规则记过的下次收信号去掉。停了还留在待做里的照记（11-15 那次的形状）。
+func TestQuickStopItemGoneNotSignal(t *testing.T) {
+	r := newSigRig(t, nil)
+	at := func(d time.Duration) *time.Time { x := r.now.Add(d); return &x }
+	dir, home := t.TempDir(), os.Getenv("HOME")
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	testkit.GitT(t, home, dir, "init", "-q", "-b", "main")
+	backlogText := func(todo string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "docs", "BACKLOG.md"), []byte("# 待办\n\n## 待做\n\n"+todo+"\n## 已完成\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		testkit.GitT(t, home, dir, "add", "-A")
+		testkit.GitT(t, home, dir, "commit", "-q", "-m", "待办")
+	}
+	line := func(title string) string { return "- [ ] " + title + " —— 正文" }
+	stopped := func(id, title string) {
+		r.meta(&state.Job{ID: id, Project: "tracker", ProjectDir: dir, Title: title, Fingerprint: backlog.Fingerprint(line(title)), Manual: true,
+			Status: state.StatusKilled, StartedAt: *at(-time.Hour), EndedAt: at(-time.Hour + 5*time.Second),
+			Summary: "被 agentq stop 停止（SIGTERM）", StopVia: state.StopViaCLI, StopUsage: "没到后台上限（会话 6%，后台上限 85%）"})
+	}
+	backlogText(line("移植专用版") + "\n" + line("加导出") + "\n")
+	stopped("改主意", "移植专用版")
+	stopped("说明带偏", "加导出")
+	backlogText(line("加导出") + "（进行中：agent/1120-export 2026-11-20 01:34）\n")
+	r.collect()
+	quick := r.signals(KindQuickStop)
+	if len(quick) != 1 || quick[0].Seen != 1 || !strings.Contains(quick[0].Evidence[0], "任务 说明带偏（tracker）") || !quick[0].Proposed {
+		t.Fatalf("只记还留在待做的那条，一次就提案：%+v", quick)
+	}
+	if stops := r.signals(KindUserStop); len(stops) != 0 {
+		t.Fatalf("刚启动就停的不进 user-stop：%+v", stops)
+	}
+
+	// 按旧规则记过的：撤走那条的证据下次收信号去掉，还在待做的那份留着
+	st := r.store()
+	st.Signals[slices.IndexFunc(st.Signals, func(s Signal) bool { return s.Kind == KindQuickStop })].Evidence = []string{
+		"任务 改主意（tracker）「移植专用版」启动 5 秒后被停", "任务 说明带偏（tracker）「加导出」启动 5 秒后被停"}
+	st.Signals[slices.IndexFunc(st.Signals, func(s Signal) bool { return s.Kind == KindQuickStop })].Seen = 2
+	r.write(r.s.SignalsPath(), st)
+	r.now = r.now.Add(2 * time.Hour)
+	r.meta(&state.Job{ID: "新数据", Project: "ops"})
+	r.collect()
+	if quick = r.signals(KindQuickStop); len(quick) != 1 || quick[0].Seen != 1 || !strings.Contains(quick[0].Evidence[0], "说明带偏") {
+		t.Fatalf("撤走的那份要去掉：%+v", quick)
+	}
+	r.noCLI()
+}

@@ -543,7 +543,7 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob, manualOn
 			started++
 			continue
 		}
-		if runner.ScopeBlocked(st, a.Cfg, orig.Project, orig.Item) != "" { // 先等它续跑：这次不让同项目写了范围的新条目插队，原因在 status
+		if runner.ScopeBlocked(st, a.Cfg, orig.Project, runner.ResumeScope(orig)) != "" { // 先等它续跑：这次不让同项目写了范围的新条目插队，原因在 status
 			resumed[orig.Project] = true
 			continue
 		}
@@ -593,7 +593,7 @@ func (a *Service) schedule(st *state.State, orphans []orphan.OrphanJob, manualOn
 		if waitSelf(o.Project.Name) {
 			continue
 		}
-		if runner.ScopeBlocked(st, a.Cfg, o.Project.Name, o.Item.Text) != "" { // 同上：先等接手，这次不挑新条目
+		if runner.ScopeBlocked(st, a.Cfg, o.Project.Name, o.Item.Scope) != "" { // 同上：先等接手，这次不挑新条目
 			resumed[o.Project.Name] = true
 			continue
 		}

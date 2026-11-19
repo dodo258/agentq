@@ -264,12 +264,54 @@ func TestProjectSlot(t *testing.T) {
 		{"b", "", true},
 	}
 	for _, c := range cases {
-		if ok, why := ProjectSlot(st, cfg, c.project, c.item); ok != c.ok {
+		if ok, why := ProjectSlot(st, cfg, c.project, backlog.ItemScope(c.item)); ok != c.ok {
 			t.Errorf("%s %q：%v %s", c.project, c.item, ok, why)
 		}
 	}
 	st.Jobs = append(st.Jobs, &state.Job{Project: "b", Status: state.StatusRunning, Item: "丙（范围：q/）"})
-	if ok, why := ProjectSlot(st, cfg, "a", "乙（范围：y/）"); ok || !strings.Contains(why, "max_parallel") {
+	if ok, why := ProjectSlot(st, cfg, "a", []string{"y/"}); ok || !strings.Contains(why, "max_parallel") {
 		t.Errorf("全局满了先说名额：%v %s", ok, why)
+	}
+}
+
+// 续跑和在跑的任务判重叠都用这一轮的范围：门退回定了范围的只看退回范围，不看条目原文写的更宽的范围。
+func TestResumeScopeUsesGateScope(t *testing.T) {
+	cfg := config.Default()
+	item := "网页（范围：web/、sim/）"
+	running := &state.Job{Project: "p", Status: state.StatusRunning, Item: "模拟器（范围：app/、sim/）"}
+	st := &state.State{Jobs: []*state.Job{running}}
+	cases := []struct {
+		name string
+		orig *state.Job
+		want []string
+	}{
+		{"门退回定了范围", &state.Job{Item: item, Gate: &state.GateRecord{State: state.GateReturned, Head: "h", Scope: []string{"web/a.ts"}}}, []string{"web/a.ts"}},
+		{"退回那一轮做到一半中断", &state.Job{Item: item, GateRound: 1, GateScope: []string{"web/a.ts"}, GateScopeFrom: "h"}, []string{"web/a.ts"}},
+		{"退回没定范围", &state.Job{Item: item, Gate: &state.GateRecord{State: state.GateReturned, Head: "h"}}, []string{"web/", "sim/"}},
+		{"卡在门上重做", &state.Job{Item: item, GateScope: []string{"web/a.ts"}, Gate: &state.GateRecord{State: state.GateStuck}}, []string{"web/", "sim/"}},
+		{"普通中断", &state.Job{Item: item}, []string{"web/", "sim/"}},
+	}
+	for _, c := range cases {
+		got := ResumeScope(c.orig)
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%s：范围 %q，要 %q", c.name, got, c.want)
+		}
+		j := &state.Job{}
+		carryGate(j, c.orig)
+		if len(j.GateScope) > 0 && !slices.Equal(j.GateScope, got) {
+			t.Errorf("%s：续跑那一轮限定 %q，判重叠却用 %q", c.name, j.GateScope, got)
+		}
+		blocked := ScopeBlocked(st, cfg, "p", got) != ""
+		if want := slices.Contains(c.want, "sim/"); blocked != want {
+			t.Errorf("%s：挡住=%v，要 %v", c.name, blocked, want)
+		}
+	}
+	// 反过来：在跑的是退回限定了范围的那一轮，别的条目只和它原文范围重叠时可以一起跑。
+	st.Jobs = []*state.Job{{Project: "p", Status: state.StatusRunning, Item: item, GateScope: []string{"web/a.ts"}}}
+	if why := ScopeBlocked(st, cfg, "p", []string{"sim/"}); why != "" {
+		t.Errorf("在跑的只改 web/a.ts，sim/ 应能并行：%s", why)
+	}
+	if why := ScopeBlocked(st, cfg, "p", []string{"web/"}); why == "" {
+		t.Error("web/ 和在跑的 web/a.ts 重叠，应挡住")
 	}
 }

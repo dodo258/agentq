@@ -414,9 +414,7 @@ func (a *Service) noteBypass(j *state.Job, summary string) string {
 	msg := fmt.Sprintf("门：任务 %s（%s「%s」）没写 ready.json，自己合并了，没过门", j.ID, j.Project, textfmt.TruncRunes(j.Title, 40))
 	a.Logf("%s", msg)
 	a.Ledger.AppendNightlyLine(a.Now(), msg)
-	a.Notify.Notify(notify.Notice{Cat: "alert", Key: "gate-bypass:" + j.ID, JobID: j.ID,
-		Text:  j.Project + "「" + textfmt.TruncRunes(j.Title, 30) + "」没过门就合并了",
-		Lines: []string{"合并不撤销，只提醒；详情 agentq logs " + j.ID}})
+	a.tell(j, endNotice{endTell, "gate-bypass:" + j.ID, jobName(j) + "没过门就合并了", []string{"合并不撤销，只提醒；" + logsLine(j)}})
 	return summary
 }
 
@@ -455,9 +453,8 @@ func (a *Service) noteStillListed(st *state.State, j *state.Job, summary string)
 		return summary
 	}
 	j.StuckPending = "连续两次报告做完，条目还在待做，不再自动重做，任务 " + j.ID
-	a.Notify.Notify(notify.Notice{Cat: "alert", Key: "still-listed:" + j.Fingerprint, JobID: j.ID,
-		Text:  j.Project + "「" + textfmt.TruncRunes(j.Title, 30) + "」连续两次报告做完，条目还在「待做」，标了卡住",
-		Lines: []string{"看 agentq logs " + j.ID + "；确实做完了就移到「已完成」，没做完就去掉卡住标记"}})
+	a.tell(j, endNotice{endUser, "still-listed:" + j.Fingerprint, jobName(j) + "连续两次报告做完，条目还在「待做」，标了卡住",
+		[]string{"看 agentq logs " + j.ID + "；确实做完了就移到「已完成」，没做完就去掉卡住标记"}})
 	return "连续两次报告做完，条目还在「待做」，标卡住，等你看；" + summary
 }
 
@@ -629,44 +626,96 @@ func (a *Service) Finish(st *state.State, j *state.Job, status, summary string) 
 	}
 }
 
-// noticeEnded 告诉用户一条待办的结果。只说普通任务：别的 Kind 有自己的通知，或者不算「任务做完」。
-// 不说的：过门的（合并、卡片都由门说）；会接着做的（续跑、接手、重试、卡住后引擎再接，到了结果再说）；用户自己停的；撞上限、撞预算、自动停、绕过门、标了卡住的（都有专门的通知）。
+// 收尾通知：说一条待办结果的通知只回答一件事——这一条接下来等谁，类别由它定，通知点不自己挑类别：
+//   - 等用户动手（卡住、放下、不再自动接）：endUser，推「要你定」，不受每天条数上限挡；
+//   - 只是告诉一声（失败、超时、中断、跑完没分支、撞预算会续跑、绕过门）：endTell，推「要你知道」；
+//   - 合并了：endMerged，推「完成」；
+//   - 引擎自己接着做（续跑、再接、重试、过门、接手）或别处已经说了：不推（reportedElsewhere），到了结果再说。
+//
+// 以前每个通知点手写类别，交给用户的卡住也写成「要你知道」，和额度、熔断提醒一起被每天上限攒住（11-18 gps-tracker 的卡住消息攒到第二天早报）。
+type endKind int
+
+const (
+	endTell endKind = iota
+	endUser
+	endMerged
+)
+
+var endCats = map[endKind]string{endTell: "alert", endUser: "decide", endMerged: "done"}
+
+type endNotice struct {
+	kind  endKind
+	key   string
+	text  string
+	lines []string
+}
+
+// tell 记一条说任务 j 结果的通知（回复它能接上这个任务）。
+func (a *Service) tell(j *state.Job, n endNotice) {
+	a.Notify.Notify(notify.Notice{Cat: endCats[n.kind], Key: n.key, JobID: j.ID, Text: n.text, Lines: n.lines})
+}
+
+func jobName(j *state.Job) string { return j.Project + "「" + textfmt.TruncRunes(j.Title, 30) + "」" }
+
+func logsLine(j *state.Job) string { return "详情 agentq logs " + j.ID }
+
+// noticeEnded 告诉用户一条普通待办的结果。
 func (a *Service) noticeEnded(st *state.State, j *state.Job) {
-	if j.Kind != "" || j.Gate != nil || j.ResumePending || j.Retake != "" || j.LimitHit || j.BudgetHit || j.Transient || j.AutoStop != "" || j.Status == state.StatusKilled {
+	if a.reportedElsewhere(j) {
 		return
 	}
-	if j.Status == state.StatusInterrupted && (j.Takeover || !a.BackendFor(j.Backend).Caps().Resume) {
-		return // 这一条还标着进行中：接手任务接着做，接手后还不行由孤儿扫描标卡住并通知
+	if n, ok := a.endedNotice(st, j); ok {
+		a.tell(j, n)
 	}
-	name := j.Project + "「" + textfmt.TruncRunes(j.Title, 30) + "」"
-	n := notify.Notice{Cat: "alert", Key: notify.TaskEndKey(j.Project, j.Fingerprint), JobID: j.ID, Text: name + state.StatusLabel(j.Status),
-		Lines: []string{textfmt.OneLine(j.Summary, 200), "详情 agentq logs " + j.ID}}
-	if j.Status == state.StatusDone {
-		p := backlog.Project{Name: j.Project, Dir: j.ProjectDir}
-		items, err := a.jobItems(j)
-		if err != nil {
-			a.Logf("任务 %s：读不了 BACKLOG，不知道这一条的结果，没推：%v", j.ID, err)
-			return
-		}
-		it, listed := stuckTarget(j, p, items)
-		switch c := a.doneCommit(j); {
-		case listed && it.Stuck:
-			n.Text = name + "卡住了"
-			n.Lines[0] = textfmt.OneLine(it.StuckMark(), 200)
-			if first, err := st.Find(j.RetakeOf); j.RetakeOf != "" && err == nil {
-				n.Text = name + "再接一次还是卡住了"
-				n.Lines = retakeNoticeLines(first, j, it.StuckMark())
-			}
-		case a.selfMerged(j): // noteBypass 说过了
-			return
-		case c != "": // 升级前启动的任务按老合同自己合并
-			n.Cat, n.Text = "done", name+"做完了，已合并"
-			n.Lines = []string{"合并提交 " + c}
-		default:
-			n.Text = name + "跑完了，没有要合并的分支"
-		}
+}
+
+// reportedElsewhere：这次收尾不由 noticeEnded 说。别的 Kind 有自己的通知或不算「任务做完」；过门的由门说；用户自己停的不说；
+// 引擎会接着做的（续跑、再接、瞬时错误重试、接手）到了结果再说；撞上限、撞预算、自动停有专门的通知。
+func (a *Service) reportedElsewhere(j *state.Job) bool {
+	switch {
+	case j.Kind != "" || j.Gate != nil || j.Status == state.StatusKilled:
+		return true
+	case j.ResumePending || j.Retake != "" || j.Transient:
+		return true
+	case j.LimitHit || j.BudgetHit || j.AutoStop != "":
+		return true
 	}
-	a.Notify.Notify(n)
+	// 这一条还标着进行中：接手任务接着做，接手后还不行由孤儿扫描标卡住并通知
+	return j.Status == state.StatusInterrupted && (j.Takeover || !a.BackendFor(j.Backend).Caps().Resume)
+}
+
+// endedNotice 排好一条普通待办的结果。跑完的看条目：标着卡住（能再接的 noteRetake 已经去掉了标记，剩下的都是交给用户的）、
+// 老合同自己合并了、绕过门自己合并（noteBypass 说过了，不推）、都不是就是没有要合并的分支。读不了 BACKLOG 不推。
+func (a *Service) endedNotice(st *state.State, j *state.Job) (endNotice, bool) {
+	name, key := jobName(j), notify.TaskEndKey(j.Project, j.Fingerprint)
+	if j.Status != state.StatusDone {
+		return endNotice{endTell, key, name + state.StatusLabel(j.Status), []string{textfmt.OneLine(j.Summary, 200), logsLine(j)}}, true
+	}
+	items, err := a.jobItems(j)
+	if err != nil {
+		a.Logf("任务 %s：读不了 BACKLOG，不知道这一条的结果，没推：%v", j.ID, err)
+		return endNotice{}, false
+	}
+	it, listed := stuckTarget(j, backlog.Project{Name: j.Project, Dir: j.ProjectDir}, items)
+	switch c := a.doneCommit(j); {
+	case listed && it.Stuck:
+		return stuckNotice(st, j, it, key), true
+	case a.selfMerged(j):
+		return endNotice{}, false
+	case c != "": // 升级前启动的任务按老合同自己合并
+		return endNotice{endMerged, key, name + "做完了，已合并", []string{"合并提交 " + c}}, true
+	}
+	return endNotice{endTell, key, name + "跑完了，没有要合并的分支", []string{textfmt.OneLine(j.Summary, 200), logsLine(j)}}, true
+}
+
+// stuckNotice：任务标了卡住、交给用户。再接过一次的写两次各是怎么卡住的；条目写了固定格式的选项（agent-task 第 6 节）时列出来。
+func stuckNotice(st *state.State, j *state.Job, it backlog.Item, key string) endNotice {
+	n := endNotice{endUser, key, jobName(j) + "卡住了", []string{textfmt.OneLine(it.StuckMark(), 200), logsLine(j)}}
+	if first, err := st.Find(j.RetakeOf); j.RetakeOf != "" && err == nil {
+		n.text, n.lines = jobName(j)+"再接一次还是卡住了", retakeNoticeLines(first, j, it.StuckMark())
+	}
+	n.lines = append(n.lines, notify.DecideOptionLines(it.Text)...)
+	return n
 }
 
 // summaryParagraph 依次取结果文本里最后一个写着合并提交号的段落、最后一个说到合并情况的段落

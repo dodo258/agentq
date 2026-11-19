@@ -168,3 +168,46 @@ func TestParallelResumeNotOvertaken(t *testing.T) {
 		t.Errorf("应续跑中断一、不起甲三：%+v", e.state().Running())
 	}
 }
+
+// 门退回定了范围的任务中断后等续跑：判重叠用退回范围。同项目在跑的条目只和它原文范围（sim/）重叠、不碰退回范围时照样续跑。
+func TestParallelResumeUsesReturnScope(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, nil)
+	testkit.MkProject(t, e.root, "alpha", "- [ ] 退回一 —— INTERRUPT（范围：web/、sim/）\n- [ ] 甲二 —— SLEEP=20（范围：app/、sim/）\n")
+	defer func() {
+		for _, j := range e.state().Running() {
+			e.run("stop", j.ID)
+		}
+	}()
+	if out := e.mustRun("tick"); !strings.Contains(out, "启动 1") {
+		t.Fatalf("先起退回一，甲二和它的 sim/ 重叠不并行：\n%s", out)
+	}
+	x := e.jobByTitle("退回一")
+	waitExit(t, x.PID, 10*time.Second)
+	e.mustRun("pause")
+	e.mustRun("tick") // 收尾成中断、等续跑
+	e.mustRun("run", "alpha", "甲二")
+	e.editState(func(st *State) { // 这一轮是门退回后做的：只该改 web/a.ts
+		for _, j := range st.Jobs {
+			if j.ID == x.ID {
+				j.GateRound, j.GateScope, j.GateScopeFrom = 1, []string{"web/a.ts"}, "0000000"
+			}
+		}
+	})
+	e.mustRun("resume")
+	if out := e.mustRun("status"); strings.Contains(out, "等续跑：alpha「退回一」") {
+		t.Errorf("退回范围和甲二不重叠，status 不该说在等：\n%s", out)
+	}
+	if out := e.mustRun("tick"); !strings.Contains(out, "启动 1") {
+		t.Fatalf("退回范围 web/a.ts 和甲二不重叠，应续跑：\n%s", out)
+	}
+	var resumed *Job
+	for _, j := range e.state().Running() {
+		if j.ResumeOf == x.ID {
+			resumed = j
+		}
+	}
+	if resumed == nil || !slices.Equal(resumed.GateScope, []string{"web/a.ts"}) {
+		t.Errorf("应续跑退回一并带着退回范围：%+v", e.state().Running())
+	}
+}

@@ -75,7 +75,11 @@ func TestParallelBlock(t *testing.T) {
 		{"甲 —— 范围：a/", []string{"乙（范围：b/）"}, false},            // 正文写的不算范围
 	}
 	for _, c := range cases {
-		if why := ParallelBlock(it(c.item), c.running); (why == "") != c.ok {
+		var running []Running
+		for _, r := range c.running {
+			running = append(running, Running{Title: ItemTitle(r), Scope: ItemScope(r)})
+		}
+		if why := ParallelBlock(it(c.item).Scope, running); (why == "") != c.ok {
 			t.Errorf("%q 和 %q：%q", c.item, c.running, why)
 		}
 	}

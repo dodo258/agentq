@@ -660,6 +660,50 @@ func TestNotifyDailyCapSameFlush(t *testing.T) {
 	}
 }
 
+// 交给用户的卡住算「要你定」：到了每天上限照发，带上 agent 写的选项；status 说清攒着的里面有没有要你定的；夜里攒着的进早报。
+func TestStuckNoticeBypassesDailyCap(t *testing.T) {
+	t.Parallel()
+	e := newNotifyEnv(t, true)
+	e.at(20, 15)
+	dir := testkit.MkProject(t, e.root, "demo", "- [ ] 甲 —— 判断层（卡住：等用户：验收取舍，分支 agent/x）（选项：A 改家长页｜B 先合判断层；推荐 B）\n")
+	e.flush() // 第一次扫拍板：只记下
+	e.a.Notify.WithNotify(func(s *notify.State) error {
+		s.Day, s.Count = e.now.Format("2006-01-02"), notify.NotifyDailyMax
+		return nil
+	})
+	e.a.Notify.Notify(notify.Notice{Cat: "done", Text: "普通消息"})
+	e.flush()
+	if e.tg.count() != 0 {
+		t.Fatalf("到了上限，普通消息攒着：%q", e.tg.texts())
+	}
+	testkit.AssertContains(t, e.a.Notify.NotifyStatus(), "今天已推 10/10 条，攒着 1 条，都不用你定；到了上限只攒普通消息，要你定的照发")
+
+	j := &Job{ID: "1018-201427-demo", Project: "demo", ProjectDir: dir, Title: "甲", Fingerprint: "fp", StartedAt: e.now}
+	if err := os.MkdirAll(e.a.JobDir(j.ID), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e.st.Jobs = append(e.st.Jobs, j)
+	e.a.Runner.Finish(e.st, j, state.StatusDone, "摘要")
+	e.flush()
+	got := e.tg.texts()
+	if len(got) != 1 || !strings.HasPrefix(got[0], "🔴 <b>要你定") {
+		t.Fatalf("交给用户的卡住不受上限挡，当时就发：%q", got)
+	}
+	testkit.AssertContains(t, textfmt.HTMLToPlain(got[0]), "demo「甲」卡住了", "等用户：验收取舍", "A 改家长页", "B 先合判断层（推荐）", "普通消息")
+
+	e.at(23, 30)
+	e.a.Notify.Notify(notify.Notice{Cat: "decide", Key: notify.TaskEndKey("demo", "fp2"), JobID: j.ID, Text: "demo「乙」卡住了"})
+	e.flush()
+	testkit.AssertContains(t, e.a.Notify.NotifyStatus(), "攒着 1 条，其中要你定 1 条，夜里攒着，10-12 周一 08:00 发")
+	e.now = time.Date(2026, 10, 12, 8, 5, 0, 0, time.Local)
+	e.report(e.now, "早报第一行\n")
+	e.flush()
+	got = e.tg.texts()
+	if m := got[len(got)-1]; !strings.HasPrefix(m, "☀️ <b>早报") || !strings.Contains(m, "demo「乙」卡住了") {
+		t.Fatalf("夜里攒着的卡住进早报：%q", got)
+	}
+}
+
 // 只认用户的 chat id：别人发的不回、不处理；所有消息只发给用户。「状态」当场回，不启动 claude。
 func TestTelegramOnlyOwnerAndStatus(t *testing.T) {
 	t.Parallel()
