@@ -41,6 +41,7 @@ func Wire(a *App, assets Assets) *App {
 	a.Notify = orNew(a.Notify)
 	a.Notify.Env = a.Env
 	a.Notify.Backlog = a.Backlog
+	a.Notify.Gitx = a.Gitx
 	a.Notify.Telegram = a.Telegram
 	a.Gate = orNew(a.Gate)
 	a.Gate.Env = a.Env

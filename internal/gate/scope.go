@@ -32,6 +32,12 @@ func planReason(rounds int, why string) string {
 	return s
 }
 
+// planRe 认 planReason 写的开头：报告由门自己写，只认这个固定格式。
+var planRe = regexp.MustCompile(`^退回 \d+ 轮还没过，` + regexp.QuoteMeta(planAdvice))
+
+// IsPlanReport：门的报告是不是退回用完、改动本身还没过（planReason 写的）。等人拍板、检查判不了、门进程没结果停下的都不是。
+func IsPlanReport(report string) bool { return planRe.MatchString(report) }
+
 // returnScope 算退回后的范围。rev 是看同目录测试文件的提交（候选合并提交或分支尖），空的就不加测试文件。算不出返回空：不限定。
 // 只收挡住合并的门点名的文件：按这次实际生效的档位（影响面广时 warn 升了 error 的也算），warn 档没过只是记录，不收窄范围。
 func (a *Service) returnScope(ctx context.Context, dir, rev string, results []Result, changed []string) []string {

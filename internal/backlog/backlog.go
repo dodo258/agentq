@@ -162,7 +162,7 @@ type Item struct {
 	Fingerprint string
 	InProgress  bool
 	Stuck       bool
-	// Deps：（依赖：…）写的字，一个标记一段；Scope：（范围：…）写的路径前缀。见 ItemDeps、ItemScope。
+	// Deps：（依赖：…）写的字，一个标记里按逗号、顿号拆成几段；Scope：（范围：…）写的路径前缀。见 ItemDeps、ItemScope。
 	Deps  []string
 	Scope []string
 	// DepsWaiting：还没满足的依赖（「已完成」里没有标题含这段字的条目）；DepsMissing 是其中整份 BACKLOG 都找不到的，多半写错了。Items 按整份 BACKLOG 和归档填。
@@ -293,15 +293,17 @@ func ParseBacklog(text string) []Item {
 var (
 	depRe   = regexp.MustCompile(`[（(]\s*依赖\s*[：:]\s*([^）)]*)[）)]`)
 	scopeRe = regexp.MustCompile(`[（(]\s*范围\s*[：:]\s*([^）)]*)[）)]`)
-	scopeSp = regexp.MustCompile(`[,，、]`)
+	markSp  = regexp.MustCompile(`[,，、]`) // 一个依赖、范围标记里列多条用的分隔符
 )
 
-// ItemDeps：条目写的依赖，每个（依赖：…）一段，去掉首尾空白，空的不算。
+// ItemDeps：条目写的依赖，可以写几个标记，一个标记里也可以用逗号、顿号列几条；每条去掉首尾空白，空的不算。
 func ItemDeps(text string) []string {
 	var out []string
 	for _, m := range depRe.FindAllStringSubmatch(text, -1) {
-		if d := strings.TrimSpace(m[1]); d != "" {
-			out = append(out, d)
+		for _, d := range markSp.Split(m[1], -1) {
+			if d = strings.TrimSpace(d); d != "" {
+				out = append(out, d)
+			}
 		}
 	}
 	return out
@@ -311,7 +313,7 @@ func ItemDeps(text string) []string {
 func ItemScope(text string) []string {
 	var out []string
 	for _, m := range scopeRe.FindAllStringSubmatch(text, -1) {
-		for _, s := range scopeSp.Split(m[1], -1) {
+		for _, s := range markSp.Split(m[1], -1) {
 			s = strings.Trim(strings.TrimSpace(s), "`")
 			if s == "" {
 				continue

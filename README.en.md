@@ -105,7 +105,7 @@ A task can only get its branch ready to merge and write `.agentq/ready.json`. ag
 | :-- | :-- | :-- | :-- |
 | **Test** | Every time | Runs the project's `.agentq/verify` | Blocks the merge |
 | **Review** | Skipped for markdown-only changes | A separate process reviews the change. A blocking finding needs a file, line, evidence and reproduction steps | Blocks the merge |
-| **Patch** | When the change is a fix | A third fix to the same module within 30 days. Set to `error`, it sends the task back to rewrite that module | Records only |
+| **Patch** | When the change is a fix and the item isn't a test or stress-test pass | A fifth fix to the same module within 30 days. Set to `error`, it sends the task back to rewrite that module | Records only |
 | **UI** | When UI files change | A project script takes screenshots, agentq checks they aren't blank, and a review process blocks only on broken rendering, overflow, unreadable text or placeholder content | Records only |
 | **Product** | On the first version from `agentq new` and items marked `（成品）` | Runs the project's smoke test `.agentq/smoke` and produces a handoff sheet if it passes | Records only |
 
@@ -125,6 +125,20 @@ A task that merges by itself around the gates doesn't count as passed. agentq fl
 Direction questions (design, UI, technology choices) get asked once before work starts: at most 3 questions, each with a default answer. When you assign work in a Claude Code session, it asks right there. For items marked `（大方向）` and for `agentq new`, the background sends a Telegram card and goes with the defaults after 2 hours without an answer, and other items don't wait. Without Telegram it uses the defaults immediately.
 
 `agentq health` shows each module's recent changes, fix count and two-week rework rate. `agentq stats` shows how often each gate blocked or passed work, plus first-time satisfaction and rework rates worked out from commit history. Details: [quality gates and engine merge](docs/reference/features.md#质量门和引擎合并) (in Chinese).
+
+## A real handoff
+
+This is one task agentq did on itself, laid out from the task records, gate reports and scheduler log. The round that got sent back is included.
+
+1. **11-16 13:03, written as an item.** The request: after a held task was decided on the command line with `agentq gate pass`, the gate card on Telegram still showed its buttons, and tapping one replied "not recorded, try again in a bit", which looked broken. `agentq add` wrote it into `docs/BACKLOG.md` as a to-do item, with acceptance criteria (unit tests for tapping the card after a command-line decision and for tapping a still-valid card) and a scope (`internal/chat/`, `internal/notify/`, `tests/`).
+2. **11-17 05:56, picked up in the background.** The tick started a Claude Code process, which worked in its own worktree on branch `agent/1117-gate-card-settled`, following the `agent-task` skill. At 06:31 it handed back changes to `internal/chat/` and `internal/notify/`, a new test `tests/gate_card_settle_test.go`, a new eval case `evals/046-gate-card-settled-elsewhere/`, and a `.agentq/ready.json` (type feature, with how to accept it). Outside the scope it added one read-only function to `internal/gate/queue.go` and recorded why in `DECISIONS.md`.
+3. **06:31–07:07, sent back by the test gate.** The gate merged the branch with the latest main and ran `.agentq/verify`, which exited 1: `TestEvalFakeFullFlow` reported "test site not cleaned up", and two more runs failed the same way. The engine sent it back for round 1 (of at most 2) and listed which files and directories this round was allowed to change.
+4. **07:07–07:23, fixed in the same session.** The cause was the new eval case: it approved with `agentq gate pass`, which starts a gate process in the background, and that process was still writing into the temporary directory when the grader deleted it. The case now uses `agentq gate abandon` (no background process) and then taps approve on the card, which checks the same behavior. Only the case's `check.sh` changed, inside the returned scope, and `ready.json` was submitted again.
+5. **07:58–08:22, second gate run.** The scope, test, eval (48 cases, nothing worse than the baseline), review and capability gates all passed. But the change touched gate decision code in `internal/gate/queue.go`. A task isn't allowed to change the ruler it is judged by, so even with every gate passed it doesn't merge by itself: the item was marked stuck and waited for a person.
+6. **08:32–08:37, a person decides on the gate card.** Telegram delivered the gate card with four options, "approve, send back, abandon, review again", recommending approve. The user tapped approve at 08:37. This was the only step in the whole record that needed a person.
+7. **08:37, merged.** The engine merged into main (the only conflict was in the append-only `DECISIONS.md`, resolved automatically), sent a "done" message and upgraded the local install to this version. When the watch period ended on 11-18 the new version had not gotten worse, so it was kept.
+
+The resulting change is the entry in [CHANGELOG](CHANGELOG.md) under 未发布 (Unreleased) that starts with "门停住的任务在命令行或会话里用 `agentq gate pass|return|rerun|abandon` 定过以后" (in Chinese). The eval case is in [evals/046-gate-card-settled-elsewhere](evals/046-gate-card-settled-elsewhere/).
 
 ## Failure handling
 

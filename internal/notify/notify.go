@@ -24,6 +24,7 @@ import (
 	"agentq/internal/config"
 	"agentq/internal/env"
 	"agentq/internal/fsx"
+	"agentq/internal/gitx"
 	"agentq/internal/proc"
 	"agentq/internal/state"
 	"agentq/internal/telegram"
@@ -34,6 +35,7 @@ import (
 type Service struct {
 	*env.Env
 	Backlog  *backlog.Service
+	Gitx     *gitx.Service
 	Telegram *telegram.Service
 	// MacNotify 为空时用 osascript 弹本机通知。测试里替换掉。
 	MacNotify func(title, body string) error
@@ -807,7 +809,7 @@ func (a *Service) morningReady(s *State, st *state.State, now time.Time) (string
 	return path, true
 }
 
-// PushMorning 早报摘要：标题下面是早报第一行（一句话结论），然后要你定的、出问题的、门、昨晚完成（按项目一行）、任务成败，额度进度条放最后；
+// PushMorning 早报摘要：标题下面是早报第一行（一句话结论），然后要你定的、出问题的、门、昨晚完成（按项目一行）、任务成败、周一的「本周做的减法」，额度进度条放最后；
 // 队列里攒着的消息（夜里攒下的）一起带上。不受每天上限挡（但算一条）。推到 Telegram 成功才写 report-pushed 标记。
 func (a *Service) PushMorning(s *State, st *state.State, c *telegram.TgCreds, credErr error) {
 	now := a.Now()
@@ -895,7 +897,11 @@ func (a *Service) PushMorning(s *State, st *state.State, c *telegram.TgCreds, cr
 	if n := counts["gate"]; n > 0 {
 		tasks = strings.Replace(tasks, "（24 小时内）", fmt.Sprintf("，没过门 %d（24 小时内）", n), 1)
 	}
-	secs = append(secs, MsgSection{Emoji: "📋", Head: tasks}, UsageSection(a.Cfg, st, now)) // 额度放最后
+	secs = append(secs, MsgSection{Emoji: "📋", Head: tasks})
+	if lines := a.MorningSubtract(now); lines != nil { // 只在周一
+		secs = append(secs, MsgSection{Emoji: "✂️", Head: "本周做的减法", Lines: lines})
+	}
+	secs = append(secs, UsageSection(a.Cfg, st, now)) // 额度放最后
 
 	msg := a.RenderMessage("morning", now, secs, "早报全文 "+a.Tilde(path))
 	via, _, err := a.Deliver(c, credErr, msg)

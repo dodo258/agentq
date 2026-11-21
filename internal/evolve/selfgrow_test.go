@@ -43,8 +43,8 @@ func TestSelfGrowProposalToTodo(t *testing.T) {
 	r.noCLI()
 }
 
-// 修好一次记一次，同一类信号清零；再出现标「修过 1 次又出现」重新写；修过两次还出现写成重写这一块。
-func TestSelfGrowFixedTwiceBecomesRewrite(t *testing.T) {
+// 修好一次记一次，同一类信号清零；再出现标「修过 1 次又出现」重新写；修过四次还出现写成重写这一块。
+func TestSelfGrowFixedFourTimesBecomesRewrite(t *testing.T) {
 	r := newSigRig(t, func(c *config.Config) { c.SelfProject = "agentq" })
 	p := selfRepo(t, r, "agentq")
 	n := 0
@@ -71,16 +71,18 @@ func TestSelfGrowFixedTwiceBecomesRewrite(t *testing.T) {
 	}
 	round("agentq 自身：门判不了反复出现")
 	round("agentq 自身（修过 1 次又出现）：门判不了")
+	round("agentq 自身（修过 2 次又出现）：门判不了")
+	round("agentq 自身（修过 3 次又出现）：门判不了")
 	r.unknown("u91", "web")
 	r.unknown("u92", "api")
 	r.now = r.now.Add(2 * time.Hour)
 	r.collect()
 	text := testkit.ReadFile(t, p.BacklogPath())
-	if !strings.Contains(text, "agentq 自身（重写，修过 2 次又出现）：门判不了") || !strings.Contains(text, "type 写 rewrite") || !strings.Contains(text, "合并提交 bbbbbbbbbbbb、cccccccccccc") {
-		t.Fatalf("修过两次还出现要写成重写：\n%s", text)
+	if !strings.Contains(text, "agentq 自身（重写，修过 4 次又出现）：门判不了") || !strings.Contains(text, "type 写 rewrite") || !strings.Contains(text, "合并提交 bbbbbbbbbbbb、cccccccccccc、dddddddddddd、eeeeeeeeeeee") {
+		t.Fatalf("修过四次还出现要写成重写：\n%s", text)
 	}
 	st, _ := r.s.LoadSignals()
-	if k := st.SelfItems[0].Key; len(st.Fixes[k]) != 2 {
+	if k := st.SelfItems[0].Key; len(st.Fixes[k]) != 4 {
 		t.Fatalf("修好的次数：%+v", st.Fixes)
 	}
 }

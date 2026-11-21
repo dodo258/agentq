@@ -2,7 +2,9 @@
 ARG[--session-id]
 ARG[<SESSION>]
 ARG[-p]
-ARG[GOLDEN-PROMPT]
+ARG[GOLDEN-PROMPT
+
+这次运行最多 4h（从启动算起），到时进程会被终止，还没写 ready.json 的部分交不出去。要等的东西（长跑、压测、soak、长时间观察）估计超过剩下的时间，就不在这次等完：跑一段放得进时限的缩短版拿证据，完整的那次写成一条命令放进交付说明，留给用户或之后的任务跑；不留还在跑的后台进程。离时限还剩半小时就收尾：提交并写好 ready.json。]
 ARG[--model]
 ARG[opus]
 ARG[--effort]
@@ -23,7 +25,9 @@ PWD[$ROOT/demo]
 ARG[-r]
 ARG[s-old]
 ARG[-p]
-ARG[GOLDEN-PROMPT]
+ARG[GOLDEN-PROMPT
+
+这次运行最多 4h（从启动算起），到时进程会被终止，还没写 ready.json 的部分交不出去。要等的东西（长跑、压测、soak、长时间观察）估计超过剩下的时间，就不在这次等完：跑一段放得进时限的缩短版拿证据，完整的那次写成一条命令放进交付说明，留给用户或之后的任务跑；不留还在跑的后台进程。离时限还剩半小时就收尾：提交并写好 ready.json。]
 ARG[--model]
 ARG[opus]
 ARG[--effort]
@@ -44,7 +48,9 @@ PWD[$ROOT/demo]
 ARG[--session-id]
 ARG[<SESSION>]
 ARG[-p]
-ARG[GOLDEN-PROMPT]
+ARG[GOLDEN-PROMPT
+
+这次运行最多 4h（从启动算起），到时进程会被终止，还没写 ready.json 的部分交不出去。要等的东西（长跑、压测、soak、长时间观察）估计超过剩下的时间，就不在这次等完：跑一段放得进时限的缩短版拿证据，完整的那次写成一条命令放进交付说明，留给用户或之后的任务跑；不留还在跑的后台进程。离时限还剩半小时就收尾：提交并写好 ready.json。]
 ARG[--model]
 ARG[sonnet]
 ARG[--effort]
@@ -65,7 +71,9 @@ PWD[$ROOT/demo]
 ARG[--session-id]
 ARG[<SESSION>]
 ARG[-p]
-ARG[GOLDEN-PROMPT]
+ARG[GOLDEN-PROMPT
+
+这次运行最多 4h（从启动算起），到时进程会被终止，还没写 ready.json 的部分交不出去。要等的东西（长跑、压测、soak、长时间观察）估计超过剩下的时间，就不在这次等完：跑一段放得进时限的缩短版拿证据，完整的那次写成一条命令放进交付说明，留给用户或之后的任务跑；不留还在跑的后台进程。离时限还剩半小时就收尾：提交并写好 ready.json。]
 ARG[--model]
 ARG[opus]
 ARG[--effort]

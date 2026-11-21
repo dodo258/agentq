@@ -131,7 +131,7 @@ func TestGateCardHold(t *testing.T) {
 		Reason: "难撤回，门过了也不自动合并，等你看过再放行：新增行有删数据的语句：evals/034-review-problem-kind-blocks/check.sh（DELETE FROM）；" + hold,
 		Risk:   &gate.RiskVerdict{Level: gate.RiskIrreversible, Reasons: []string{"新增行有删数据的语句：evals/034-review-problem-kind-blocks/check.sh（DELETE FROM）"}},
 		Results: []gate.Result{
-			{Gate: "patch", Outcome: gate.Fail, Level: gate.LevelWarn, Summary: "第三次打补丁：internal/gate 最近 30 天已修过两次以上，这次又是修复", Files: []string{"internal/gate/reviewgate.go"}},
+			{Gate: "patch", Outcome: gate.Fail, Level: gate.LevelWarn, Summary: "第五次打补丁：internal/gate 最近 30 天已修过四次以上，这次又是修复", Files: []string{"internal/gate/reviewgate.go"}},
 			{Gate: "test", Outcome: gate.Pass, Level: gate.LevelError, Summary: ".agentq/verify 过了"},
 			{Gate: "eval", Outcome: gate.Pass, Level: gate.LevelError, Summary: "评测没有变差：跑了 35 题", Hold: hold},
 			{Gate: "review", Outcome: gate.Pass, Level: gate.LevelError, Summary: "没有会阻塞合并的问题"},

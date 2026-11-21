@@ -103,7 +103,7 @@ func TestIntegrationHeadOnMainIgnoresOriginHead(t *testing.T) {
 	e.mustRun("tick")
 	j := e.jobByTitle(title)
 	prompt := testkit.ReadFile(t, filepath.Join(e.home, ".agentq", "jobs", j.ID, "prompt.txt"))
-	if want := runner.BuildPrompt(j.ProjectDir, j.Item) + "\n"; prompt != want {
+	if want := runner.BuildPrompt(j.ProjectDir, j.Item) + runner.TimeLimitNote(4*time.Hour) + "\n"; prompt != want {
 		t.Fatalf("提示词不该变：\n%s", prompt)
 	}
 	j = e.tickUntilGate(title)
@@ -255,7 +255,7 @@ func TestDefaultBranchMainPromptUnchanged(t *testing.T) {
 	e.mustRun("tick")
 	j := e.jobByTitle(title)
 	prompt := testkit.ReadFile(t, filepath.Join(e.home, ".agentq", "jobs", j.ID, "prompt.txt"))
-	if want := runner.BuildPrompt(j.ProjectDir, j.Item) + "\n"; prompt != want {
+	if want := runner.BuildPrompt(j.ProjectDir, j.Item) + runner.TimeLimitNote(4*time.Hour) + "\n"; prompt != want {
 		t.Fatalf("提示词变了：\n%s\n想要：\n%s", prompt, want)
 	}
 	if runner.BranchContract("main") != "" {

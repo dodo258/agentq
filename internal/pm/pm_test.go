@@ -124,6 +124,16 @@ func TestParseIdeasOnlineNeedsLiveSource(t *testing.T) {
 	}
 }
 
+// 推荐的开源项目要当场核对归档和最近提交，搜索结果里的数字不算。
+func TestBuildPromptVerifyRepos(t *testing.T) {
+	p := BuildPrompt("demo", TriggerEmpty, nil, nil)
+	for _, want := range []string{"api.github.com/repos/<owner>/<repo>", "有没有归档", "已归档或一年以上没提交的不当参照", "「已核实」都不算数"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("缺 %q：\n%s", want, p)
+		}
+	}
+}
+
 func TestBuildPromptOnlineFromLive(t *testing.T) {
 	p := BuildPrompt("demo", TriggerEmpty, nil, nil)
 	for _, want := range []string{"已发布、已部署、商店里", "当场打开查的线上来源（网页、GitHub Release、商店页）", "PROGRESS.md", "只有文档佐证的不写成线上事实",

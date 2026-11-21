@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"agentq/internal/backend"
@@ -39,6 +40,14 @@ const promptTemplate = "你在无人值守模式下工作，用户不在场。�
 
 func BuildPrompt(projectDir, item string) string {
 	return fmt.Sprintf(promptTemplate, projectDir, item)
+}
+
+// TimeLimitNote 接在待做任务合同末尾：告诉执行者这次最多跑多久。不说的话它会在前台等几小时的长跑，
+// 到时限被杀，做好的部分一点也交不出去（11-19 gps-tracker 等 24 小时压测、11-21 huitai 等 6 小时长跑）。
+func TimeLimitNote(limit time.Duration) string {
+	return "\n\n这次运行最多 " + textfmt.FormatDuration(limit) + "（从启动算起），到时进程会被终止，还没写 ready.json 的部分交不出去。" +
+		"要等的东西（长跑、压测、soak、长时间观察）估计超过剩下的时间，就不在这次等完：跑一段放得进时限的缩短版拿证据，" +
+		"完整的那次写成一条命令放进交付说明，留给用户或之后的任务跑；不留还在跑的后台进程。离时限还剩半小时就收尾：提交并写好 ready.json。"
 }
 
 // BranchContract 是默认分支不叫 main 时接在提示词后面的话。叫 main 时是空的，提示词一字不变。
@@ -408,6 +417,10 @@ func (a *Service) Start(st *state.State, j *state.Job, prompt, resume string) (*
 	}
 	// BACKLOG 是用户的文件，可能有不是 UTF-8 的字节。它们进了 argv，macOS 的 ps 输出会变乱并截断，看不到进程标记，活着的任务就成了死的（proc.ProcAlive）。
 	prompt = strings.ToValidUTF8(prompt, string(utf8.RuneError))
+	delivers := j.Kind == "" || j.Kind == state.KindNew // 做到分支可合并的任务：要合并、按 timeout 杀
+	if delivers {
+		prompt += TimeLimitNote(a.JobTimeout(j))
+	}
 	id := j.ID // 对话任务先建好任务目录（放用户发来的附件）再启动，id 已经有了
 	fresh := id == ""
 	if fresh {
@@ -450,7 +463,7 @@ func (a *Service) Start(st *state.State, j *state.Job, prompt, resume string) (*
 		req = a.Hooks.PMRequest(bcfg, prompt, j.Project, session)
 	}
 	req.Dir, req.WorkDir = j.ProjectDir, dir
-	if j.Kind == "" || j.Kind == state.KindNew { // 这两种要合并，合并前的独立审查是硬前提
+	if delivers { // 合并前的独立审查是硬前提
 		req.Must |= backend.MustMerge
 	}
 	j.GateContract = j.GateContract || j.Kind == ""
@@ -505,6 +518,9 @@ func (a *Service) Start(st *state.State, j *state.Job, prompt, resume string) (*
 	}
 	j.ID, j.StartedAt, j.Status, j.BootTime = id, a.Now(), state.StatusRunning, a.CurBoot()
 	j.Args = append([]string{inv.Path}, inv.Record...)
+	if fork := a.TaskBranchFork(j); fork != "" { // 开工前：上一轮改写过推过的提交，备份推送已经整仓失败
+		a.Logf("任务 %s 开工前：%s", id, fork)
+	}
 	// 先记下「正在启动」再起进程：起 claude 和写 state.json 之间进程被杀（SIGKILL、断电）时，
 	// 下次 tick 按这个记录和外壳写的 claude.pid 认领（见 adoptStarting），不会以为没人在做又起一个。记不下就不起。
 	a.Ledger.WriteMeta(j)

@@ -491,8 +491,12 @@ func (a *Service) failed(st *state.State, j *state.Job, res RunResult) {
 		a.stuck(st, j, res.Reason, res)
 		return
 	}
-	if g.Round >= MaxRounds { // 退回用完还没过：再改一轮多半也不行，是条目拆法或验收的问题
-		a.stuck(st, j, planReason(g.Round, res.Reason), res)
+	if g.Round >= MaxRounds { // 退回用完还没过：改动本身还有问题的，再改一轮多半也不行，是条目拆法或验收的问题；检查自己出了故障判不了的不是
+		why := res.Reason
+		if kind, _ := stopKindOf(res); kind == stopChange {
+			why = planReason(g.Round, why)
+		}
+		a.stuck(st, j, why, res)
 		return
 	}
 	g.State, g.Scope = state.GateReturned, res.Scope

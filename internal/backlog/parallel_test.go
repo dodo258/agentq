@@ -18,6 +18,8 @@ func TestDepsScopeMarks(t *testing.T) {
 		{"加导出 —— x（范围：a/、b.go，./c/）(范围: `d/`)", nil, []string{"a/", "b.go", "c/", "d/"}},
 		{"加导出（范围：.）", nil, []string{""}},
 		{"加导出（范围：/abs/x）（依赖：  ）", nil, []string{"abs/x"}},
+		// 一个括号里用顿号、逗号列多条，和范围一样拆开
+		{"加导出（依赖：索引与搜索、额度 quota，开标签页 opener, 透传托管 host、）", []string{"索引与搜索", "额度 quota", "开标签页 opener", "透传托管 host"}, nil},
 		// 反例：顺带提到不算
 		{"加导出 —— 要什么；验收：看；范围：已知页面/文件；理解成：……", nil, nil},
 		{"加导出 —— 依赖：存储层先做完，范围：a/", nil, nil},
@@ -93,6 +95,7 @@ func TestDepsResolve(t *testing.T) {
 - [ ] 接口层（依赖：存储层）（范围：api/）
 - [ ] 存储层 —— 先做（范围：store/）
 - [ ] 前端（依赖：接口层）（依赖：设计稿）
+- [ ] 收尾（依赖：存储层、设计稿，基础设施）
 - [ ] 写错了（依赖：不存在的活）
 - [ ] 依赖自己（依赖：依赖自己）
 - [ ] 正文提到 —— 依赖：存储层
@@ -120,6 +123,7 @@ func TestDepsResolve(t *testing.T) {
 	check("接口层", []string{"存储层"}, nil)
 	check("存储层", nil, nil)
 	check("前端", []string{"接口层", "设计稿"}, nil) // 别的节里没勾的也算在等
+	check("收尾", []string{"存储层", "设计稿"}, nil) // 一个括号里列多条，每条单独找
 	check("写错了", []string{"不存在的活"}, []string{"不存在的活"})
 	check("依赖自己", []string{"依赖自己"}, []string{"依赖自己"}) // 自己不算
 	check("正文提到", nil, nil)

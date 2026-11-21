@@ -19,7 +19,7 @@ type Risk string
 const (
 	// RiskLocal：可撤回且局部，照现有门。
 	RiskLocal Risk = "local"
-	// RiskBroad：影响面广。确定性门（patch、test、smoke）warn 当 error；测试门没跑就判不了，等用户定。
+	// RiskBroad：影响面广。确定性检查（test、smoke）warn 当 error；测试门没跑就判不了，等用户定。
 	RiskBroad Risk = "broad"
 	// RiskIrreversible：难撤回。门照跑，门都过了也要人看过才合：只命中删数据语句的先让独立审查代看（holdreview.go），它放行才合；其余等用户 agentq gate pass。没有配置能让它自动合。
 	RiskIrreversible Risk = "irreversible"
@@ -57,7 +57,8 @@ var (
 	// markupExts：按 markupSQL 扫的前端文件，只比扩展名。
 	markupExts = []string{".tsx", ".jsx", ".vue", ".svelte", ".astro", ".html", ".htm", ".css", ".scss", ".sass", ".less"}
 	// deterministicGates：影响面广时 warn 升 error 的门。审查和界面门调模型，不算确定性的。
-	deterministicGates = []string{"patch", "test", "smoke"}
+	// 补丁门不升：它没过的后果是把合同改成重写一个模块，这要用户在 gates.json 里明说 error 才做，不能因为这次改得多就自动定。
+	deterministicGates = []string{"test", "smoke"}
 )
 
 const (
@@ -74,12 +75,9 @@ const (
 // Classify 只看候选的文件列表、删掉的文件、每个文件新增的行和条目原文，不调模型。返回档位和依据。
 // added 给一个路径返回它新增的行（可以是空）。
 func Classify(files, deleted []string, added func(path string) string, item string, r RiskRules) (Risk, []string) {
-	var hard []string
-	for _, pat := range append(slices.Clone(defaultIrreversible), r.Irreversible...) {
-		if hit := matching(files, pat); len(hit) > 0 {
-			hard = append(hard, "路径命中 "+pat+"："+listFiles(hit))
-		}
-	}
+	// 默认规则只看会执行的文件：docs、tests、fixtures 下的样例 sql 不会在用户数据上跑。项目规则是项目自己列的，照样全算。
+	executed := slices.DeleteFunc(slices.Clone(files), sample)
+	hard := append(pathHits(executed, defaultIrreversible, defaultRule), pathHits(files, r.Irreversible, projectRule)...)
 	if added != nil {
 		var sql []string
 		for _, f := range files {
@@ -101,12 +99,7 @@ func Classify(files, deleted []string, added func(path string) string, item stri
 	if len(hard) > 0 {
 		return RiskIrreversible, hard
 	}
-	var broad []string
-	for _, pat := range r.Broad {
-		if hit := matching(files, pat); len(hit) > 0 {
-			broad = append(broad, "路径命中 "+pat+"："+listFiles(hit))
-		}
-	}
+	broad := pathHits(files, r.Broad, projectRule)
 	var deps, schema []string
 	for _, f := range files {
 		if slices.Contains(depManifests, path.Base(f)) {
@@ -149,7 +142,7 @@ func dangerPattern(f string) *regexp.Regexp {
 	return dangerSQL
 }
 
-// notExecuted：文档和测试文件，里面写到删数据的语句不会在用户的数据上执行，不扫新增行。路径规则照样算。
+// notExecuted：文档和测试文件，不会在用户的数据上执行：不扫新增行，默认路径规则也不算（项目规则照算）。
 func notExecuted(f string) bool {
 	base := path.Base(f)
 	if strings.HasSuffix(base, ".md") || strings.HasSuffix(base, ".txt") || strings.HasSuffix(base, "_test.go") ||
@@ -160,6 +153,11 @@ func notExecuted(f string) bool {
 	return slices.ContainsFunc(dirs, func(d string) bool { return d == "docs" || d == "test" || d == "tests" || d == "testdata" })
 }
 
+// sample：默认路径规则不算的文件，notExecuted 再加 fixtures 下的测试样例。新增行扫描不用它：fixtures 下的代码可能是往库里装数据的脚本，照扫。
+func sample(f string) bool {
+	return notExecuted(f) || slices.Contains(strings.Split(path.Dir(f), "/"), "fixtures")
+}
+
 // sqlKeyword：命中的语句写成大写关键字，TRUNCATE 后面带出来的表名首字不要。
 func sqlKeyword(m string) string {
 	f := strings.Fields(strings.ToUpper(m))
@@ -167,6 +165,23 @@ func sqlKeyword(m string) string {
 		return "TRUNCATE"
 	}
 	return strings.Join(f, " ")
+}
+
+// 路径规则依据的开头，写明是哪一套规则：用户看得出是默认就这样，还是项目 risk.json 里列的。
+const (
+	defaultRule = "路径命中默认规则 "
+	projectRule = "路径命中 " + RiskFile + " 里的规则 "
+)
+
+// pathHits：每条命中的规则一条依据：哪套规则、哪一条、命中哪些文件。
+func pathHits(files, pats []string, rule string) []string {
+	var out []string
+	for _, pat := range pats {
+		if hit := matching(files, pat); len(hit) > 0 {
+			out = append(out, rule+pat+"："+listFiles(hit))
+		}
+	}
+	return out
 }
 
 func matching(files []string, pat string) []string {

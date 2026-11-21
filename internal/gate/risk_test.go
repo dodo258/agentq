@@ -33,7 +33,8 @@ func TestClassify(t *testing.T) {
 		{name: "普通改动", files: []string{"internal/x/a.go", "internal/x/a_test.go"}, want: gate.RiskLocal},
 		{name: "迁移目录", files: []string{"db/migrations/001_init.go"}, want: gate.RiskIrreversible, reason: "**/migrations/**"},
 		{name: "顶层 migrate 目录", files: []string{"migrate/up.go"}, want: gate.RiskIrreversible, reason: "**/migrate/**"},
-		{name: "sql 文件", files: []string{"schema.sql"}, want: gate.RiskIrreversible, reason: "*.sql"},
+		{name: "sql 文件", files: []string{"schema.sql"}, want: gate.RiskIrreversible, reason: "路径命中默认规则 *.sql：schema.sql"},
+		{name: "迁移目录里的 sql", files: []string{"db/migrations/001.sql"}, want: gate.RiskIrreversible, reason: "路径命中默认规则 **/migrations/**：db/migrations/001.sql"},
 		{name: "部署目录", files: []string{"ops/deploy/prod.yaml"}, want: gate.RiskIrreversible, reason: "**/deploy/**"},
 		{name: "目录名只是前缀不算", files: []string{"deployment.md", "internal/migrations.go"}, want: gate.RiskLocal},
 		{name: "新增行 DROP TABLE（小写也算）", files: []string{"internal/store/s.go"}, added: map[string]string{"internal/store/s.go": `db.Exec("drop table users")`}, want: gate.RiskIrreversible, reason: "DROP TABLE"},
@@ -49,7 +50,14 @@ func TestClassify(t *testing.T) {
 		{name: "testdata 目录不算", files: []string{"internal/x/testdata/in.go"}, added: map[string]string{"internal/x/testdata/in.go": "DROP TABLE t"}, want: gate.RiskLocal},
 		{name: ".spec. 和 .test. 文件不算", files: []string{"web/a.spec.ts", "web/b.test.js"}, added: map[string]string{"web/a.spec.ts": "DROP TABLE t", "web/b.test.js": "DELETE FROM t"}, want: gate.RiskLocal},
 		{name: "产品代码照样算（同一次也改了测试）", files: []string{"internal/store/s.go", "internal/store/s_test.go"}, added: map[string]string{"internal/store/s.go": `db.Exec("DROP TABLE users")`, "internal/store/s_test.go": "DROP TABLE x"}, want: gate.RiskIrreversible, reason: "internal/store/s.go（DROP TABLE）"},
-		{name: "测试目录里的 sql 文件按路径规则照样算", files: []string{"tests/fixtures/seed.sql"}, want: gate.RiskIrreversible, reason: "*.sql"},
+		{name: "测试目录里的样例 sql 不算", files: []string{"tests/fixtures/codex/state.sql", "internal/x/testdata/seed.sql"}, want: gate.RiskLocal},
+		{name: "docs 下的样例 sql 不算", files: []string{"app-v2/docs/direct-boot-emulator/plant.sql"}, want: gate.RiskLocal},
+		{name: "测试目录里的迁移和部署样例不算", files: []string{"tests/fixtures/migrations/001.go", "test/deploy/run.sh"}, want: gate.RiskLocal},
+		{name: "fixtures 下的样例 sql 不算", files: []string{"tests/fixtures/x/state.sql", "app/fixtures/seed.sql", "fixtures/migrations/001.sql"}, want: gate.RiskLocal},
+		{name: "fixtures 下的删数据语句照样扫", files: []string{"app/fixtures/load.py"}, added: map[string]string{"app/fixtures/load.py": `cur.execute("DELETE FROM users")`}, want: gate.RiskIrreversible, reason: "app/fixtures/load.py（DELETE FROM）"},
+		{name: "fixtures 只认整段目录名", files: []string{"db/fixtures_old/seed.sql"}, want: gate.RiskIrreversible, reason: "*.sql：db/fixtures_old/seed.sql"},
+		{name: "样例 sql 和真 sql 一起改，依据只列真的", files: []string{"tests/fixtures/a.sql", "db/schema.sql"}, want: gate.RiskIrreversible, reason: "*.sql：db/schema.sql"},
+		{name: "项目规则命中文档、测试和 fixtures 照样算", files: []string{"secrets/README.md", "secrets/tests/k_test.go", "secrets/fixtures/k.sql"}, want: gate.RiskIrreversible, reason: "路径命中 .agentq/risk.json 里的规则 secrets/**：secrets/README.md"},
 		{name: "代码里的 Truncate( 不算", files: []string{"a.go"}, added: map[string]string{"a.go": "f.Truncate(0)\nos.Truncate(p, 0)"}, want: gate.RiskLocal},
 		{name: "前端文件里的 Tailwind truncate 类名不算", files: []string{"parent-web/src/components/StatusSheet.tsx", "web/a.vue", "web/b.html", "web/c.css"}, added: map[string]string{
 			"parent-web/src/components/StatusSheet.tsx": `<p className="truncate text-sm">{name}</p>`,
@@ -71,7 +79,7 @@ func TestClassify(t *testing.T) {
 		{name: "子目录的 package.json", files: []string{"web/package.json"}, want: gate.RiskBroad, reason: "web/package.json"},
 		{name: "接口定义", files: []string{"api/openapi.yaml"}, want: gate.RiskBroad, reason: "接口"},
 		{name: "proto", files: []string{"proto/a.proto"}, want: gate.RiskBroad, reason: "a.proto"},
-		{name: "项目规则影响面广", files: []string{"internal/api/h.go"}, want: gate.RiskBroad, reason: "internal/api/**"},
+		{name: "项目规则影响面广", files: []string{"internal/api/h.go"}, want: gate.RiskBroad, reason: "路径命中 .agentq/risk.json 里的规则 internal/api/**：internal/api/h.go"},
 		{name: "删了文件", files: []string{"a.go", "old.go"}, deleted: []string{"old.go"}, want: gate.RiskBroad, reason: "删了文件：old.go"},
 		{name: "15 个文件不算", files: many(15), want: gate.RiskLocal},
 		{name: "16 个文件", files: many(16), want: gate.RiskBroad, reason: "16 个文件"},
@@ -193,7 +201,7 @@ func TestRiskIrreversibleWaitsForPass(t *testing.T) {
 	if err := f.a.CmdGate([]string{"report", j.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if out := f.out.String(); !strings.Contains(out, "改错的代价：难撤回（路径命中 **/migrations/**：db/migrations/001_init.sql") {
+	if out := f.out.String(); !strings.Contains(out, "改错的代价：难撤回（路径命中默认规则 **/migrations/**：db/migrations/001_init.sql") {
 		t.Errorf("报告要写档位和依据：%s", out)
 	}
 	// 再审一次还是等，不会自己合

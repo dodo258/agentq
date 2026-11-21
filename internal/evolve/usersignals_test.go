@@ -2,6 +2,7 @@ package evolve
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,6 +12,7 @@ import (
 
 	"agentq/internal/backlog"
 	"agentq/internal/config"
+	"agentq/internal/gate"
 	"agentq/internal/state"
 	"agentq/internal/testkit"
 )
@@ -599,6 +601,49 @@ func TestQuickStopItemGoneNotSignal(t *testing.T) {
 	r.collect()
 	if quick = r.signals(KindQuickStop); len(quick) != 1 || quick[0].Seen != 1 || !strings.Contains(quick[0].Evidence[0], "说明带偏") {
 		t.Fatalf("撤走的那份要去掉：%+v", quick)
+	}
+	r.noCLI()
+}
+
+// 11-16 到 11-21 那条「退回用完还没过反复出现」的三份证据：一次是检查自己出了故障（评测题布置不起来），一次是门都过了只因
+// 难撤回等人拍板，只有一次是改动真没过。只有门写了「退回 N 轮还没过，多半是计划……」的才记成 plan，摘要就是门的报告，不再包一层；
+// 按旧规则记过的证据每次收信号重判，不算的去掉。
+func TestPlanSignalOnlyChangeStops(t *testing.T) {
+	r := newSigRig(t, nil)
+	plan := fmt.Sprintf("退回 %d 轮还没过，多半是计划（条目拆法）的问题：建议重新拆或改验收。最后一次：review：审查发现 1 个有证据的问题", gate.MaxRounds)
+	stuck := func(id, project, report string) {
+		r.meta(&state.Job{ID: id, Project: project, Title: "条目 " + id, Status: state.StatusInterrupted,
+			Gate: &state.GateRecord{State: state.GateStuck, Branch: "agent/" + id, Round: gate.MaxRounds, Report: report}})
+	}
+	stuck("真没过", "huitai", plan)
+	stuck("等拍板", "huitai", "难撤回，门过了也不自动合并，等你看过再放行：路径命中 *.sql：tests/fixtures/codex/state.sql")
+	stuck("判不了", "agentq", "eval：评测比基线变差 1 处：001-impl-go：这次判不了：agentq setup 退出码 1")
+	r.collect()
+	plans := r.signals(KindPlan)
+	if len(plans) != 1 || plans[0].Seen != 1 || !slices.Equal(plans[0].Evidence, []string{"任务 真没过（huitai）"}) {
+		t.Fatalf("只有改动真没过的记成 plan：%+v", plans)
+	}
+	if plans[0].Summary != plan {
+		t.Errorf("摘要就是门的报告，不再包一层：%s", plans[0].Summary)
+	}
+	if stucks := r.signals(KindStuck); len(stucks) != 2 {
+		t.Errorf("另两次照旧记成卡在门上（项目自己的事）：%+v", stucks)
+	}
+	if strings.Contains(r.proposals(), "退回用完") {
+		t.Errorf("一次不写提案：\n%s", r.proposals())
+	}
+
+	// 按旧规则记下的：三份凑成一条 plan，重判后只剩真没过的那份
+	st := r.store()
+	st.Signals = append(slices.DeleteFunc(st.Signals, func(sig Signal) bool { return sig.Kind == KindPlan }),
+		Signal{Kind: KindPlan, Key: SignalKey(KindPlan, "", ""), Summary: "退回 2 轮还没过，多半是条目拆法或验收的问题：" + plan,
+			Evidence: []string{"任务 判不了（agentq）", "任务 真没过（huitai）", "任务 等拍板（huitai）"}, Seen: 3, First: r.now, Last: r.now, Proposed: true})
+	r.write(r.s.SignalsPath(), st)
+	r.now = r.now.Add(2 * time.Hour)
+	r.meta(&state.Job{ID: "新数据", Project: "ops"})
+	r.collect()
+	if plans := r.signals(KindPlan); len(plans) != 1 || plans[0].Seen != 1 || !slices.Equal(plans[0].Evidence, []string{"任务 真没过（huitai）"}) {
+		t.Fatalf("重判后只剩真没过的那份：%+v", plans)
 	}
 	r.noCLI()
 }

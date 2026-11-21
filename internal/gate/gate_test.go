@@ -51,6 +51,8 @@ func newFix(t *testing.T, body string) *fix {
 	e.Cfg.ProjectsRoot = root
 	// 默认后端是假的：用例忘了指定后端时不能起真的 CLI。起不来就是判不了。
 	e.Cfg.Backend = testkit.RegisterFake(t, testkit.FakeOpts{Caps: testkit.AllCaps(), Path: "/usr/bin/false"})
+	// 任务记录没写后端时按老记录算 Claude（backend.Get 的空名字），也不能落到 PATH 上真的 claude：macOS 的登录在钥匙串里，临时 HOME 挡不住。
+	e.Cfg.ClaudePath = "/usr/bin/false"
 	k := stack.New(e)
 	dir := filepath.Join(root, "demo")
 	os.MkdirAll(filepath.Join(dir, "docs"), 0o755)

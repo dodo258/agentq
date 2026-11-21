@@ -103,7 +103,7 @@ agentq 负责选择条目、启动和监控进程、运行质量门、合并和�
 | :-- | :-- | :-- | :-- |
 | **测试门** | 每次 | 运行项目的 `.agentq/verify` | 挡合并 |
 | **审查门** | 只改 markdown 文档时跳过 | 独立进程审查改动，阻塞项要有文件、行号、证据和复现步骤 | 挡合并 |
-| **补丁门** | 改动类型是修复时 | 同一模块 30 天内第三次修复。调成 `error` 后退回任务，要求重写该模块 | 只记录 |
+| **补丁门** | 改动类型是修复、条目不是加测或压测时 | 同一模块 30 天内第五次修复。调成 `error` 后退回任务，要求重写该模块 | 只记录 |
 | **界面门** | 改到界面文件时 | 项目脚本截图，agentq 检查不是空白，审查进程只对渲染坏、溢出、看不清和占位内容阻塞 | 只记录 |
 | **成品门** | `agentq new` 的第一版和标了 `（成品）` 的条目 | 运行项目的烟测 `.agentq/smoke`，通过后生成交付单 | 只记录 |
 
@@ -123,6 +123,20 @@ agentq gate abandon <任务id>               # 放弃，分支保留
 设计、界面和技术选型这类方向问题，在开工前问一次：最多 3 个问题，每个带默认答案。在 Claude Code 会话里派活时当场问。条目标了 `（大方向）` 或使用 `agentq new` 时，后台通过 Telegram 卡片问，2 小时没有回答就按默认开工，其他条目不等待；没配 Telegram 时直接按默认。
 
 `agentq health` 显示每个模块最近的改动次数、修复次数和两周返工率，`agentq stats` 显示每道门的拦截和放行次数，以及按提交记录计算的一次满意率和返工率。细节见[质量门和引擎合并](docs/reference/features.md#质量门和引擎合并)。
+
+## 一次真实交接
+
+下面是 agentq 给自己做的一条任务，按任务记录、门报告和调度日志摆出来。被退回的那一轮也在里面。
+
+1. **11-16 13:03 写成待做。** 需求是：门停住的任务在命令行用 `agentq gate pass` 定过以后，Telegram 上的门卡片还挂着按钮，再点回「没记下，过一会儿再点」，看着像坏了。`agentq add` 把它写成 `docs/BACKLOG.md` 的一条待做，带验收（命令行定过后点卡片、卡片还有效时点卡片，两种都要有单测）和范围（`internal/chat/`、`internal/notify/`、`tests/`）。
+2. **11-17 05:56 后台接手。** tick 起一个 Claude Code 进程，在独立 worktree 的分支 `agent/1117-gate-card-settled` 上按 `agent-task` 技能实现。06:31 交回：`internal/chat/`、`internal/notify/` 的改动，新测试 `tests/gate_card_settle_test.go`，新评测题 `evals/046-gate-card-settled-elsewhere/`，和一份 `.agentq/ready.json`（类型 feature，写了怎么验收）。它在范围外给 `internal/gate/queue.go` 加了一个只读函数，理由记进了 `DECISIONS.md`。
+3. **06:31–07:07 测试门退回。** 门把分支和最新 main 合在一起跑 `.agentq/verify`，退出码 1：`TestEvalFakeFullFlow` 报「现场没删干净」，再连跑两次也没过。引擎退回第 1 轮（最多 2 轮），并列出这一轮只能改哪些文件和目录。
+4. **07:07–07:23 同一会话修好。** 原因在新评测题：题里先用 `agentq gate pass` 放行，放行会在后台起过门进程，判完分删临时目录时它还在往里写。改成先用 `agentq gate abandon`（不起后台进程）再点卡片上的放行，查的还是同一件事。只改了题目的 `check.sh`，在退回范围内，重交 `ready.json`。
+5. **07:58–08:22 第二次过门。** 范围、测试、评测（48 题，没有比基线差）、审查、能力几道门都过了。但这次改到了门的判定代码 `internal/gate/queue.go`：评判的尺子不让任务自己改，门过了也不自动合并，条目标成卡住，等人拍板。
+6. **08:32–08:37 人在门卡片上定。** Telegram 推来门卡片，四个选项「放行、退回、放弃、再审一次」，推荐放行。用户 08:37 点了放行。这是整条记录里唯一一次需要人。
+7. **08:37 合并。** 引擎合进 main（和 main 的冲突只在只往后加的 `DECISIONS.md`，自动合好），推送「完成」，本机升级到这一版。到 11-18 观察期结束，新版本没有变差，保留。
+
+做出来的变化见 [CHANGELOG](CHANGELOG.md)「未发布」里以「门停住的任务在命令行或会话里用 `agentq gate pass|return|rerun|abandon` 定过以后」开头的一条，评测题在 [evals/046-gate-card-settled-elsewhere](evals/046-gate-card-settled-elsewhere/)。
 
 ## 故障处理
 

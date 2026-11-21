@@ -13,6 +13,7 @@ import (
 
 	"agentq/internal/backlog"
 	"agentq/internal/fsx"
+	"agentq/internal/gate"
 	"agentq/internal/proc"
 	"agentq/internal/state"
 	"agentq/internal/textfmt"
@@ -24,6 +25,7 @@ import (
 //     后台上限。停了以后把那一条撤出「待做」（移走、删掉）或接着做完的是改计划，两类都不算；停了以后很快亲手重派是改需求，
 //     只是 user-stop 不算，quick-stop 照算（派错条目、改了说法再派，正是要查的说明问题）。怎么判见下面「按任务记录判的信号」一节的 jobCounts。
 //   - 门卡片上用户点了退回或放弃：门的审计日志 gate/audit.log 的「退回」「放弃」行（卡片和 gate 命令写的都是这一行）。
+//     只算门都过了、等人拍板时用户不认的；门自己挡下的照门的结论走，已经记成别的信号（decideHold）。
 //   - 返工：项目 BACKLOG 里出现「验收 <原条目标题> 的意见」（dispatch 的固定写法），按条目范围、原条目范围和提到的合并提交改了的文件归到领域。
 //   - 巡逻报过、当天又自己消失的问题（疑似误报）：信号文件记着上次还在的巡逻问题，这次不在了、首次发现是今天，就算。
 //   - 同一条目被 retry_after 挡住超过 6 小时：还在「待做」、能挑，最近一次任务结束满 6 小时、还没到 retry_after。
@@ -58,13 +60,13 @@ func jobEvidence(j *state.Job) string {
 	return ev
 }
 
-// ---- 按任务记录判的信号：亲手停、刚启动就停、放行 ----
+// ---- 按任务记录判的信号：亲手停、刚启动就停、放行、退回用完 ----
 //
-// 这三类说的都是用户对一个任务做了什么，算不算 agentq 的问题，要看这个任务（有时还有它之后的任务）的记录。
+// 前三类说的都是用户对一个任务做了什么，算不算 agentq 的问题，要看这个任务（有时还有它之后的任务）的记录；退回用完也只看任务记录里门的报告。
 // 以前每类在第一次读到任务记录时各判一次，判法散在几处；规则后来改了（刚启动就停单算、改了尺子等人放行不算、停了重派不算），
 // 按旧规则记下的证据还留着凑次数提案，只有放行一类会重判。现在只有 jobCounts 一处规则：收的时候用它，之后每次收信号
 // 用它重判记过的证据（recheckJobSignals），规则再改也不用另写重判。
-var jobKinds = []string{KindUserStop, KindQuickStop, KindGateOverride}
+var jobKinds = []string{KindUserStop, KindQuickStop, KindGateOverride, KindPlan}
 
 // jobCounts：这份任务记录按现在的规则算不算 kind 这一类。
 //   - quick-stop：亲手派、启动 3 分钟内（含）被用户停了，停的那一条也还在「待做」里（stopItemGone）：派完马上停又把条目撤走，
@@ -73,6 +75,8 @@ var jobKinds = []string{KindUserStop, KindQuickStop, KindGateOverride}
 //     （改了条目重派、换一条替它是改需求，不是 agentq 的问题），停的那一条也还在「待做」里（stopItemGone）。
 //     停了还不到 30 分钟又没重派的看不出来，见 jobUndecided。
 //   - gate-override：合并了、是用户放行的，不是门都过了只因为改了尺子等人看（heldOnPurpose）。
+//   - plan：门退回用完、改动本身还没过时写的报告（gate.IsPlanReport）。轮数用完后又停下的不全是这种：门都过了等人拍板、
+//     检查自己出了故障判不了，都和条目拆法无关（11-21 那次把等拍板的、评测题布置不起来的都凑进来写了待做）。
 func (s *Service) jobCounts(kind string, j *state.Job) bool {
 	switch kind {
 	case KindQuickStop:
@@ -82,6 +86,8 @@ func (s *Service) jobCounts(kind string, j *state.Job) bool {
 	case KindGateOverride:
 		g := j.Gate
 		return g != nil && g.State == state.GateMerged && (g.Passes > 0 || g.Override != "") && !s.heldOnPurpose(j)
+	case KindPlan:
+		return j.Gate != nil && gate.IsPlanReport(j.Gate.Report)
 	}
 	return false
 }
@@ -234,17 +240,51 @@ func (s *Service) scanDecisions(st *SignalStore, now time.Time, in *scanned) {
 	}
 }
 
-// absorbDecision：一次退回或放弃。按动作归；卡住的原因从任务记录里取（门写的最后结论）。
+// absorbDecision：一次退回或放弃。只记门说没问题、用户却不认的（decideHold），按动作和停下等人看的原因归；
+// 门的结论从任务记录里取（门写的最后结论）。
 func (s *Service) absorbDecision(st *SignalStore, d gateDecision, now time.Time) {
+	counts, stop, _ := s.decideHold(d.job)
+	if !counts {
+		return
+	}
 	why := ""
 	if j := s.readMeta(filepath.Join(s.JobDir(d.job), "meta.json")); j != nil && j.Gate != nil {
 		why = j.Gate.Report
 	}
 	summary := "用户在门卡片上" + d.action + "了「" + textfmt.TruncRunes(d.title, 30) + "」"
+	if stop != "" {
+		summary += "（" + stop + "）"
+	}
 	if why != "" {
 		summary += "，门的结论：" + textfmt.OneLine(why, 160)
 	}
-	st.add(now, KindUserDecide, d.project, SignalKey(KindUserDecide, d.action, ""), summary, d.evidence())
+	st.add(now, KindUserDecide, d.project, SignalKey(KindUserDecide, d.action, stop), summary, d.evidence())
+}
+
+// recheckDecisions 按 decideHold 重判记过的退回、放弃：现在不算的、归到别的原因的证据去掉（只去不挪，免得把早处理过的事再提一次），
+// 门记录读不出的（没有，或已按保留天数清掉）照留；一份不剩的信号删掉。审计日志只往后读，旧证据只能在这里按现在的规则重判。
+func (s *Service) recheckDecisions(st *SignalStore) {
+	for i := range st.Signals {
+		sig := &st.Signals[i]
+		if sig.Kind != KindUserDecide {
+			continue
+		}
+		n := len(sig.Evidence)
+		sig.Evidence = slices.DeleteFunc(sig.Evidence, func(ev string) bool {
+			id, ok := evidenceJob(ev) // 「任务 <任务号>（<项目>）<动作> <时间>」，见 gateDecision.evidence
+			if !ok {
+				return false
+			}
+			_, rest, _ := strings.Cut(ev, "）")
+			action, _, _ := strings.Cut(rest, " ")
+			counts, stop, known := s.decideHold(id)
+			return known && (!counts || sig.Key != SignalKey(KindUserDecide, action, stop)) // 门记录清掉了的照留
+		})
+		sig.Seen -= n - len(sig.Evidence)
+	}
+	st.Signals = slices.DeleteFunc(st.Signals, func(sig Signal) bool {
+		return sig.Kind == KindUserDecide && (len(sig.Evidence) == 0 || sig.Seen <= 0)
+	})
 }
 
 // ---- 返工 ----

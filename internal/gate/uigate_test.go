@@ -618,7 +618,7 @@ func TestUIReviewRequestImages(t *testing.T) {
 func TestGatesUseRecordedBranch(t *testing.T) {
 	f := newUIFix(t, `{"levels":{"review":"off"}}`, uiReply("pass", "loaded"))
 	writePNG(t, filepath.Join(f.shots, "ok.png"), 200, 100, 500)
-	// 分叉前 main 和 trunk 一样；main 上：修过两次 core、界面门和成品门 error 且脚本失败
+	// 分叉前 main 和 trunk 一样；main 上：修过四次 core、界面门和成品门 error 且脚本失败
 	f.git("branch", "trunk")
 	patched(f.fix)
 	os.WriteFile(filepath.Join(f.dir, gate.UIScript), []byte("#!/bin/sh\nexit 1\n"), 0o755)

@@ -21,8 +21,9 @@ import (
 )
 
 // 补丁门和 agentq health：纯 git 统计，不调模型。
-//   - 派活前：条目看得出要改的模块已修过两次，合同里加「先按重写流程梳理」。看不出就在门这里判。
-//   - 合并前：这次是修复（ready.json 的 type），改到的模块 30 天内已修过两次，就是第三次打补丁。warn 档记录，error 档退回，合同改成重写该模块。
+//   - 派活前：条目看得出要改的模块已修过四次，合同里加「先按重写流程梳理」。看不出就在门这里判。
+//   - 合并前：这次是修复（ready.json 的 type），改到的模块 30 天内已修过四次，就是第五次打补丁。warn 档记录，error 档退回，合同改成重写该模块。
+//     加测、压测条目（testingTitle）修掉的问题不算打补丁：门不跑，也不算进次数。
 //   - 两周返工率（GitClear 口径）只进 health，不阻塞。
 //
 // 阈值没有公开先例，是我们自己定的，要校准，不对外承诺数字。
@@ -30,8 +31,8 @@ import (
 const (
 	healthWindow = 30 * 24 * time.Hour
 	reworkWindow = 14 * 24 * time.Hour
-	// patchLimit：上次重写之后已经修过这么多次，再修就是第三次打补丁。
-	patchLimit = 2
+	// patchLimit：上次重写之后已经修过这么多次，再修就是第五次打补丁。修两三次很常见，不算该重写。
+	patchLimit = 4
 	// TypeTrailer 是引擎写进合并提交的任务类型：ready.json 不进默认分支，统计靠这一行认。
 	TypeTrailer = "Agentq-Type"
 	// patchNoteWait：派活前查历史的上限，tick 拿着锁。
@@ -71,7 +72,7 @@ type ModuleStat struct {
 	Module string
 	// Changes 是改动次数，Fixes 是其中修复提交的次数，Lines 是增删行数。
 	Changes, Fixes, Lines int
-	// Patches 是上次重写之后的修复次数：补丁门看这个，重写过的模块从零算。
+	// Patches 是上次重写之后的修复次数：补丁门看这个，重写过的模块从零算，加测、压测条目修掉的不算。
 	Patches int
 	// PatchCommits 是这些修复提交（短号加标题），新的在前。
 	PatchCommits []string
@@ -112,7 +113,20 @@ var (
 	mergeFixRe = regexp.MustCompile(`(?i)^merge (pull request #\d+ from \S+?/|(remote-tracking )?branch '(origin/)?)([\w.-]+/)*(bug|hot)?fix[-/_]`)
 	trivialRe  = regexp.MustCompile(`(?i)typo|lint|wording|formatting|拼写|错别字|格式|注释|文案`)
 	bugWordRe  = regexp.MustCompile(`(?i)\b(bug|crash(es|ed)?|regression|broken|panic)\b|崩溃|闪退|回归|报错|卡死|死锁|竞态|丢数据`)
+	// testItemRe：条目本身是加测、压测这类专门找问题的活。「补回归测试」是修复的一部分，不在里面。
+	testItemRe = regexp.MustCompile(`(?i)(加|补|压)测|(加|补|写|补齐|补全|增加|添加)\s*(单元|集成|端到端|性能)?(单测|测试)|(压力|稳定性|长跑|模糊|浸泡)测试|\b(stress|soak|load)[\s-]?test(s|ing)?\b|\bfuzz(ing)?\b|\badd(ing)?\s+tests?\b`)
 )
+
+// testingTitle：条目标题说这是加测、压测。这种活找出并修掉的问题说明测得多，不是同一块反复打补丁：
+// 补丁门不跑，也不算进以后的次数。标题以修复开头的（「修复 X 并补测试」）是修复条目，照算。
+// 故意不要求固定格式（LESSONS 那条管的是判断状态）：多认了只是少挡一次，补丁门本来就是只会少挡、不会误伤。
+func testingTitle(title string) bool {
+	t := strings.TrimPrefix(strings.TrimSpace(title), backlog.TakeOverPrefix) // 接手中断的「原标题」
+	if strings.HasPrefix(t, "修") || fixVerbRe.MatchString(t) {
+		return false
+	}
+	return testItemRe.MatchString(t)
+}
 
 // notFixTypes：Conventional Commits 里明说不是修复的类型。说明里顺带提到 bug 也不算。
 var notFixTypes = []string{"feat", "feature", "docs", "doc", "test", "tests", "chore", "refactor", "style", "ci", "build", "perf", "release", "wip"}
@@ -268,6 +282,8 @@ func moduleStats(ctx context.Context, git gitFunc, dir, ref string, since time.T
 	rewritten := map[string]bool{}
 	for _, c := range commits { // 新的在前：走到重写就不再往 Patches 里加
 		kind := ClassifyCommit(c.Message, c.Files)
+		// 引擎合并提交的标题是「合并 <条目标题>」：加测、压测条目修掉的问题算修复，不算打补丁
+		patch := kind == KindFix && !testingTitle(strings.TrimPrefix(firstLine(c.Message), "合并 "))
 		seen := map[string]bool{}
 		for _, f := range c.Files {
 			name := ModuleOf(f.Path)
@@ -287,7 +303,7 @@ func moduleStats(ctx context.Context, git gitFunc, dir, ref string, since time.T
 			m.Changes++
 			if kind == KindFix {
 				m.Fixes++
-				if !rewritten[name] {
+				if patch && !rewritten[name] {
 					m.Patches++
 					m.PatchCommits = append(m.PatchCommits, textfmt.TruncRunes(c.Hash, 12)+" "+textfmt.OneLine(firstLine(c.Message), 80))
 				}
@@ -320,8 +336,8 @@ type patchGate struct{ d Deps }
 
 func (patchGate) Name() string { return "patch" }
 
-// AppliesTo：只看修复。类型由任务在 ready.json 里写，rewrite 就是合同要它做的，feature、docs 不是补丁。
-func (patchGate) AppliesTo(c Candidate) bool { return c.Type == "fix" }
+// AppliesTo：只看修复。类型由任务在 ready.json 里写，rewrite 就是合同要它做的，feature、docs 不是补丁；加测、压测条目修掉的问题也不是。
+func (patchGate) AppliesTo(c Candidate) bool { return c.Type == "fix" && !testingTitle(c.Title) }
 
 func (g patchGate) Run(ctx context.Context, c Candidate) Result {
 	stats, err := moduleStats(ctx, g.d.Git, c.ProjectDir, c.Base, g.d.Now().Add(-healthWindow))
@@ -351,14 +367,17 @@ func (g patchGate) Run(ctx context.Context, c Candidate) Result {
 			files = append(files, f)
 		}
 	}
-	return Result{Outcome: Fail, Summary: "第三次打补丁：" + strings.Join(names, "、") + " 最近 30 天已修过两次以上，这次又是修复", Evidence: evidence, Files: files}
+	return Result{Outcome: Fail, Summary: "第五次打补丁：" + strings.Join(names, "、") + " 最近 30 天已修过四次以上，这次又是修复", Evidence: evidence, Files: files}
 }
 
 // rewriteContract 是 error 档退回时改的合同。引擎不改代码，重写由任务做。
-const rewriteContract = "这次的合同改了：补丁门判定这是第三次打补丁，不再接着修。按 agent-task 第 2 节重写报告里点名的模块：重新梳理它的需求和思路，写清为什么老出错、设计哪里不对；先用测试固定要保留的行为，再重写这个模块。一个任务做不完就拆成待做。改完 ready.json 的 type 写 rewrite。"
+const rewriteContract = "这次的合同改了：补丁门判定这是第五次打补丁，不再接着修。按 agent-task 第 2 节重写报告里点名的模块：重新梳理它的需求和思路，写清为什么老出错、设计哪里不对；先用测试固定要保留的行为，再重写这个模块。一个任务做不完就拆成待做。改完 ready.json 的 type 写 rewrite。"
 
-// PatchNote 是派活前接在合同后面的话：条目看得出要改的模块已修过两次。def 是这条任务记下的分支。看不出、查不了都是空，到门那里再判。
+// PatchNote 是派活前接在合同后面的话：条目看得出要改的模块已修过四次。def 是这条任务记下的分支。看不出、查不了、加测压测条目都是空，到门那里再判。
 func (a *Service) PatchNote(dir, def, item string) string {
+	if testingTitle(backlog.ItemTitle(item)) {
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), patchNoteWait)
 	defer cancel()
 	ref := "refs/heads/" + def
@@ -379,7 +398,7 @@ func (a *Service) PatchNote(dir, def, item string) string {
 	if len(hot) == 0 {
 		return ""
 	}
-	return "\n\n引擎的统计：这一条看起来要改的模块最近 30 天已经修过两次以上：" + strings.Join(hot, "、") + "。这次如果又是修这些模块，先按 agent-task 第 2 节的重写流程梳理，不接着打补丁，ready.json 的 type 写 rewrite。这一条其实不动它们就不用管。"
+	return "\n\n引擎的统计：这一条看起来要改的模块最近 30 天已经修过四次以上：" + strings.Join(hot, "、") + "。这次如果又是修这些模块，先按 agent-task 第 2 节的重写流程梳理，不接着打补丁，ready.json 的 type 写 rewrite。这一条其实不动它们就不用管。"
 }
 
 // itemMentions：条目提到了这个模块：写了完整路径，或者写了模块目录名（前后不是字母数字）。只用来多写一句提醒，多认了不做坏事。

@@ -26,7 +26,7 @@ import (
 //   - 门 error 档没过、退回了任务的拦截先记着；这一条后来合并了（门是对的）或用户放弃了，才算确认，并进项目约束（constraints.go）。
 //     用户放行、再审过了的不算：放行记成 gate-override 信号，是门的问题，按门当时停在哪归类（overrideStop），不按放行理由；
 //     门都过了、只因为改了尺子等人看而放行的不记（heldOnPurpose）。
-//     放行、亲手停、刚启动就停这几类按任务记录判，规则只在 jobCounts 一处，记过的每次收信号按现在的规则重判（usersignals.go）。
+//     放行、亲手停、刚启动就停、退回用完这几类按任务记录判，规则只在 jobCounts 一处，记过的每次收信号按现在的规则重判（usersignals.go）。
 //   - agentq 自己的信号（见 selfKind）同一 Key 出现两次以上，写一条提案（proposal.go），同一 Key 只提一次。
 //   - 用户和真实使用里冒出来的问题（亲手 stop、刚启动就被停、门卡片上退回或放弃、验收后返工、巡逻疑似误报、retry_after 挡太久）见 usersignals.go。
 //   - tick 每小时最多收一次；没有新数据就什么都不写，下次 tick 再看（stat 门结果和任务记录，读一次 patrol.json）。
@@ -143,7 +143,7 @@ type SignalStore struct {
 	ReworkSeen []string `json:"rework_seen,omitempty"`
 	// SelfItems：自己长大写进 self_project「待做」的条目，等起任务、等合并（selfgrow.go）。
 	SelfItems []SelfItem `json:"self_items,omitempty"`
-	// Fixes：Key → 修好这一类的合并提交。不随信号过期：同一类修过两次还出现就写成重写。
+	// Fixes：Key → 修好这一类的合并提交。不随信号过期：同一类修过四次还出现就写成重写。
 	Fixes map[string][]string `json:"fixes,omitempty"`
 	// Domains：近 30 天按领域记的任务和问题，判断能力缺口用（capability.go）。
 	Domains []DomainEvent `json:"domains,omitempty"`
@@ -348,6 +348,7 @@ func (s *Service) Collect(force bool) (bool, error) {
 		s.absorbRetryWait(st, w, now)
 	}
 	s.recheckJobSignals(st)
+	s.recheckDecisions(st)
 	for project, cs := range learned {
 		if err := s.learn(project, cs, now); err != nil {
 			s.Logf("自我进化：%s 的约束没存下：%v", project, err)
@@ -594,8 +595,8 @@ func (s *Service) absorbMeta(st *SignalStore, j *state.Job, now time.Time) []con
 			switch {
 			case strings.HasPrefix(g.Report, gateCrashMark):
 				st.add(now, KindCrash, j.Project, SignalKey(KindCrash, "", g.Report), "门进程没留下结果："+textfmt.OneLine(g.Report, 200), ev)
-			case g.Round >= gate.MaxRounds:
-				st.add(now, KindPlan, j.Project, SignalKey(KindPlan, "", ""), fmt.Sprintf("退回 %d 轮还没过，多半是条目拆法或验收的问题：%s", g.Round, textfmt.OneLine(g.Report, 200)), ev)
+			case s.jobCounts(KindPlan, j): // 报告本身就是「退回 N 轮还没过，多半是计划……」，不再包一层
+				st.add(now, KindPlan, j.Project, SignalKey(KindPlan, "", ""), textfmt.OneLine(g.Report, 200), ev)
 			default:
 				st.add(now, KindStuck, j.Project, SignalKey(KindStuck, "", g.Report), "卡在门上："+textfmt.OneLine(g.Report, 200), ev)
 			}
@@ -682,6 +683,49 @@ func (s *Service) overrideStop(j *state.Job) (string, string) {
 		}
 	}
 	return "", why
+}
+
+// decideHold：用户在这个任务的门卡片上退回或放弃，算不算 agentq 的问题、按什么归类。看门停下那次的结论（last.json，
+// 退回后接着做的是新任务号，这份不会被盖掉）：
+//   - 门都过了、只是按规矩等人拍板（hold），独立审查代也没提疑问，用户却退回或放弃了：门说没问题、人看出了问题，算；
+//     按停下等人看的原因归（难撤回、改了评测的尺子……，不带文件名），不同原因不凑成「反复出现」。
+//   - 门自己挡下的（没过、退回用完、判不了、改动不是经 agentq 合进去的）：退回、放弃是照门的结论走，这件事已经记成门拦截、
+//     退回用完、判不了那几类，不再记一次（11-21 那次把退回用完后用户补了方向的退回，和改了尺子等人看时用户发现的问题凑成了一类）。
+//   - 读不出（没有门记录，比如新项目第一版放弃）：照旧算，不分原因，known 为假。
+func (s *Service) decideHold(id string) (counts bool, stop string, known bool) {
+	var res gate.RunResult
+	b, err := os.ReadFile(s.gateLast(id))
+	if err != nil || json.Unmarshal(b, &res) != nil || res.Outcome == "" {
+		return true, "", false
+	}
+	if res.Outcome != "hold" {
+		return false, "", true
+	}
+	var why []string
+	if v := res.Risk; v != nil {
+		tested := slices.ContainsFunc(res.Results, func(r gate.Result) bool { return r.Gate == "test" })
+		switch {
+		case v.Level == gate.RiskIrreversible:
+			why = append(why, "难撤回")
+		case v.Level == gate.RiskBroad && !tested:
+			why = append(why, "影响面广又没有测试")
+		}
+	}
+	for _, r := range res.Results {
+		switch {
+		case r.Gate == gate.HoldReviewGate && r.Outcome == gate.Fail:
+			return false, "", true // 独立审查代看出了疑问，卡片建议的就是退回
+		case r.Hold == "":
+		case r.Gate == "eval":
+			why = append(why, "改了评测的尺子")
+		default:
+			why = append(why, r.Gate+" 门要人看")
+		}
+	}
+	if len(why) == 0 {
+		why = append(why, "等人看")
+	}
+	return true, "门都过了，" + strings.Join(why, "、"), true
 }
 
 // evidenceJob 从「任务 <任务号>（<项目>）」这样的证据里取任务号。

@@ -35,7 +35,7 @@ var archAllowed = map[string]string{
 	"ledger":         "textfmt fsx env backend state quality",
 	"service":        "textfmt fsx proc config env",
 	"envlayer":       "fsx backend",
-	"notify":         "textfmt fsx proc config env backend state backlog telegram",
+	"notify":         "textfmt fsx proc config env backend gitx state backlog telegram",
 	"gate":           "textfmt fsx proc config env backend gitx state backlog ledger notify",
 	"runner":         "textfmt fsx proc config env backend gitx state backlog ledger notify gate",
 	"orphan":         "textfmt env state backlog ledger notify runner",

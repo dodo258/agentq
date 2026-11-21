@@ -17,11 +17,11 @@ import (
 // 自己长大（self_grow_enabled，默认开；配了 self_project 才起作用）：
 //   - agentq 自己的问题够次数（漏洞一次就够）直接写进 self_project 的「待做」，不进「建议」等人回「做 N」；
 //     项目在 exclude_projects 里也写（self_project 是用户点名的），任务由 sched 当成亲手派的起（SelfItemsToStart、MarkSelfItem）。
-//   - 这一条合并了，记一次修好（Fixes），同一类信号清零：再出现是回归，重新写一条；修过两次还出现，写成重写这一块。
+//   - 这一条合并了，记一次修好（Fixes），同一类信号清零：再出现是回归，重新写一条；修过四次还出现，写成重写这一块。
 //   - 升级和回滚见 upgrade.go。关掉开关和以前一样：写「建议」，不升级。
 const (
 	selfItemKeepDays = 30
-	rewriteAfter     = 2 // 同一类修过这么多次还出现：重写，不再打补丁
+	rewriteAfter     = 4 // 同一类修过这么多次还出现：重写，不再打补丁（修两三次很常见，不算该重写）
 )
 
 // SelfItem 是写进 self_project「待做」的一条，等 sched 起任务、等它合并。
@@ -52,7 +52,7 @@ func (s *Service) selfProjectAny() (backlog.Project, bool) {
 	return backlog.Project{}, false
 }
 
-// todoProposal 是写进「待做」的那一行：修过的再出现标次数（标题不同，「已完成」里的旧条目不挡它），修过两次的写成重写。
+// todoProposal 是写进「待做」的那一行：修过的再出现标次数（标题不同，「已完成」里的旧条目不挡它），修过四次的写成重写。
 func todoProposal(sig *Signal, fixes []string) proposal {
 	if p, ok := capProposal(sig, fixes); ok {
 		return p

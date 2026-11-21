@@ -20,19 +20,19 @@ import (
 func TestIntegrationPatchNoteAndHealth(t *testing.T) {
 	e := newEnv(t, map[string]any{"paused": true})
 	dir := gateRepo(t, e, "demo", "- [ ] 修 core 又算错 READYMERGE —— BRANCH=agent/t-a FILE=a.txt", "- [ ] 不相关的活 NOMERGE")
-	for i, msg := range []string{"加 core", "fix: A 算错", "修复：A 还是不对"} {
+	for i, msg := range []string{"加 core", "fix: A 算错", "修复：A 还是不对", "fix: A 边界", "修复：A 又错了"} {
 		os.MkdirAll(filepath.Join(dir, "core"), 0o755)
 		os.WriteFile(filepath.Join(dir, "core", "a.go"), []byte(fmt.Sprintf("package core\n\nvar A = %d\n", i)), 0o644)
 		testkit.GitT(t, e.home, dir, "add", "-A")
 		testkit.GitT(t, e.home, dir, "commit", "-q", "-m", msg)
 	}
-	if out := e.mustRun("health", "demo"); !strings.Contains(out, "core\t3\t2\t") || !strings.Contains(out, "已修过 2 次，再修要重写") || !strings.Contains(out, "两周返工率") {
+	if out := e.mustRun("health", "demo"); !strings.Contains(out, "core\t5\t4\t") || !strings.Contains(out, "已修过 4 次，再修要重写") || !strings.Contains(out, "两周返工率") {
 		t.Errorf("health 要报出反复修的模块：\n%s", out)
 	}
 	e.mustRun("run", "demo", "修 core")
 	j := e.jobByTitle("修 core 又算错 READYMERGE")
 	prompt, err := os.ReadFile(filepath.Join(jobHome(j, e), "prompt.txt"))
-	if err != nil || !strings.Contains(string(prompt), "core（2 次）") || !strings.Contains(string(prompt), "重写流程") {
+	if err != nil || !strings.Contains(string(prompt), "core（4 次）") || !strings.Contains(string(prompt), "重写流程") {
 		t.Errorf("合同要加重写：%v\n%s", err, prompt)
 	}
 	e.tickUntilGate("修 core 又算错 READYMERGE")

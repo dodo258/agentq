@@ -44,12 +44,14 @@ func (f *fix) levels(body string) {
 	f.git("commit", "-q", "-m", "调档位")
 }
 
-// patched 造一个反复修的模块：core/ 30 天内修过两次。
+// patched 造一个反复修的模块：core/ 30 天内修过四次。
 func patched(f *fix) {
 	f.t.Helper()
 	f.commitAt(f.dir, 20*24*time.Hour, "加 core", map[string]string{"core/a.go": "package core\n\nvar A = 1\n"})
 	f.commitAt(f.dir, 10*24*time.Hour, "修复：A 算错", map[string]string{"core/a.go": "package core\n\nvar A = 2\n"})
-	f.commitAt(f.dir, 5*24*time.Hour, "fix: A 还是不对", map[string]string{"core/a.go": "package core\n\nvar A = 3\n"})
+	f.commitAt(f.dir, 8*24*time.Hour, "fix: A 还是不对", map[string]string{"core/a.go": "package core\n\nvar A = 3\n"})
+	f.commitAt(f.dir, 6*24*time.Hour, "修复：A 边界", map[string]string{"core/a.go": "package core\n\nvar A = 4\n"})
+	f.commitAt(f.dir, 5*24*time.Hour, "fix: A 又错了", map[string]string{"core/a.go": "package core\n\nvar A = 5\n"})
 }
 
 func fixReady(branch string) gate.Ready {
@@ -146,7 +148,7 @@ func TestPatchGateWarnDoesNotBlock(t *testing.T) {
 	}
 	r, ok := resultOf(res, "patch")
 	if !ok || r.Outcome != gate.Fail || r.Level != gate.LevelWarn || !strings.Contains(r.Summary, "core") {
-		t.Fatalf("要记下第三次打补丁：%+v", res.Results)
+		t.Fatalf("要记下第五次打补丁：%+v", res.Results)
 	}
 	if !strings.Contains(strings.Join(r.Evidence, "\n"), "A 还是不对") {
 		t.Errorf("证据要有提交：%+v", r.Evidence)
@@ -173,7 +175,7 @@ func TestPatchGateErrorReturnsForRewrite(t *testing.T) {
 		t.Fatalf("%+v", j.Gate)
 	}
 	note := f.a.ReturnNote(j)
-	for _, want := range []string{"第三次打补丁", "重写报告里点名的模块", "type 写 rewrite", "core"} {
+	for _, want := range []string{"第五次打补丁", "重写报告里点名的模块", "type 写 rewrite", "core"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("合同缺 %q：\n%s", want, note)
 		}
@@ -231,7 +233,7 @@ func TestRewriteTypeOnlyIsReviewedAgain(t *testing.T) {
 	}
 }
 
-// 重写过的模块从零算：重写之前的修复不算进第三次。撤掉「重写封顶」这条用例就要失败。
+// 重写过的模块从零算：重写之前的修复不算进第五次。撤掉「重写封顶」这条用例就要失败。
 func TestPatchGateAfterRewrite(t *testing.T) {
 	f := newFix(t, fixBacklog)
 	patched(f)
@@ -240,11 +242,11 @@ func TestPatchGateAfterRewrite(t *testing.T) {
 	j := f.claim("做事", "agent/x", map[string]string{"core/a.go": "package core\n\nconst A = 4\n"}, fixReady("agent/x"))
 	res := f.run(j)
 	if res.Outcome != "merged" {
-		t.Fatalf("重写之后第一次修复不是第三次：%+v", res)
+		t.Fatalf("重写之后第一次修复不是第五次：%+v", res)
 	}
 }
 
-// 边界：两次修复不到门槛；窗口之外的不算；改的是别的模块不算；只改测试不算；类型不是 fix 不跑。
+// 边界：三次修复不到门槛；窗口之外的不算；改的是别的模块不算；只改测试不算；类型不是 fix 不跑。
 func TestPatchGateBoundaries(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -257,7 +259,12 @@ func TestPatchGateBoundaries(t *testing.T) {
 		{"修过一次", func(f *fix) {
 			f.commitAt(f.dir, 5*24*time.Hour, "fix: 第一次", map[string]string{"core/a.go": "1\n"})
 		}, map[string]string{"core/a.go": "2\n"}, "fix", false, true},
-		{"修过两次是第三次", func(f *fix) { patched(f) }, map[string]string{"core/a.go": "9\n"}, "fix", true, true},
+		{"修过三次", func(f *fix) {
+			f.commitAt(f.dir, 9*24*time.Hour, "fix: 一", map[string]string{"core/a.go": "1\n"})
+			f.commitAt(f.dir, 7*24*time.Hour, "fix: 二", map[string]string{"core/a.go": "2\n"})
+			f.commitAt(f.dir, 5*24*time.Hour, "fix: 三", map[string]string{"core/a.go": "3\n"})
+		}, map[string]string{"core/a.go": "4\n"}, "fix", false, true},
+		{"修过四次是第五次", func(f *fix) { patched(f) }, map[string]string{"core/a.go": "9\n"}, "fix", true, true},
 		{"窗口之外", func(f *fix) {
 			f.commitAt(f.dir, 50*24*time.Hour, "fix: 很久以前", map[string]string{"core/a.go": "1\n"})
 			f.commitAt(f.dir, 40*24*time.Hour, "fix: 也很久", map[string]string{"core/a.go": "2\n"})
@@ -287,6 +294,114 @@ func TestPatchGateBoundaries(t *testing.T) {
 				t.Errorf("要不要跑：%v，结果 %+v", c.ran, res.Results)
 			}
 		})
+	}
+}
+
+// 加测、压测条目认标题；标题以修复开头的、只是顺带说补回归测试的照算修复。
+func TestTestingTitle(t *testing.T) {
+	cases := map[string]bool{
+		"托管层稳定性加测":                 true,
+		"接手中断的「托管层稳定性加测」":          true,
+		"压力测试":                     true,
+		"给 core 加测试":               true,
+		"core 补单元测试":               true,
+		"host 长跑测试":                true,
+		"Add tests for the parser": true,
+		"Soak test the host":       true,
+		"fuzz the decoder":         true,
+		"修复登录崩溃，补上回归测试":            false,
+		"修复 X 并加测":                 false,
+		"修 host 死锁，补测试":            false,
+		"登录崩溃，补回归测试":               false,
+		"接手中断的「修复 X 并补测试」":         false,
+		"Fix crash and add tests":  false,
+		"验收 升级不打断 的意见":             false,
+		"测试账号登录不了":                 false,
+		"":                         false,
+	}
+	for title, want := range cases {
+		if got := gate.TestingTitle(title); got != want {
+			t.Errorf("TestingTitle(%q) = %v，要 %v", title, got, want)
+		}
+	}
+}
+
+// 11-21 huitai：src/host 算进去的修复里有「合并 压力测试」，这次又是「托管层稳定性加测」，error 档退回改成重写。
+// 加测、压测条目修掉的问题不算打补丁：以前的不算进次数，这次的门不跑。修复条目照旧挡。
+func TestPatchGateSkipsTestingItems(t *testing.T) {
+	const body = "# 待办\n\n## 待做\n\n- [ ] 做事 —— 要什么\n- [ ] core 稳定性加测 —— 加测，修掉找出的问题\n\n## 已完成\n"
+	history := func(f *fix) { // core/ 修过四次，其中两次是压测、加测条目合并进来的
+		f.commitAt(f.dir, 20*24*time.Hour, "加 core", map[string]string{"core/a.go": "1\n"})
+		f.commitAt(f.dir, 10*24*time.Hour, "合并 压力测试\n\n分支 agent/stress，由 agentq 过门后合并。\n\n"+gate.TypeTrailer+": fix\n", map[string]string{"core/a.go": "2\n"})
+		f.commitAt(f.dir, 8*24*time.Hour, "fix: A 还是不对", map[string]string{"core/a.go": "3\n"})
+		f.commitAt(f.dir, 6*24*time.Hour, "合并 接手中断的「core 稳定性加测」\n\n"+gate.TypeTrailer+": fix\n", map[string]string{"core/a.go": "4\n"})
+		f.commitAt(f.dir, 5*24*time.Hour, "修复：A 又错了", map[string]string{"core/a.go": "5\n"})
+	}
+
+	t.Run("以前的加测不算次数", func(t *testing.T) {
+		f := newFix(t, body)
+		history(f)
+		stats := gate.ModuleStats(t, f.a, f.dir, "refs/heads/main", time.Now().Add(-30*24*time.Hour))
+		if len(stats) != 1 || stats[0].Fixes != 4 || stats[0].Patches != 2 {
+			t.Fatalf("修复照记 4 次，打补丁只算 2 次：%+v", stats)
+		}
+		f.levels(`{"levels":{"review":"off","patch":"error"}}`)
+		j := f.claim("做事", "agent/x", map[string]string{"core/a.go": "9\n"}, fixReady("agent/x"))
+		if res := f.run(j); res.Outcome != "merged" {
+			t.Fatalf("只修过两次，不是第五次：%+v", res)
+		}
+	})
+
+	t.Run("这次是加测不跑", func(t *testing.T) {
+		f := newFix(t, body)
+		patched(f)
+		f.levels(`{"levels":{"review":"off","patch":"error"}}`)
+		j := f.claim("core 稳定性加测", "agent/x", map[string]string{"core/a.go": "9\n"}, fixReady("agent/x"))
+		res := f.run(j)
+		if res.Outcome != "merged" {
+			t.Fatalf("加测条目修掉的问题不是第五次打补丁：%+v", res)
+		}
+		if _, ok := resultOf(res, "patch"); ok {
+			t.Errorf("加测条目不跑补丁门：%+v", res.Results)
+		}
+		if note := f.a.PatchNote(f.dir, "main", "core 稳定性加测 —— 加测，修掉找出的问题"); note != "" {
+			t.Errorf("加测条目派活前不加重写的话：%q", note)
+		}
+	})
+
+	t.Run("修复条目照挡", func(t *testing.T) {
+		f := newFix(t, body)
+		patched(f)
+		f.levels(`{"levels":{"review":"off","patch":"error"}}`)
+		j := f.claim("做事", "agent/x", map[string]string{"core/a.go": "9\n"}, fixReady("agent/x"))
+		if res := f.run(j); res.Outcome != "fail" {
+			t.Fatalf("修复条目第五次照挡：%+v", res)
+		}
+	})
+}
+
+// 影响面广不把补丁门的 warn 升成 error：没过的后果是合同改成重写，要项目在 gates.json 里明说 error。测试门照升。
+func TestPatchGateNotRaisedByBroadRisk(t *testing.T) {
+	f := newFix(t, fixBacklog)
+	patched(f)
+	// newFix 的默认：审查关着，补丁门默认 warn，测试门有 verify（退出码 0）
+	j := f.claim("做事", "agent/x", map[string]string{"core/a.go": "9\n", "go.mod": "module x\n"}, fixReady("agent/x"))
+	res := f.run(j)
+	if res.Risk.Level != gate.RiskBroad {
+		t.Fatalf("改了 go.mod 要算影响面广：%+v", res.Risk)
+	}
+	if res.Outcome != "merged" {
+		t.Fatalf("补丁门 warn 档不挡：%+v", res)
+	}
+	if r, ok := resultOf(res, "patch"); !ok || r.Outcome != gate.Fail || r.Level != gate.LevelWarn {
+		t.Errorf("补丁门照记第五次，按 warn：%+v", res.Results)
+	}
+	if r, ok := resultOf(res, "test"); !ok || r.Level != gate.LevelError {
+		t.Errorf("测试门照升 error：%+v", res.Results)
+	}
+	f.collect(j, res)
+	if strings.Contains(f.a.ReturnNote(j), "重写报告里点名的模块") {
+		t.Errorf("没改合同：%s", f.a.ReturnNote(j))
 	}
 }
 
@@ -359,7 +474,7 @@ func TestModuleStatsFirstParent(t *testing.T) {
 func TestPatchNote(t *testing.T) {
 	f := newFix(t, fixBacklog)
 	patched(f)
-	if note := f.a.PatchNote(f.dir, "main", "修 core 模块的算错"); !strings.Contains(note, "core（2 次）") || !strings.Contains(note, "重写流程") {
+	if note := f.a.PatchNote(f.dir, "main", "修 core 模块的算错"); !strings.Contains(note, "core（4 次）") || !strings.Contains(note, "重写流程") {
 		t.Errorf("提到了要加：%q", note)
 	}
 	if note := f.a.PatchNote(f.dir, "main", "改 core/a.go 的算错"); note == "" {
@@ -390,7 +505,7 @@ func TestCmdHealth(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := out.String()
-	for _, want := range []string{"demo（main，最近 30 天）", "core\t3\t2\t", "已修过 2 次，再修要重写", "main.go\t1\t1\t", "两周返工率：", "还在校准"} {
+	for _, want := range []string{"demo（main，最近 30 天）", "core\t5\t4\t", "已修过 4 次，再修要重写", "main.go\t1\t1\t", "两周返工率：", "还在校准"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("缺 %q：\n%s", want, text)
 		}

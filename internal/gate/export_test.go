@@ -21,6 +21,9 @@ var FileChanges = parseFileChanges
 // CapApplies 给测试：清单里的启用条件按项目判断要不要用。
 var CapApplies = capApplies
 
+// TestingTitle 给测试：条目标题是不是加测、压测。
+var TestingTitle = testingTitle
+
 // PatchGate 给测试。
 func PatchGate(d Deps) Gate { return patchGate{d} }
 

@@ -860,7 +860,7 @@ func TestIntegrationHandoffAfterMarkRemoved(t *testing.T) {
 		}
 		next := e.state().Jobs[1]
 		prompt, _ := os.ReadFile(filepath.Join(jobHome(next, e), "prompt.txt"))
-		if string(prompt) != runner.BuildPrompt(dir, next.Item)+"\n" {
+		if string(prompt) != runner.BuildPrompt(dir, next.Item)+runner.TimeLimitNote(1000*time.Hour)+"\n" {
 			t.Errorf("普通提示词：\n%s", prompt)
 		}
 		e.mustRun("stop", next.ID)
@@ -1023,7 +1023,7 @@ func TestIntegrationHandoffClaimedStopsInheriting(t *testing.T) {
 	}
 	next := e.state().Jobs[2]
 	prompt, _ := os.ReadFile(filepath.Join(jobHome(next, e), "prompt.txt"))
-	if string(prompt) != runner.BuildPrompt(dir, next.Item)+"\n" {
+	if string(prompt) != runner.BuildPrompt(dir, next.Item)+runner.TimeLimitNote(1000*time.Hour)+"\n" {
 		t.Errorf("普通提示词：\n%s", prompt)
 	}
 	waitExit(t, next.PID, 10*time.Second)

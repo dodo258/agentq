@@ -161,6 +161,53 @@ func TestScopeGateNextRound(t *testing.T) {
 	})
 }
 
+// 照任务 1115-234416-agentq：到上限时挡住合并的是检查自己出了故障（评测题布置不起来，判不了），不是改动没过。
+// 不能说成计划的问题：卡住标记和报告照写原因，IsPlanReport 不认，自我进化也就不记成退回用完。改动真没过的照旧是计划的问题。
+func TestRoundLimitBrokenCheckNotPlan(t *testing.T) {
+	const why = "eval：评测比基线变差 1 处：001-impl-go：这次判不了：agentq setup 退出码 1"
+	run := func(unjudged bool) gate.RunResult {
+		return gate.RunResult{Outcome: "fail", Reason: why, Results: []gate.Result{
+			{Gate: "test", Outcome: gate.Pass, Level: gate.LevelError, Summary: ".agentq/verify 过了"},
+			{Gate: "eval", Outcome: gate.Fail, Level: gate.LevelError, Summary: "评测比基线变差 1 处", Unjudged: unjudged},
+		}}
+	}
+	for _, c := range []struct {
+		name     string
+		unjudged bool
+		plan     bool
+	}{{"判不了", true, false}, {"真答错了", false, true}} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFix(t, fixBacklog)
+			j := f.claim("做事", "agent/x", map[string]string{"a.txt": "a"}, ready("agent/x"))
+			j.Gate.Round = gate.MaxRounds
+			f.collect(j, run(c.unjudged))
+			if j.Gate.State != state.GateStuck || !strings.Contains(j.Gate.Report, why) {
+				t.Fatalf("%+v", j.Gate)
+			}
+			if gate.IsPlanReport(j.Gate.Report) != c.plan || strings.Contains(j.StuckPending, "条目拆法") != c.plan {
+				t.Errorf("计划的问题应为 %v：报告 %s；卡住标记 %s", c.plan, j.Gate.Report, j.StuckPending)
+			}
+		})
+	}
+}
+
+// IsPlanReport 只认 planReason 写的开头：正文顺带提到同样的话、等拍板和门进程没结果的报告都不算。
+func TestIsPlanReport(t *testing.T) {
+	plan := fmt.Sprintf("退回 %d 轮还没过，多半是计划（条目拆法）的问题：建议重新拆或改验收。最后一次：review：审查发现 1 个问题", gate.MaxRounds)
+	for report, want := range map[string]bool{
+		plan: true,
+		"退回 3 轮还没过，多半是计划（条目拆法）的问题：建议重新拆或改验收":                              true,
+		"难撤回，门过了也不自动合并，等你看过再放行：路径命中 *.sql：tests/fixtures/codex/state.sql": false,
+		"review：审查说上一轮" + plan: false,
+		"门进程连续 3 次没留下结果":       false,
+		"":                     false,
+	} {
+		if gate.IsPlanReport(report) != want {
+			t.Errorf("%q 应为 %v", report, want)
+		}
+	}
+}
+
 // 到上限转用户：原因写成计划的问题，卡住标记、报告带这句，卡片用人话说。
 func TestRoundLimitSaysPlanProblem(t *testing.T) {
 	f := newFix(t, fixBacklog)

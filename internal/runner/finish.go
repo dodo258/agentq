@@ -376,6 +376,9 @@ func (a *Service) enqueueReady(st *state.State, j *state.Job) (gated bool, ask s
 	if !found {
 		return false, ""
 	}
+	if fork := a.BackupFork(j.ProjectDir, backlog.MarkerBranch(it.Text)); fork != "" {
+		a.Logf("任务 %s 交付时：%s", j.ID, fork)
+	}
 	j.Fingerprint = it.Fingerprint   // 任务改过正文时指纹变了：退回时要认得这一条
 	if a.Gate.OnJobBranch(j, head) { // 它自己合并了：过不了门，也不能当引擎合的
 		a.Gate.Bypassed(st, j, r, head)

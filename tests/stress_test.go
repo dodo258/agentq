@@ -2822,7 +2822,7 @@ func (e *stressEnv) setupNewGates(rng *rand.Rand, scripts map[string]string) new
 	line, tok = e.item("fixcore")
 	c.patchDir, c.patchTok, c.patchLevel = e.repo("g-patch", line), tok, level()
 	os.MkdirAll(filepath.Join(c.patchDir, "core"), 0o755)
-	for i, msg := range []string{"加 core", "fix: core 算错", "修复：core 还是不对"} {
+	for i, msg := range []string{"加 core", "fix: core 算错", "修复：core 还是不对", "fix: core 边界", "修复：core 又错了"} {
 		os.WriteFile(filepath.Join(c.patchDir, "core", "a.go"), []byte(fmt.Sprintf("package core\n\nvar A = %d\n", i)), 0o644)
 		commit(c.patchDir, msg)
 	}
@@ -2837,7 +2837,7 @@ func (e *stressEnv) mergedTok(dir, tok string) bool {
 	return strings.TrimSpace(out) != ""
 }
 
-// checkNewGates：error 档没过不能进默认分支；烟测没过没有交付单；烟测过了又合并的（门进程没被折腾过）要有交付单；第三次打补丁在 error 档只能按重写进。
+// checkNewGates：error 档没过不能进默认分支；烟测没过没有交付单；烟测过了又合并的（门进程没被折腾过）要有交付单；第五次打补丁在 error 档只能按重写进。
 func (e *stressEnv) checkNewGates(c newGateCases, uiMode string, damaged map[string]bool) {
 	e.checkGateRepo("ui", c.uiDir)
 	e.checkGateRepo("smoke", c.smokeDir)
@@ -2871,7 +2871,7 @@ func (e *stressEnv) checkNewGates(c newGateCases, uiMode string, damaged map[str
 	if c.patchLevel == "error" {
 		out, _ := e.git(c.patchDir, "log", "--merges", "--format=%H", "--grep", "^"+gate.TypeTrailer+": fix$", e.defaultRef(c.patchDir))
 		if strings.TrimSpace(out) != "" {
-			e.violate("补丁门 error 档，第三次修复进了默认分支：\n%s", out)
+			e.violate("补丁门 error 档，第五次修复进了默认分支：\n%s", out)
 		}
 	}
 }
