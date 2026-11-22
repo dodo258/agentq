@@ -57,7 +57,7 @@ func RemoveChildEnvKeep(names ...string) {
 	}
 }
 
-// ChildEnv 按白名单过滤当前环境。另外保留 LC_*（含 LC_ALL）和 agentq 自己的 AGENTQ_* 变量。
+// ChildEnv 按白名单过滤当前环境。另外保留 LC_*（含 LC_ALL）和 agentq 自己的 AGENTQ_* 变量，AGENTQ_JOB 除外（见 filterEnv）。
 func ChildEnv() []string {
 	return filterEnv(func(name string) bool { return ChildEnvKeep[name] })
 }
@@ -67,10 +67,15 @@ func BackendEnv(keep []string) []string {
 	return filterEnv(func(name string) bool { return slices.Contains(commonEnvKeep, name) || slices.Contains(keep, name) })
 }
 
+// filterEnv 不传调用方的 JobEnv：要带的地方自己设（StartCLI、门的脚本）。任务里执行 agentq run 时调用方带着那个任务的标记，
+// 传下去的话新任务的外壳、门进程都会被认成那个任务拉起的，那个任务收尾或被停时连它们一起杀掉。
 func filterEnv(allow func(name string) bool) []string {
 	var out []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
+		if name == JobEnv {
+			continue
+		}
 		if allow(name) || strings.HasPrefix(name, "LC_") || strings.HasPrefix(name, "AGENTQ_") {
 			out = append(out, kv)
 		}

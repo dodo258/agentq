@@ -167,12 +167,17 @@ func (a *Service) Tick(after string) error {
 	}
 	started, note := 0, ""
 	now := a.Now()
+	// 自动发版在发、在等发版时不接新活也不升级：发版要拿最新的默认分支打包，升级会换掉刚观察完的这一代（见 internal/release）
+	releasing := a.Release.Busy()
 	// 自己长大、自动更新：有要做的升级或回滚时不接新活，没任务在跑就交给 agentq evolve apply 去做（见 internal/evolve/upgrade.go、autoupdate.go）
 	hold, holdWhy := false, ""
-	if !recovered && !a.Cfg.Paused {
+	if !recovered && !a.Cfg.Paused && releasing == "" && !a.Release.Waiting() {
 		hold, holdWhy = a.Evolve.SelfUpdate(st)
 	}
-	releasing := a.Release.Busy() // 发版要拿最新的默认分支打包，进行中不接新活（见 internal/release）
+	// 挑活之前看自动发版：条件都满足、没任务在跑就起发版；只差有任务在跑就等发版，这次不接新活（撞限冷却、熔断时也看，发版不用模型）
+	if !recovered && !a.Cfg.Paused && !hold && releasing == "" {
+		releasing = a.Release.StartIfDue(st)
+	}
 	switch {
 	case recovered:
 		note = "状态文件损坏后按 meta.json 重建，本次只收尾不启动"
@@ -203,8 +208,7 @@ func (a *Service) Tick(after string) error {
 		note = "连环失败熔断中，到 " + textfmt.WhenCN(st.BreakerUntil) + " 前不启动"
 	default:
 		started, note = a.schedule(st, orphans, false)
-		a.PM.StartIfDue(st)      // 接完待做再看：产品经理调研不占名额，同时只跑一个，额度到后台上限不起
-		a.Release.StartIfDue(st) // 再看自动发版：要没有任务在跑、在过门，起了之后发完前不接新活（见 internal/release）
+		a.PM.StartIfDue(st) // 接完待做再看：产品经理调研不占名额，同时只跑一个，额度到后台上限不起
 		// 续跑会改被续跑任务的记录（ResumedBy、ResumePending），启动时只存了一次
 		if err := state.Save(a.StatePath(), st); err != nil {
 			a.Logf("%s：写状态文件失败：%v", name, err)

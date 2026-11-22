@@ -91,6 +91,9 @@ func (a *App) CmdStatus() error {
 	}
 	ulvl, uuntil, uwhy := backend.UsageLevel(u, now, a.Cfg.UsagePolicy())
 	fmt.Fprintf(w, "调度：%s\n", a.Runner.SchedNote(st, stErr, now, ulvl, uuntil, uwhy))
+	if l := a.Release.StatusLine(st); l != "" { // 正在发版、等发版时 tick 不接新活
+		fmt.Fprintln(w, l)
+	}
 	if pid, since, held := fsx.LockHolder(a.LockPath()); held {
 		fmt.Fprintf(w, "tick.lock：pid %d 拿着 tick.lock，已 %s（这期间别的 tick 只跳过，不收尾也不接活；一直这样就是卡住了，run、stop、升级也拿不到锁）\n", pid, time.Since(since).Round(time.Second))
 	}

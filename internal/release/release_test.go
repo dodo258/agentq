@@ -139,12 +139,6 @@ func TestNotDue(t *testing.T) {
 		{"未发布是空的", "「## 未发布」里没有条目", false, func(r *rig, _ *state.State) {
 			r.commit("CHANGELOG.md", "# 更新记录\n\n## 未发布\n\n## v0.3.0\n\n- 旧的\n")
 		}},
-		{"有任务在跑", "有 1 个任务在跑或在过门", false, func(_ *rig, st *state.State) {
-			st.Jobs = append(st.Jobs, &state.Job{ID: "j", Project: "other", Status: state.StatusRunning})
-		}},
-		{"有任务在过门", "有 1 个任务在跑或在过门", false, func(_ *rig, st *state.State) {
-			st.Jobs = append(st.Jobs, &state.Job{ID: "j", Project: "demo", Status: state.StatusDone, Gate: &state.GateRecord{State: state.GateQueued}})
-		}},
 		{"主目录不在默认分支", "", false, func(r *rig, _ *state.State) { testkit.GitT(r.t, r.home, r.dir, "checkout", "-q", "-b", "side") }},
 		{"公开仓上次发布不到 7 天", "不到 7 天", true, func(r *rig, _ *state.State) {
 			r.file("gh-release.json", `[{"tagName":"v0.3.0","publishedAt":"2026-11-27T11:45:34Z"}]`)
@@ -455,6 +449,137 @@ func TestRuleOn(t *testing.T) {
 		os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(text), 0o644)
 		if got := ruleOn(dir); got != want {
 			t.Errorf("%q：%v，要 %v", text, got, want)
+		}
+	}
+}
+
+func (r *rig) ghCalls() int { return strings.Count(r.read(filepath.Join(r.home, "gh-calls")), "\n") }
+
+// 别的条件都满足、只差有任务在跑或在过门：等发版（tick 不接新活、不升级），一小时内不再联网；在跑的做完，下一次就发。
+func TestWaitsForActiveJobs(t *testing.T) {
+	cases := []struct {
+		name string
+		job  *state.Job
+		done func(j *state.Job)
+	}{
+		{"在跑", &state.Job{ID: "j", Project: "other", Status: state.StatusRunning}, func(j *state.Job) { j.Status = state.StatusDone }},
+		{"在过门", &state.Job{ID: "j", Project: "demo", Status: state.StatusDone, Gate: &state.GateRecord{State: state.GateQueued}},
+			func(j *state.Job) { j.Gate.State = state.GateMerged }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRig(t, nil)
+			st := &state.State{Jobs: []*state.Job{c.job}}
+			r.now = r.now.Add(ghEvery + time.Minute)
+			note := r.s.StartIfDue(st)
+			if len(r.spawned) != 0 || !strings.Contains(note, "等发版：停接新活，等 1 个任务做完") || !strings.Contains(note, "demo v0.4.0") {
+				t.Fatalf("要等发版：%q %v", note, r.spawned)
+			}
+			if rec := r.record(); rec.Wait != "v0.4.0" || rec.Tag != "v0.3.0" || !r.s.Waiting() {
+				t.Fatalf("记下在等：%+v", rec)
+			}
+			if l := r.s.StatusLine(st); !strings.Contains(l, "等发版：停接新活，等 1 个任务做完") {
+				t.Errorf("status 那一行：%q", l)
+			}
+			calls := r.ghCalls()
+			r.now = r.now.Add(5 * time.Minute)
+			if note := r.s.StartIfDue(st); !strings.Contains(note, "等发版") || len(r.spawned) != 0 || r.ghCalls() != calls {
+				t.Fatalf("一小时内照旧等、不再联网：%q %v %d→%d", note, r.spawned, calls, r.ghCalls())
+			}
+			if logs := r.s.Out.(*bytes.Buffer).String(); strings.Count(logs, "等发版") != 1 || strings.Contains(logs, "这次不发") {
+				t.Errorf("进入等发版记一行日志：\n%s", logs)
+			}
+			c.done(c.job)
+			r.now = r.now.Add(5 * time.Minute)
+			note = r.s.StartIfDue(st)
+			if !slices.Equal(r.spawned, []string{"demo v0.4.0"}) || !strings.Contains(note, "正在自动发版 demo v0.4.0") {
+				t.Fatalf("做完了就发：%q %v", note, r.spawned)
+			}
+			if rec := r.record(); rec.Wait != "" || rec.State != stRunning || r.s.Waiting() {
+				t.Fatalf("开始发了就不再等：%+v", rec)
+			}
+			if l := r.s.StatusLine(st); !strings.HasPrefix(l, "发版：正在自动发版 demo v0.4.0") {
+				t.Errorf("status 那一行：%q", l)
+			}
+		})
+	}
+}
+
+// 有任务在跑、别的条件不满足：不进入等发版，tick 照常接活（StartIfDue 返回空），也不联网查。
+func TestNoWaitWhenNotDue(t *testing.T) {
+	cases := []struct {
+		name, why string
+		edit      func(c *config.Config)
+		setup     func(r *rig)
+	}{
+		{"CHANGELOG 没条目", "「## 未发布」里没有条目", nil, func(r *rig) { r.commit("CHANGELOG.md", "# 更新记录\n\n## 未发布\n\n## v0.3.0\n\n- 旧的\n") }},
+		{"离上次发成不到 7 天", "不到 7 天", nil, func(r *rig) {
+			if err := r.s.save("demo", Record{State: stDone, Version: "v0.3.0", Released: r.now.Add(-3 * 24 * time.Hour)}); err != nil {
+				r.t.Fatal(err)
+			}
+		}},
+		{"观察期没过", "还没过观察期", func(c *config.Config) { c.SelfProject = "demo" }, func(r *rig) {
+			r.s.Evolve.Version = "dev-" + testkit.GitT(r.t, r.home, r.dir, "rev-parse", "--short=7", "HEAD")
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRig(t, c.edit)
+			c.setup(r)
+			st := &state.State{Jobs: []*state.Job{{ID: "j", Project: "other", Status: state.StatusRunning}}}
+			r.now = r.now.Add(ghEvery + time.Minute)
+			if note := r.s.StartIfDue(st); note != "" || len(r.spawned) != 0 {
+				t.Fatalf("不满足不等发版，照常接活：%q %v", note, r.spawned)
+			}
+			if rec := r.record(); rec.Wait != "" || !strings.Contains(rec.Note, c.why) || r.s.Waiting() || r.s.StatusLine(st) != "" {
+				t.Fatalf("记的是不发的原因：%+v", rec)
+			}
+			if r.ghCalls() != 0 {
+				t.Error("本机条件不满足不联网")
+			}
+		})
+	}
+}
+
+// 等发版中途条件变了（CHANGELOG 被清空）：不再等，照常接活；「未发布」里条目变了，版本号按记下的公开仓版本现算，不再联网。
+func TestWaitFollowsConditions(t *testing.T) {
+	r := newRig(t, nil)
+	r.commit("CHANGELOG.md", "# 更新记录\n\n## 未发布\n\n- 修复：乙\n\n## v0.3.0\n\n- 旧的\n")
+	st := &state.State{Jobs: []*state.Job{{ID: "j", Project: "other", Status: state.StatusRunning}}}
+	r.now = r.now.Add(ghEvery + time.Minute)
+	if note := r.s.StartIfDue(st); !strings.Contains(note, "demo v0.3.1") {
+		t.Fatalf("只有修复等的是补丁版本：%q", note)
+	}
+	calls := r.ghCalls()
+	r.commit("CHANGELOG.md", "# 更新记录\n\n## 未发布\n\n- 新功能甲\n- 修复：乙\n\n## v0.3.0\n\n- 旧的\n")
+	r.now = r.now.Add(5 * time.Minute)
+	if note := r.s.StartIfDue(st); !strings.Contains(note, "demo v0.4.0") || r.ghCalls() != calls {
+		t.Fatalf("加了新功能等的是小版本，不再联网：%q %d→%d", note, calls, r.ghCalls())
+	}
+	r.commit("CHANGELOG.md", "# 更新记录\n\n## 未发布\n\n## v0.3.0\n\n- 旧的\n")
+	r.now = r.now.Add(5 * time.Minute)
+	if note := r.s.StartIfDue(st); note != "" || r.s.Waiting() || r.record().Wait != "" {
+		t.Fatalf("条件不满足了不再等：%q %+v", note, r.record())
+	}
+}
+
+// 发版做完或失败后不再挡着：StartIfDue 返回空，tick 照常接活。
+func TestResumeAfterRelease(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		r := newRig(t, nil)
+		st := &state.State{}
+		r.tick(st)
+		if fail {
+			r.file("release-fail", "")
+		}
+		err := r.s.Run([]string{"demo", "v0.4.0"})
+		if (err != nil) != fail {
+			t.Fatalf("发版结果：%v", err)
+		}
+		r.now = r.now.Add(5 * time.Minute)
+		st.Jobs = append(st.Jobs, &state.Job{ID: "j", Project: "other", Status: state.StatusRunning})
+		if note := r.s.StartIfDue(st); note != "" || r.s.Busy() != "" || r.s.Waiting() || len(r.spawned) != 1 {
+			t.Fatalf("失败=%v 之后要恢复接活：%q %v", fail, note, r.spawned)
 		}
 	}
 }

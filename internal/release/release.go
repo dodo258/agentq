@@ -4,14 +4,15 @@
 // 对校验值、临时 HOME 试装），退出码 0 算发成。公开仓名由环境变量 AGENTQ_RELEASE_REPO 给（来自 config.json 的 release_repos）。
 //
 // 什么时候发归 agentq，全满足才发：release_repos 登记了这个项目；项目 AGENTS.md 或 CLAUDE.md 里有「- 自动发版：」开头的规则；
-// 主目录在默认分支、.agentq/release 能执行；CHANGELOG.md「## 未发布」有条目；没有任务在跑或在过门；self_project 另要本机这一代观察期过了没变差、
-// 默认分支上比它新的只有文档；离上次发成和公开仓上次正式发布都满 7 天；公开仓最新提交 CI 绿；这个版本没失败过。
+// 主目录在默认分支、.agentq/release 能执行；CHANGELOG.md「## 未发布」有条目；self_project 另要本机这一代观察期过了没变差、
+// 默认分支上比它新的只有文档；离上次发成和公开仓上次正式发布都满 7 天；公开仓最新提交 CI 绿；这个版本没失败过；没有任务在跑或在过门。
+// 只差最后一条时进入「等发版」：tick 不接新活、不做自动升级，等在跑和在过门的做完就发（任务几乎不停，干等空闲永远等不到）。
 // 版本号按「未发布」的条目定：全是「修复：」升补丁号，否则升小版本号。
 //
 // 后台进程先跑说明书检查：不过就往项目「待做」写一条先修、推一条，这次不发（主目录有新提交后再试）。过了把 CHANGELOG 的「未发布」记成这个版本并提交，
 // 再跑 .agentq/release。失败停在原地：推一条、记下这个版本，以后不再试它（同一个版本不重试）；发成推一条（版本、Release 链接、主要变化），
 // self_project 发成后往 site_project 的「待做」写一条「对齐新版本」。这一版带出去的条目写了公开仓 issue 链接的，起草回复推给用户点「发」（issues.go）。
-// 发版进行中 tick 不接新活。
+// 发版进行中、等发版时 tick 不接新活、不升级。
 package release
 
 import (
@@ -81,6 +82,10 @@ type Record struct {
 	// CheckedAt：上次联网查公开仓的时间；Note：上次不发的原因（变了才记日志）。
 	CheckedAt time.Time `json:"checked_at,omitzero"`
 	Note      string    `json:"note,omitempty"`
+	// Wait：等发版的版本（别的条件都满足了、只差有任务在跑或在过门）；空的是没在等。
+	// Tag：那次联网查到的公开仓最新正式版本（还没发过是空的），一小时内不再查，版本号按它和「未发布」现算。
+	Wait string `json:"wait,omitempty"`
+	Tag  string `json:"tag,omitempty"`
 }
 
 // Service 是自动发版的模块实例。
@@ -136,58 +141,110 @@ func (s *Service) running(name string, r Record) bool {
 	return r.State == stRunning && s.Now().Sub(r.At) < startGrace
 }
 
-// Busy：有项目正在发版时返回给 tick 日志的一句话，tick 这次不接新活（发版要拿最新的默认分支打包，中途不能有合并）。
+// Busy：有项目正在发版时返回给 tick 日志的一句话，tick 这次不接新活、不升级（发版要拿最新的默认分支打包，中途不能有合并）。
 func (s *Service) Busy() string {
 	for _, name := range slices.Sorted(maps.Keys(s.Cfg.ReleaseRepos)) {
 		if r, err := s.load(name); err == nil && s.running(name, r) {
-			return "正在自动发版 " + name + " " + r.Version + "，发完再接新活"
+			return busyNote(name, r.Version)
 		}
 	}
 	return ""
 }
 
-// StartIfDue：tick 接完活之后调用（拿着 tick.lock）。release_repos 登记的项目里，第一个条件全满足的起后台进程去发；一次最多起一个。
+func busyNote(name, version string) string {
+	return "正在自动发版 " + name + " " + version + "，发完再接新活"
+}
+
+// Waiting：上次 tick 判下来有项目在等发版。tick 看升级之前问：在等就不升级（换了这一代，观察期要从头来，等的就白等了）。
+// 记录只有 StartIfDue 写，等的条件变了它会清掉。
+func (s *Service) Waiting() bool {
+	for name := range s.Cfg.ReleaseRepos {
+		if r, err := s.load(name); err == nil && r.Wait != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// StatusLine：agentq status 的一行：正在发版、等发版；都没有是空的。st 是 nil（状态读不了）时只看正在发版。
+func (s *Service) StatusLine(st *state.State) string {
+	if b := s.Busy(); b != "" {
+		return "发版：" + b
+	}
+	if st == nil {
+		return ""
+	}
+	for _, name := range slices.Sorted(maps.Keys(s.Cfg.ReleaseRepos)) {
+		if r, err := s.load(name); err == nil && r.Wait != "" {
+			return waitNote(name, r.Wait, st.ActiveJobs())
+		}
+	}
+	return ""
+}
+
+func waitNote(name, version string, n int) string {
+	if n == 0 {
+		return "等发版：在跑和在过门的都做完了，下次 tick 开始发 " + name + " " + version
+	}
+	return fmt.Sprintf("等发版：停接新活，等 %d 个任务做完（发 %s %s）", n, name, version)
+}
+
+// StartIfDue：tick 挑活之前调用（拿着 tick.lock）。release_repos 登记的项目里，第一个条件全满足的起后台进程去发；一次最多起一个。
+// 返回给 tick 日志的一句话：正在发、刚起了发版、在等发版时不是空的，tick 这次不接新活。
 // 不发的原因变了才记一行日志。出错只记日志，不影响 tick。
-func (s *Service) StartIfDue(st *state.State) {
-	if len(s.Cfg.ReleaseRepos) == 0 || s.Busy() != "" {
-		return
+func (s *Service) StartIfDue(st *state.State) (note string) {
+	if len(s.Cfg.ReleaseRepos) == 0 {
+		return ""
+	}
+	if b := s.Busy(); b != "" {
+		return b
 	}
 	defer func() {
 		if p := recover(); p != nil {
 			s.Logf("自动发版：出错，不影响 tick：%v", p)
+			note = ""
 		}
 	}()
 	projects, _ := s.Backlog.AllProjects() // 扫描不全时找得到的照常判
 	for _, name := range slices.Sorted(maps.Keys(s.Cfg.ReleaseRepos)) {
-		i := slices.IndexFunc(projects, func(p backlog.Project) bool { return p.Name == name })
-		if i < 0 {
-			continue
-		}
 		r, err := s.load(name)
 		if err != nil {
 			s.Logf("自动发版 %s：发版记录读不了，先不发：%v", name, err)
+			continue
+		}
+		i := slices.IndexFunc(projects, func(p backlog.Project) bool { return p.Name == name })
+		if i < 0 {
+			if r.Wait != "" { // 项目找不到了：不再等它
+				r.Wait = ""
+				if err := s.save(name, r); err != nil {
+					s.Logf("自动发版 %s：%v", name, err)
+				}
+			}
 			continue
 		}
 		if r.State == stRunning { // 没在跑却还记着「发版中」：后台进程被杀了（关机、重启），按失败算，不重试这个版本
 			r = s.failed(name, r, "发版进程中途没了（关机、重启或被杀），没做完")
 		}
 		before := r
-		why, version := s.due(context.Background(), st, projects[i], &r)
+		why, version, n := s.due(context.Background(), st, projects[i], &r)
 		if why == "" {
 			// 发完情况就变了（记了失败、说明书没过）：下次 tick 重新联网查，不沿用这次的结果
-			r.State, r.Version, r.At, r.Why, r.Note, r.CheckedAt = stRunning, version, s.Now(), "", "", time.Time{}
+			r.State, r.Version, r.At, r.Why, r.Note, r.CheckedAt, r.Wait, r.Tag = stRunning, version, s.Now(), "", "", time.Time{}, "", ""
 			if err := s.save(name, r); err != nil {
 				s.Logf("自动发版 %s：%v，这次不发", name, err)
-				return
+				return ""
 			}
 			if err := s.start(name, version); err != nil {
 				s.failed(name, r, "起不来发版进程："+err.Error())
-				return
+				return ""
 			}
 			s.Logf("自动发版 %s：开始发 %s，日志 %s", name, version, s.logPath(name))
-			return
+			return busyNote(name, version)
 		}
-		if why != before.Note {
+		switch {
+		case n > 0 && before.Wait == "":
+			s.Logf("自动发版 %s：%s 别的条件都满足了，只差有 %d 个任务在跑或在过门：等发版，停接新活、不升级，做完就发", name, version, n)
+		case n == 0 && why != before.Note:
 			s.Logf("自动发版 %s：这次不发：%s", name, why)
 		}
 		r.Note = why
@@ -196,7 +253,11 @@ func (s *Service) StartIfDue(st *state.State) {
 				s.Logf("自动发版 %s：%v", name, err)
 			}
 		}
+		if n > 0 {
+			return why
+		}
 	}
+	return ""
 }
 
 func equalRecord(a, b Record) bool {
@@ -220,64 +281,78 @@ func ruleOn(dir string) bool {
 
 func scriptPath(dir string) string { return filepath.Join(dir, ".agentq", "release") }
 
-// due 判这个项目现在发不发：发就返回空原因和要发的版本。先看本机，都满足了才联网（每 ghEvery 最多一次）。会改 r 的 CheckedAt。
-func (s *Service) due(ctx context.Context, st *state.State, p backlog.Project, r *Record) (why, version string) {
+// due 判这个项目现在发不发：发就返回空原因和要发的版本。先看本机，都满足了才联网（每 ghEvery 最多一次）；最后看有没有任务在跑或在过门，
+// 只差这一条时 waiting 是在跑和在过门的个数，记下 r.Wait（等发版），一小时内不再联网，版本号按记下的 r.Tag 现算。会改 r 的 CheckedAt、Wait、Tag。
+func (s *Service) due(ctx context.Context, st *state.State, p backlog.Project, r *Record) (why, version string, waiting int) {
 	now := s.Now()
+	wasWaiting := r.Wait != ""
+	r.Wait = "" // 每次重判，条件都还满足才记回去
 	if cur, def, ok := s.Backlog.OnDefault(p); !ok {
-		return backlog.NotOnDefaultReason(cur, def), ""
+		return backlog.NotOnDefaultReason(cur, def), "", 0
 	}
 	if !ruleOn(p.Dir) {
-		return "项目 AGENTS.md、CLAUDE.md 里没有「- 自动发版：」开头的规则", ""
+		return "项目 AGENTS.md、CLAUDE.md 里没有「- 自动发版：」开头的规则", "", 0
 	}
 	if fi, err := os.Stat(scriptPath(p.Dir)); err != nil || fi.Mode()&0o111 == 0 {
-		return "没有能执行的 .agentq/release", ""
+		return "没有能执行的 .agentq/release", "", 0
 	}
 	b, err := os.ReadFile(filepath.Join(p.Dir, "CHANGELOG.md"))
 	entries := Unreleased(string(b))
 	if err != nil || len(entries) == 0 {
-		return "CHANGELOG.md「## 未发布」里没有条目", ""
-	}
-	if n := st.ActiveJobs(); n > 0 {
-		return fmt.Sprintf("有 %d 个任务在跑或在过门", n), ""
+		return "CHANGELOG.md「## 未发布」里没有条目", "", 0
 	}
 	if p.Name == s.Cfg.SelfProject {
 		if why := s.observed(p); why != "" {
-			return why, ""
+			return why, "", 0
 		}
 	}
 	if !r.Released.IsZero() && now.Sub(r.Released) < minGap {
-		return "离上次发成（" + textfmt.WhenCN(r.Released) + "）不到 7 天", ""
+		return "离上次发成（" + textfmt.WhenCN(r.Released) + "）不到 7 天", "", 0
 	}
-	if !r.CheckedAt.IsZero() && now.Sub(r.CheckedAt) < ghEvery && !r.CheckedAt.After(now) {
-		return r.Note, "" // 一小时内查过：原因照旧，下次再查
+	// 一小时内查过：没过的原因照旧，下次再查；过了（在等发版）就不再查公开仓和 CI
+	fresh := !r.CheckedAt.IsZero() && now.Sub(r.CheckedAt) < ghEvery && !r.CheckedAt.After(now)
+	if fresh && !wasWaiting {
+		return r.Note, "", 0
 	}
-	r.CheckedAt = now
 	repo := s.Cfg.ReleaseRepos[p.Name]
-	tag, at, err := s.latestRelease(ctx, repo)
-	if err != nil {
-		return "查不了公开仓 " + repo + " 的发布：" + err.Error(), ""
+	if !fresh {
+		r.CheckedAt = now
+		tag, at, err := s.latestRelease(ctx, repo)
+		if err != nil {
+			return "查不了公开仓 " + repo + " 的发布：" + err.Error(), "", 0
+		}
+		if tag != "" && now.Sub(at) < minGap {
+			return "公开仓上次发布 " + tag + "（" + textfmt.WhenCN(at.Local()) + "）不到 7 天", "", 0
+		}
+		r.Tag = tag
 	}
-	if tag != "" && now.Sub(at) < minGap {
-		return "公开仓上次发布 " + tag + "（" + textfmt.WhenCN(at.Local()) + "）不到 7 天", ""
-	}
-	version, err = NextVersion(tag, entries)
+	version, err = NextVersion(r.Tag, entries)
 	if err != nil {
-		return err.Error(), ""
+		return err.Error(), "", 0
 	}
 	if slices.Contains(r.Failed, version) {
-		return "上次发 " + version + " 没成，停在原地等你处理（日志 " + s.logPath(p.Name) + "；处理好后从 " + s.recordPath(p.Name) + " 的 failed 里删掉它）", ""
+		return "上次发 " + version + " 没成，停在原地等你处理（日志 " + s.logPath(p.Name) + "；处理好后从 " + s.recordPath(p.Name) + " 的 failed 里删掉它）", "", 0
 	}
 	if r.State == stDocs && r.Version == version {
 		head, err := s.Gitx.Git(p.Dir, "rev-parse", "HEAD")
 		if err != nil || head == r.Head || docsTodoOpen(p, version) {
-			return version + " 的说明书检查没过，等「待做」里那一条修好合并", ""
+			return version + " 的说明书检查没过，等「待做」里那一条修好合并", "", 0
 		}
 	}
-	why, err = s.ciGreen(ctx, repo)
-	if err != nil {
-		return "查不了公开仓 " + repo + " 的 CI：" + err.Error(), ""
+	if !fresh {
+		why, err = s.ciGreen(ctx, repo)
+		if err != nil {
+			return "查不了公开仓 " + repo + " 的 CI：" + err.Error(), "", 0
+		}
+		if why != "" {
+			return why, "", 0
+		}
 	}
-	return why, version
+	if n := st.ActiveJobs(); n > 0 {
+		r.Wait = version
+		return waitNote(p.Name, version, n), version, n
+	}
+	return "", version, 0
 }
 
 // observed：self_project 要本机这一代观察期过了没变差，默认分支上比它新的只能是文档（Markdown），不然发出去的是没在本机观察过的代码。

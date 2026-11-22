@@ -209,11 +209,7 @@ func (a *Service) StopJob(st *state.State, j *state.Job) (string, error) {
 		a.Finish(st, j, state.StatusKilled, "被 agentq stop 停止："+msg)
 		return fmt.Sprintf("任务 %s 已收尾，%s", j.ID, msg), state.Save(a.StatePath(), st)
 	}
-	hard := proc.KillGroup(j.PID, proc.KillGrace)
-	how := "SIGTERM"
-	if hard {
-		how = "SIGTERM 后 SIGKILL"
-	}
+	how := a.killJob(j)
 	return a.finishStopped(st, j, how)
 }
 
@@ -280,7 +276,7 @@ func LastTaskJob(st *state.State, p backlog.Project, it backlog.Item) *state.Job
 
 const (
 	patrolAnalyzeTimeout = 30 * time.Minute
-	pmTimeout            = 40 * time.Minute // 产品经理调研：读项目、搜几轮网页，回合和预算先收住，这里兜底
+	pmTimeout            = 90 * time.Minute // 产品经理调研：分几路搜、回头核实出处、有界面的看截图，回合和预算先收住，这里兜底
 )
 
 // JobTimeout：夜班、复盘用各自的超时（一跑就是几个小时），巡逻分析、Telegram 对话、产品经理调研各有固定超时，待做任务用 timeout。
@@ -375,11 +371,7 @@ func (a *Service) EnforceTimeouts(st *state.State) int {
 			n++
 			continue
 		}
-		hard := proc.KillGroup(j.PID, proc.KillGrace)
-		how := "SIGTERM"
-		if hard {
-			how = "SIGTERM 后 SIGKILL"
-		}
+		how := a.killJob(j)
 		a.Logf("任务 %s 运行超过 %s，已对进程组 %d 发 %s", j.ID, textfmt.FormatDuration(limit), j.PID, how)
 		a.Finish(st, j, state.StatusTimeout, "运行超过 "+textfmt.FormatDuration(limit)+"，已终止（"+how+"）")
 		n++

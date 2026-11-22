@@ -8,7 +8,7 @@ StartLimitIntervalSec=0
 Type=oneshot
 ExecStart="/bin/sh" "/srv/agentq-home/.agentq/tick-guard.sh"
 Environment="HOME=/srv/agentq-home"
-Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/srv/agentq-home/.cargo/bin:/srv/agentq-home/go/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 StandardOutput=append:/srv/agentq-home/.agentq/launchd.log
 StandardError=append:/srv/agentq-home/.agentq/launchd.log
 KillMode=process
@@ -36,7 +36,7 @@ StartLimitIntervalSec=0
 Type=oneshot
 ExecStart="/srv/agentq-home/.local/bin/agentq" "night" "--scheduled"
 Environment="HOME=/srv/agentq-home"
-Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/srv/agentq-home/.cargo/bin:/srv/agentq-home/go/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 StandardOutput=append:/srv/agentq-home/.agentq/launchd.log
 StandardError=append:/srv/agentq-home/.agentq/launchd.log
 KillMode=process
@@ -62,7 +62,7 @@ StartLimitIntervalSec=0
 Type=oneshot
 ExecStart="/srv/agentq-home/.local/bin/agentq" "review" "--scheduled"
 Environment="HOME=/srv/agentq-home"
-Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/srv/agentq-home/.cargo/bin:/srv/agentq-home/go/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 StandardOutput=append:/srv/agentq-home/.agentq/launchd.log
 StandardError=append:/srv/agentq-home/.agentq/launchd.log
 KillMode=process
@@ -90,7 +90,7 @@ Restart=always
 RestartSec=10
 ExecStart="/srv/agentq-home/.local/bin/agentq" "listen"
 Environment="HOME=/srv/agentq-home"
-Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/srv/agentq-home/.cargo/bin:/srv/agentq-home/go/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 StandardOutput=append:/srv/agentq-home/.agentq/launchd.log
 StandardError=append:/srv/agentq-home/.agentq/launchd.log
 KillMode=process
@@ -108,7 +108,7 @@ StartLimitIntervalSec=0
 Type=oneshot
 ExecStart="/srv/agentq-home/.local/bin/agentq" "maintenance" "backup"
 Environment="HOME=/srv/agentq-home"
-Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/srv/agentq-home/.cargo/bin:/srv/agentq-home/go/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 StandardOutput=append:/srv/agentq-home/.agentq/backup.log
 StandardError=append:/srv/agentq-home/.agentq/backup.log
 KillMode=process
@@ -135,7 +135,7 @@ StartLimitIntervalSec=0
 Type=oneshot
 ExecStart="/bin/sh" "/srv/agentq-home/.local/share/agentq/support/scripts/watchdog.sh"
 Environment="HOME=/srv/agentq-home"
-Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+Environment="PATH=/srv/agentq-home/.local/bin:/srv/agentq-home/.npm-global/bin:/srv/agentq-home/.cargo/bin:/srv/agentq-home/go/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 StandardOutput=append:/srv/agentq-home/.agentq/watchdog.log
 StandardError=append:/srv/agentq-home/.agentq/watchdog.log
 KillMode=process

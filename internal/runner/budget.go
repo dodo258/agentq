@@ -128,10 +128,7 @@ func (a *Service) CheckLiveBudget(st *state.State) {
 		if u == nil || u.CostUnknown || u.CostUSD < limit || a.JobLive(j) != proc.ProcOurs {
 			continue
 		}
-		how := "SIGTERM"
-		if proc.KillGroup(j.PID, proc.KillGrace) {
-			how = "SIGTERM 后 SIGKILL"
-		}
+		how := a.killJob(j)
 		a.Logf("任务 %s 花到 $%.2f，超过预算 %s，已发 %s（后端 %s 没有硬上限）", j.ID, u.CostUSD, backend.BudgetLabel(limit), how, be.Name())
 		status, summary := a.budgetResult(st, j, "")
 		a.Finish(st, j, status, summary)
@@ -142,11 +139,7 @@ func (a *Service) CheckLiveBudget(st *state.State) {
 // 不是用户 stop：状态记中断、不用 statusKilled（孤儿逻辑、status 和 new 的收尾都把 statusKilled 当成用户的决定）；
 // 不计连环失败，巡逻不再报。new 没有 BACKLOG 条目可标，多出的目录和用户停掉时一样不自动做。
 func (a *Service) autoStopRunaway(st *state.State, j *state.Job, h backend.ProgressHit) {
-	hard := proc.KillGroup(j.PID, proc.KillGrace)
-	how := "SIGTERM"
-	if hard {
-		how = "SIGTERM 后 SIGKILL"
-	}
+	how := a.killJob(j)
 	j.AutoStop = h.Signal
 	why := backend.ProgressNames[h.Signal] + "，" + h.Evidence
 	switch j.Kind {

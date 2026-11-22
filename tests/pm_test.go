@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"agentq/internal/backend"
-	"agentq/internal/pm"
 	"agentq/internal/state"
 	"agentq/internal/testkit"
 )
@@ -132,7 +131,8 @@ func pmMerge(t *testing.T, e *testEnv, dir, title, branch, file string) {
 	}
 }
 
-// 待做清空、「建议」里没有它提过没回的才起（别人提的建议不挡）；14 天内不重复；它提的还没回不起；回完了、满 14 天、又做完一版再起。
+// 待做清空、「建议」里没有它提过没回的才起（别人提的建议不挡）；它提的还没回，又做完一版也不起；
+// 回完了、调研之后有过新合并就再起，不等 14 天（时间不往前拨）；之后没有新合并不起。
 func TestPMWhenTodoEmpty(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]any{"pm_enabled": true})
@@ -157,20 +157,16 @@ func TestPMWhenTodoEmpty(t *testing.T) {
 	testkit.GitT(t, e.home, dir, "commit", "-qam", "勾掉")
 	e.mustRun("tick")
 	j := pmRan(t, e, 1)
-	if p := promptOf(t, e, j); !strings.Contains(p, "待做都做完了") {
-		t.Errorf("%s", p)
+	if p := promptOf(t, e, j); !strings.Contains(p, "待做都做完了") || strings.Contains(p, "第 4 路") {
+		t.Errorf("没有界面文件的项目不带界面那一路：%s", p)
 	}
 	if got := suggestNums(e.backlogOf(dir)); len(got) != 3 {
 		t.Fatalf("别处的 1 条加它的 2 条：%v", got)
 	}
-	// 14 天内又做完一版：不起
+	// 它提的两条还没回，又做完一版：不起
 	pmMerge(t, e, dir, "第三条", "agent/t-c", "c.txt")
 	pmRan(t, e, 1)
-	// 满 14 天：它提的两条还没回，不起
-	e.later(pm.Every + time.Hour)
-	e.mustRun("tick")
-	pmRan(t, e, 1)
-	// 用户回了（这里直接删掉那两行）：起
+	// 用户回了（这里直接删掉那两行）：当天就再起，不等 14 天
 	var kept []string
 	for _, l := range strings.Split(e.backlogOf(dir), "\n") {
 		if !strings.Contains(l, "产品经理调研") {
@@ -181,7 +177,7 @@ func TestPMWhenTodoEmpty(t *testing.T) {
 	testkit.GitT(t, e.home, dir, "commit", "-qam", "回了")
 	e.mustRun("tick")
 	pmRan(t, e, 2)
-	// 同一天里再没新合并：不起
+	// 再没新合并：不起
 	e.mustRun("tick")
 	pmRan(t, e, 2)
 }
@@ -248,7 +244,7 @@ func TestPMSkippedProjects(t *testing.T) {
 	pmRan(t, e, 0)
 }
 
-// 模型没给出处的不写；一条合格的都没有就不写、不推，当天汇总留一句，14 天后再看。
+// 模型没给出处的不写；一条合格的都没有就不写、不推，当天汇总留一句，又做完一版再看。
 func TestPMDropsUnsourced(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]any{"pm_enabled": true})

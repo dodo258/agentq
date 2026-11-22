@@ -188,3 +188,53 @@ func (a *Service) FindLostClaude(j *state.Job) (int, error) {
 		time.Sleep(JobLookupGap)
 	}
 }
+
+// KillStrays 清掉任务拉起、但不在 CLI 进程组里的进程：后台工具给命令开了新进程组，或者命令自己 setsid、set -m 了，
+// 对 CLI 进程组发信号够不着它们，CLI 结束后就成了没人管的孤儿（长跑、服务一直占着机器）。
+// 认法同 KillLostJob：环境里有这个任务的 AGENTQ_JOB，且是这个 HOME 下的（别的安装可能有同名的任务）；外壳不算，它等 CLI 退出后自己走。
+// macOS 上系统自带命令看不到环境，认不出就不杀。返回清了几个进程组。
+func (a *Service) KillStrays(j *state.Job) int {
+	_, others, err := a.jobProcs(j)
+	if err != nil {
+		a.Logf("任务 %s：查它留下的进程失败，没清：%v", j.ID, err)
+		return 0
+	}
+	others = slices.DeleteFunc(others, func(p JobProc) bool { return p.pgid == j.PID || p.pid == os.Getpid() })
+	if len(others) == 0 {
+		return 0
+	}
+	pids := make([]string, 0, len(others))
+	for _, p := range others {
+		pids = append(pids, strconv.Itoa(p.pid))
+	}
+	mine, err := proc.EnvMarkedPIDs(pids, "HOME="+a.Home)
+	if err != nil {
+		a.Logf("任务 %s：查它留下的进程失败，没清：%v", j.ID, err)
+		return 0
+	}
+	pgids := map[int]bool{}
+	for _, p := range others {
+		if slices.Contains(mine, strconv.Itoa(p.pid)) {
+			pgids[p.pgid] = true
+		}
+	}
+	for pgid := range pgids {
+		how := "SIGTERM"
+		if proc.KillGroup(pgid, proc.LeftoverGrace) {
+			how = "SIGTERM 后 SIGKILL"
+		}
+		a.Logf("任务 %s 拉起的进程组 %d 不在 %s 的进程组里，还在跑，已发 %s", j.ID, pgid, a.BackendFor(j.Backend).Name(), how)
+	}
+	return len(pgids)
+}
+
+// killJob 停掉在跑的任务：对 CLI 的进程组发 SIGTERM，KillGrace 后还在就 SIGKILL，再清它拉起、在别的进程组里的进程（KillStrays）。
+// 返回写进摘要的做法。
+func (a *Service) killJob(j *state.Job) string {
+	how := "SIGTERM"
+	if proc.KillGroup(j.PID, proc.KillGrace) {
+		how = "SIGTERM 后 SIGKILL"
+	}
+	a.KillStrays(j)
+	return how
+}

@@ -60,7 +60,7 @@ func TestPlistContent(t *testing.T) {
 		"<string>/bin/sh</string>\n\t\t<string>" + h + "/.agentq/tick-guard.sh</string>\n\t</array>",
 		"<key>StartInterval</key>\n\t<integer>300</integer>",
 		"<key>RunAtLoad</key>\n\t<true/>",
-		h + "/.local/bin:" + h + "/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>",
+		h + "/.local/bin:" + h + "/.npm-global/bin:" + h + "/.cargo/bin:" + h + "/go/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>",
 		"<key>StandardOutPath</key>\n\t<string>" + h + "/.agentq/launchd.log</string>",
 		"<key>StandardErrorPath</key>\n\t<string>" + h + "/.agentq/launchd.log</string>",
 	} {

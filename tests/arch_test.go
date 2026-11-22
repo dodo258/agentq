@@ -47,7 +47,7 @@ var archAllowed = map[string]string{
 	"chat":           "textfmt fsx proc config env backend gitx state backlog telegram ledger service notify gate runner orphan discuss suggest",
 	"stats":          "textfmt config env backend state ledger",
 	"evolve":         "textfmt fsx proc config env backend state backlog ledger notify gate suggest",
-	"pm":             "textfmt fsx proc config env backend state backlog ledger notify runner suggest",
+	"pm":             "textfmt fsx proc config env backend gitx state backlog ledger notify gate runner suggest",
 	"release":        "textfmt fsx proc config env gitx state backlog notify evolve",
 	"sched":          "textfmt fsx config env backend state backlog telegram ledger notify gate runner orphan discuss newproj suggest routine patrol evolve pm release chat",
 	"setup":          "fsx proc config backend state service envlayer",

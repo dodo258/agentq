@@ -266,6 +266,7 @@ claude 正常退出（`is_error` 为假）不一定是做完了：任务用后�
 - 每个任务启动时记下开机时间（macOS 读 `kern.boottime`，Linux 读 `/proc/stat` 的 `btime`）。收尾时和现在相差超过 60 秒且进程已不在，就是机器重启过：不碰进程组。claude 重启前已写好结果的照常按结果收尾，否则记中断，摘要写「机器重启过…」。这一条仍标进行中、有会话 id、本身不是续跑的，用同一会话自动续跑一次。重启造成的中断不算连环失败。
 - 开机时间变了但进程还在，按校时处理，更新记录，照常看着。读不出开机时间时不判断重启，但清进程组仍要核对下面的标记。
 - claude 退出后它拉起的子进程还在同一进程组里时，外壳等到 claude 退出就对进程组发 SIGTERM，5 秒后仍在就 SIGKILL，日志在 `launchd.log`。
+- 任务超时、被 stop、撞预算或失控被停，以及正常收尾时，它拉起、但在别的进程组里的进程（后台命令自己开了进程组、`setsid`）也一起清：环境里有 `AGENTQ_JOB=<任务id>`、`HOME` 是这台安装的，对它所在的进程组发 SIGTERM，5 秒后仍在就 SIGKILL，日志记「拉起的进程组 N 不在 claude 的进程组里」。系统自带命令认不出，不杀。
 - tick 收尾时组里还有进程（外壳没了、离退出可能已经很久），只有组里有进程带着这个任务的标记才发信号：环境里有 `AGENTQ_JOB=<任务id>`（macOS 用 `ps -E` 看，Linux 读 `/proc/<pid>/environ`）。没有标记就只记一行日志不杀。macOS 的系统自带命令（`/bin/zsh`、`/bin/sleep` 等）`ps` 看不到环境变量，组里只剩它们时认不出，不杀。
 
 ## 时钟跳变
@@ -297,8 +298,8 @@ claude 正常退出（`is_error` 为假）不一定是做完了：任务用后�
 - `PATH`、`HOME`、`USER`、`LOGNAME`、`LANG`、`LC_*`、`TMPDIR`、`SHELL`、`SSH_AUTH_SOCK`；
 - `CLAUDE_CONFIG_DIR`、`CLAUDE_CODE_OAUTH_TOKEN`；
 - 代理 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY`、`ALL_PROXY` 及小写形式；
-- agentq 自己的 `AGENTQ_*`（如 `AGENTQ_JOB`）。
+- agentq 自己的 `AGENTQ_*`。`AGENTQ_JOB` 不从调用方继承：CLI 拿到的是这个任务自己的 id，门的进程是 `gate-<任务id>`；任务里执行 `agentq run` 派出的任务、起的门都不带派它的任务的标记，那个任务收尾或被停时不会被当成它留下的进程清掉。
 
 所以 `ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL` 等 `ANTHROPIC_*` 不会让任务改走 API 计费或别的账号，Claude 会话注入的 `CLAUDECODE`、`CLAUDE_CODE_*` 也不会让任务以为自己是子会话。任务要用别的变量（比如某个服务的令牌），在项目里自己配置。
 
-服务（launchd、systemd）只声明 `HOME` 和 `PATH`，不继承安装 shell 的 token 或代理变量。
+服务（launchd、systemd）只声明 `HOME` 和 `PATH`，不继承安装 shell 的 token 或代理变量。服务的 `PATH` 是 `~/.local/bin`、`~/.npm-global/bin`、`~/.cargo/bin`、`~/go/bin`、`/opt/homebrew/bin`、`/usr/local/bin` 和系统目录，不读 shell 配置；工具在别处（nvm、pyenv 这类）的，在项目的 `.agentq/verify` 里自己补 `PATH`。

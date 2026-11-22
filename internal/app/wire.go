@@ -125,6 +125,7 @@ func Wire(a *App, assets Assets) *App {
 	a.PM = orNew(a.PM)
 	a.PM.Env = a.Env
 	a.PM.Backlog = a.Backlog
+	a.PM.Gitx = a.Gitx
 	a.PM.Ledger = a.Ledger
 	a.PM.Notify = a.Notify
 	a.PM.Runner = a.Runner

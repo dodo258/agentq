@@ -127,9 +127,13 @@ func (a *Service) FinishRebooted(st *state.State, j *state.Job) {
 
 // CleanupGroup：claude 已退出但它拉起的子进程还在同一进程组里时，发 SIGTERM 清掉。
 // 平时任务外壳在 claude 退出时已经清过；走到这里多半是外壳没了，离 claude 退出可能已经很久，
-// 组号可能已被别的程序占用，所以组里要有带这个任务标记的进程才杀。
+// 组号可能已被别的程序占用，所以组里要有带这个任务标记的进程才杀。不在这个组里的（KillStrays）也一起清。
 func (a *Service) CleanupGroup(j *state.Job) {
-	if j.PID <= 0 || !proc.GroupAlive(j.PID) {
+	if j.PID <= 0 {
+		return
+	}
+	defer a.KillStrays(j)
+	if !proc.GroupAlive(j.PID) {
 		return
 	}
 	ok, err := proc.GroupMarked(j.PID, j.ID)

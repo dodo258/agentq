@@ -110,6 +110,80 @@ func TestCleanupGroupNeedsMarker(t *testing.T) {
 	}
 }
 
+// 任务拉起、自己开了新进程组的长跑（后台工具开新进程组、setsid、set -m）：超时杀 CLI 进程组够不着它，
+// 11-21 huitai 的 6 小时长跑在任务超时被杀后成了孤儿接着跑。超时和正常收尾都要按环境标记把它清掉；
+// 别的安装（HOME 不同）的同名任务、别的任务的进程不碰。
+func TestKillStraysOutsideGroup(t *testing.T) {
+	a, out := newTestApp(t)
+	helper := func(id, home string, argv ...string) int {
+		env := []string{"AGENTQ_TEST_HELPER=1", proc.JobEnv + "=" + id}
+		if home != "" {
+			env = append(env, "HOME="+home)
+		}
+		return startGroup(t, env, os.Args[0], append([]string{"-test.run=^TestHelperSleep$", "--"}, argv...)...)
+	}
+	j := &Job{ID: "1121-100402-alpha", Project: "alpha", ProjectDir: t.TempDir(), Status: state.StatusRunning, StartedAt: a.Now().Add(-5 * time.Hour)}
+	os.MkdirAll(a.JobDir(j.ID), 0o755)
+	j.PID = helper(j.ID, a.Home, proc.NameMarker(j.Project)+"甲")
+	stray := helper(j.ID, a.Home)
+	otherHome := helper(j.ID, "")
+	otherJob := helper(j.ID+"-2", a.Home)
+	st := &state.State{Jobs: []*Job{j}}
+	if n := a.Runner.EnforceTimeouts(st); n != 1 || j.Status != state.StatusTimeout {
+		t.Fatalf("应按超时收尾：%d %+v\n%s", n, j, out)
+	}
+	if !proc.WaitGroupGone(j.PID, 3*time.Second) {
+		t.Error("CLI 的进程组应已被杀")
+	}
+	if !proc.WaitGroupGone(stray, 8*time.Second) {
+		t.Errorf("不在 CLI 进程组里、带这个任务标记的长跑应被清掉：\n%s", out)
+	}
+	if !proc.GroupAlive(otherHome) || !proc.GroupAlive(otherJob) {
+		t.Errorf("别的 HOME 下同名任务、别的任务的进程不该杀：\n%s", out)
+	}
+	if !strings.Contains(out.String(), "不在 claude 的进程组里") {
+		t.Errorf("日志要记下清了哪个进程组：\n%s", out)
+	}
+
+	// 正常收尾（CLI 自己退出了）时也清
+	out.Reset()
+	k := &Job{ID: "1121-100403-alpha", Project: "alpha"}
+	k.PID = startGroup(t, nil, "/bin/sh", "-c", "exit 0")
+	proc.WaitGroupGone(k.PID, 3*time.Second)
+	stray = helper(k.ID, a.Home)
+	a.Runner.CleanupGroup(k)
+	if !proc.WaitGroupGone(stray, 8*time.Second) {
+		t.Errorf("CLI 退出后留在别的进程组里的长跑应被清掉：\n%s", out)
+	}
+}
+
+// 对话任务里执行 agentq run 派出的任务：它的外壳是 agentq 按 ChildEnv 起的，不该带着对话任务的 AGENTQ_JOB，
+// 不然对话任务一收尾，KillStrays 就把派出任务的外壳当成对话任务留下的进程杀掉（审查复现过）。
+func TestKillStraysSparesDispatchedShell(t *testing.T) {
+	a, out := newTestApp(t)
+	c := &Job{ID: "1121-100500-chat", Project: "chat"}
+	t.Setenv("HOME", a.Home)
+	t.Setenv(proc.JobEnv, c.ID)
+	t.Setenv("AGENTQ_TEST_HELPER", "1")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperSleep$", "--", "_job", "/x/jobs/1121-100501-alpha", "/proj")
+	cmd.Env = proc.ChildEnv() // 和 runner.StartJob 起外壳一样
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	go cmd.Wait()
+	shell := cmd.Process.Pid
+	t.Cleanup(func() { syscall.Kill(-shell, syscall.SIGKILL) })
+	time.Sleep(200 * time.Millisecond)
+	c.PID = startGroup(t, nil, "/bin/sh", "-c", "exit 0") // 对话任务的 CLI 已经退出
+	proc.WaitGroupGone(c.PID, 3*time.Second)
+	a.Runner.CleanupGroup(c)
+	time.Sleep(300 * time.Millisecond)
+	if !proc.GroupAlive(shell) || strings.Contains(out.String(), "已发 SIGTERM") {
+		t.Errorf("派出的任务的外壳不该被对话任务收尾时杀掉：\n%s", out)
+	}
+}
+
 // 任务启动后机器重启过（开机时间不一致）：记下的 pid/组号可能已属于别的程序，不清进程组，任务记中断。
 func TestReapAfterReboot(t *testing.T) {
 	a, out := newTestApp(t)

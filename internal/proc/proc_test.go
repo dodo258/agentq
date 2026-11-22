@@ -80,12 +80,14 @@ func TestChildEnvWhitelist(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-x")
 	t.Setenv("SOME_SECRET", "s")
 	t.Setenv("AGENTQ_KEEP_ME", "1")
+	t.Setenv(JobEnv, "1121-100500-chat") // 调用方是某个任务（对话任务里执行 agentq run）
 	t.Setenv("CLAUDE_CONFIG_DIR", "/cfg")
 	t.Setenv("LC_CTYPE", "UTF-8")
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
 	env := "\n" + strings.Join(ChildEnv(), "\n")
-	for _, bad := range []string{"CLAUDECODE=", "CLAUDE_CODE_SESSION_ID=", "ANTHROPIC_BASE_URL=", "ANTHROPIC_API_KEY=", "SOME_SECRET="} {
-		if strings.Contains(env, "\n"+bad) {
+	backend := "\n" + strings.Join(BackendEnv(nil), "\n")
+	for _, bad := range []string{"CLAUDECODE=", "CLAUDE_CODE_SESSION_ID=", "ANTHROPIC_BASE_URL=", "ANTHROPIC_API_KEY=", "SOME_SECRET=", JobEnv + "="} {
+		if strings.Contains(env, "\n"+bad) || strings.Contains(backend, "\n"+bad) {
 			t.Errorf("应去掉 %s", bad)
 		}
 	}

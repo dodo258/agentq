@@ -87,9 +87,12 @@ func (a *Service) GuardFailsPath() string { return filepath.Join(a.DataDir(), "g
 
 func (a *Service) LaunchdDomain() string { return fmt.Sprintf("gui/%d", os.Getuid()) }
 
+// LaunchdPATH 是服务（以及它拉起的任务、门）拿到的 PATH。服务不读 shell 配置，用户级工具链（rustup 的 cargo、go install 的程序）
+// 要写在这里，不然门脚本在终端里找得到、在后台找不到。
 func (a *Service) LaunchdPATH() string {
 	return strings.Join([]string{
 		filepath.Join(a.Home, ".local", "bin"), filepath.Join(a.Home, ".npm-global", "bin"),
+		filepath.Join(a.Home, ".cargo", "bin"), filepath.Join(a.Home, "go", "bin"),
 		"/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
 	}, ":")
 }

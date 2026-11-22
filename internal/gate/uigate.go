@@ -69,6 +69,9 @@ func isUIFile(path string, suffixes []string) bool {
 	return slices.ContainsFunc(suffixes, func(s string) bool { return s != "" && strings.HasSuffix(path, s) })
 }
 
+// IsUIFile：按默认后缀算不算界面文件（产品经理调研判断项目有没有界面用，和界面门同一份规则）。
+func IsUIFile(path string) bool { return isUIFile(path, defaultUIFiles) }
+
 // uiFiles 读默认分支上配的后缀，任务改不了。没配、读不了、写坏了都用默认的。
 func (g uiGate) uiFiles(c Candidate) []string {
 	raw, err := g.d.Git(context.Background(), c.ProjectDir, "show", c.Base+":"+GatesFile)
