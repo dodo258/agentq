@@ -476,18 +476,13 @@ func (a *Service) withDoneCommit(j *state.Job, summary string) string {
 	return "合并提交 " + c + "；" + summary
 }
 
-// doneCommit：「已完成」里同标题条目写的合并提交。「待做」里还有同标题的条目（比如标了卡住没合并）就不取，免得带出以前同名条目的旧号。
+// doneCommit：「已完成」里同标题条目写的合并提交（见 backlog.FinishedCommit）。
 func (a *Service) doneCommit(j *state.Job) string {
 	text, err := a.jobBacklog(j)
 	if err != nil {
 		return ""
 	}
-	for _, it := range backlog.ParseBacklog(text) {
-		if it.Title == j.Title {
-			return ""
-		}
-	}
-	return backlog.DoneMergeCommit(text, j.Title)
+	return backlog.FinishedCommit(text, j.Title)
 }
 
 // noSessionNote：不能续跑时写进摘要的话。后端本来就不能续跑的，这一条由接手任务从分支现状接着做（见 internal/orphan/orphan.go）。

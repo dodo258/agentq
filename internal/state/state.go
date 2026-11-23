@@ -255,6 +255,8 @@ type Job struct {
 	Gate *GateRecord `json:"gate,omitempty"`
 	// GateRound：这个任务是门退回的第几轮，0 是第一次做。
 	GateRound int `json:"gate_round,omitempty"`
+	// GateConflicts：这一轮之前连续几次只因和最新默认分支有冲突被门退回（不算进 GateRound）。真被检查退回的那次清零。
+	GateConflicts int `json:"gate_conflicts,omitempty"`
 	// GateScope、GateScopeFrom：这一轮是门退回限定了范围的：只该改 GateScope 里的文件，scope 门比较 GateScopeFrom（上一轮过门看的分支尖）之后的改动。不是退回的任务为空。
 	GateScope     []string `json:"gate_scope,omitempty"`
 	GateScopeFrom string   `json:"gate_scope_from,omitempty"`
@@ -687,6 +689,8 @@ func JobLabel(j *Job) string {
 			return "门没过"
 		case GateAbandoned:
 			return "门没过，已放弃"
+		case GateSuperseded:
+			return "门没过，已被取代"
 		}
 	}
 	return StatusLabel(j.Status)
@@ -752,6 +756,8 @@ const (
 	GateReturned  = "returned"  // 退回任务接着改
 	GateStuck     = "stuck"     // 判不了或退回用完了，分支留着，等用户定
 	GateAbandoned = "abandoned" // 用户放弃，分支留着
+	// GateSuperseded：卡在门上时同一条目由后来的任务做完合并了（或条目已经勾成完成、写着合并提交），不用再定。
+	GateSuperseded = "superseded"
 )
 
 // GateReady 是任务写的 ready.json：做到分支可合并的交付单。
@@ -807,8 +813,25 @@ type GateRecord struct {
 	Rerun     bool   `json:"rerun,omitempty"`
 	RerunHead string `json:"rerun_head,omitempty"`
 	Reruns    int    `json:"reruns,omitempty"`
+	// Conflicts：这次退回只因和最新默认分支有冲突时，是连续第几次（不占退回轮数）；被检查退回的是 0。
+	Conflicts int `json:"conflicts,omitempty"`
 	// Scope：退回时引擎算的范围（没过的门点名的文件，没点名就是这一轮改的文件，加同目录的测试文件，多了按目录折叠），下一轮只该改这些。
 	Scope []string `json:"scope,omitempty"`
+	// SupersededBy、SupersededMerge：已被取代时，是哪个任务（从 BACKLOG「已完成」认出来的没有任务号）、哪个合并提交。
+	SupersededBy    string `json:"superseded_by,omitempty"`
+	SupersededMerge string `json:"superseded_merge,omitempty"`
+}
+
+// SupersededText：被谁取代，给人看的半句，如「任务 1123-002603-huitai（合并提交 202013523e5c）」。
+func (g *GateRecord) SupersededText() string {
+	merge := g.SupersededMerge
+	if len(merge) > 12 {
+		merge = merge[:12]
+	}
+	if g.SupersededBy == "" {
+		return "已完成的同一条目（合并提交 " + merge + "）"
+	}
+	return "任务 " + g.SupersededBy + "（合并提交 " + merge + "）"
 }
 
 // GateTally 是一道门跑的次数。

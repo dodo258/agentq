@@ -328,21 +328,30 @@ func directionNote(item string) string {
 }
 
 // carryGate：退回的任务接着做算下一轮，带上退回时定的范围和上一轮的分支尖（scope 门比较它之后的改动）；其余的续跑还是这一轮。
+// 只因和最新默认分支冲突退回的不算一轮，带上连续冲突了几次；被检查退回、卡在门上重做的从零数。
 func carryGate(j, orig *state.Job) {
 	j.GateRound, j.GateScope, j.GateScopeFrom = nextGate(orig)
-	if orig.Gate == nil { // 这一轮做到一半中断的续跑：进门前要过的门说明也算要过了
+	switch g := orig.Gate; {
+	case g == nil: // 这一轮做到一半中断的续跑：进门前要过的门说明也算要过了
 		j.NoteAsk = slices.Clone(orig.NoteAsk)
+		j.GateConflicts = orig.GateConflicts
+	case g.State == state.GateReturned:
+		j.GateConflicts = g.Conflicts
 	}
 }
 
-// nextGate：接着 orig 做的那一轮的轮数、范围和范围的起点。退回的算下一轮，带退回时定的范围（没定就不限定）；
+// nextGate：接着 orig 做的那一轮的轮数、范围和范围的起点。退回的算下一轮（只因冲突退回的还是这一轮），带退回时定的范围（没定就不限定）；
 // 这一轮做到一半中断的范围照旧；卡在门上的（用户去掉卡住标记重做）不再限定。
 func nextGate(orig *state.Job) (round int, scope []string, from string) {
 	if g := orig.Gate; g != nil && g.State == state.GateReturned {
-		if len(g.Scope) > 0 && g.Head != "" {
-			return g.Round + 1, slices.Clone(g.Scope), g.Head
+		round = g.Round + 1
+		if g.Conflicts > 0 {
+			round = g.Round
 		}
-		return g.Round + 1, nil, ""
+		if len(g.Scope) > 0 && g.Head != "" {
+			return round, slices.Clone(g.Scope), g.Head
+		}
+		return round, nil, ""
 	}
 	if orig.Gate == nil {
 		return orig.GateRound, slices.Clone(orig.GateScope), orig.GateScopeFrom
@@ -460,7 +469,7 @@ func (a *Service) Start(st *state.State, j *state.Job, prompt, resume string) (*
 	case state.KindDiscuss:
 		req = a.Hooks.DiscussRequest(bcfg, prompt, j.Project, session)
 	case state.KindPM:
-		req = a.Hooks.PMRequest(bcfg, prompt, j.Project, session)
+		req = a.Hooks.PMRequest(bcfg, prompt, j.Project, session, dir)
 	}
 	req.Dir, req.WorkDir = j.ProjectDir, dir
 	if delivers { // 合并前的独立审查是硬前提

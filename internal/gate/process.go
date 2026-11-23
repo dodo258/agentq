@@ -46,6 +46,8 @@ const (
 	ReadyFile = ".agentq/ready.json"
 	// MaxRounds：同一任务最多退回几轮。
 	MaxRounds = 2
+	// MaxConflicts：只因和最新默认分支有冲突，连续退回到第几次就停下等用户定。并行的任务先合了默认分支是常态，不占 MaxRounds。
+	MaxConflicts = 5
 	// maxCrashes：_gate 没留下结果就没了这么多次，算判不了。
 	maxCrashes = 3
 	// maxRebuilds：一次过门里 main 动过时最多重建几次候选，再动就排回队尾。
@@ -124,6 +126,8 @@ type RunResult struct {
 	Risk *RiskVerdict `json:"risk,omitempty"`
 	// Scope：没过（outFail）时引擎算的下一轮范围，见 scope.go。
 	Scope []string `json:"scope,omitempty"`
+	// Conflict：没过只是因为和最新默认分支有冲突（检查都还没跑），不是改动查出了问题。
+	Conflict bool `json:"conflict,omitempty"`
 }
 
 // Dir 是这个任务过门的目录。
@@ -147,11 +151,16 @@ func (a *Service) git(ctx context.Context, dir string, args ...string) (string, 
 }
 
 func (a *Service) gitIn(ctx context.Context, dir string, stdin []byte, args ...string) (string, error) {
+	return runGit(ctx, a.Home, dir, stdin, args...)
+}
+
+// runGit 是门用的 git：不跑钩子，HOME 用 home，最多等 gitWait。
+func runGit(ctx context.Context, home, dir string, stdin []byte, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, gitWait)
 	defer cancel()
 	// quotepath 关掉：不然中文文件名输出成带引号的八进制，拿去查、去撤都对不上
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.hooksPath=/dev/null", "-c", "core.quotepath=off"}, args...)...)
-	cmd.Env = gitx.GitEnv(a.Home)
+	cmd.Env = gitx.GitEnv(home)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -349,7 +358,7 @@ func (a *Service) build(ctx context.Context, dir string, p Plan) (Candidate, Run
 	}
 	conflict := func(why string, files []string) (Candidate, RunResult, bool) {
 		c, res, ok := fail(outFail, why)
-		res.Results[0].Files = files
+		res.Results[0].Files, res.Conflict = files, true
 		return c, res, ok
 	}
 	def := p.DefaultBranch

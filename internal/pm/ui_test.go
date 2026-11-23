@@ -30,6 +30,30 @@ func TestBuildPromptUI(t *testing.T) {
 			t.Errorf("缺 %q：\n%s", want, p)
 		}
 	}
+	// 起调研前截了图：列出每张的路径，要求逐张看，建议指到哪张截图的哪里；项目里存的截图降为参考
+	shots := []string{"/h/.agentq/jobs/1123-1-demo/screenshots/home.png", "/h/.agentq/jobs/1123-1-demo/screenshots/m/设置.png"}
+	p = BuildPrompt("demo", TriggerEmpty, nil, nil, &UI{Shots: []string{"docs/old.png"}, Captured: shots, Missed: "1 张截图有问题：m/设置.png 是空白的"})
+	for _, want := range []string{"在默认分支上跑 .agentq/ui 截了现在的界面，共 2 张，逐张用读文件打开看，每一张都要看",
+		"- " + shots[0] + "\n", "- " + shots[1] + "\n", "界面建议必须指到具体哪张截图的哪里：source 写截图路径，why 写图上哪个位置、看到的是什么",
+		"其中1 张截图有问题：m/设置.png 是空白的", "项目里还存着这些截图（可能过期，和刚截的对不上时以刚截的为准）：docs/old.png",
+		"官网截图、README 里的图、应用商店页", "不凭印象描述别人的界面"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("缺 %q：\n%s", want, p)
+		}
+	}
+	if strings.Contains(p, "没有现成截图") || strings.Contains(p, "这次没截到图") {
+		t.Errorf("截到了就不说没截图：\n%s", p)
+	}
+	// 没截到：写明原因，照旧看存的截图或界面代码
+	p = BuildPrompt("demo", TriggerEmpty, nil, nil, &UI{Missed: ".agentq/ui 没过：退出码 1（日志 ~/x/ui.log）"})
+	for _, want := range []string{"这次没截到图：.agentq/ui 没过：退出码 1（日志 ~/x/ui.log）。", "没有现成截图，就读界面代码"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("缺 %q：\n%s", want, p)
+		}
+	}
+	if strings.Contains(p, "逐张用读文件打开看") {
+		t.Errorf("没截到不要求逐张看：\n%s", p)
+	}
 	if !strings.Contains(Schema, `"ui":{"type":"string"}`) {
 		t.Errorf("结果要能带界面结论：%s", Schema)
 	}

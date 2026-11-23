@@ -32,7 +32,9 @@ import (
 //   - 观察期：升级后开始的 observeTasks 个任务结束，和升级前最近 baselineTasks 个比（失败、超时或卡在门上的比例，还在过门的不算、过门轮数）。
 //     变差就 rollback 回上一代、推通知，写一条待做去修；带着回滚过的提交的版本不再升，直到修它的那一条合并（或用户自己装上）。
 //     过门轮数只算升级后退回的：升级前退回、升级后接着做的任务，带过来的轮数不算（carriedRounds）。
-//     observeMaxDays 天还凑不够，按已有的判。有要做的事时不接新活，最多挡 holdMax。
+//     observeMaxDays 天还凑不够，按已有的判。有要做的事时不接新活，一直挡到空闲（在跑的任务有超时、退回有轮数上限，总能排空）。
+//   - 用户自己装的（scripts/update.sh、setup --yes）：tick 看到装着的和升级记录里最后装上的不一样，补记一条升级（manualWhy），
+//     从这时开始照样观察，变差照样回滚到上一代（recordManual）。
 //   - 每次演练、升级、留下、回滚、失败记一行 ~/.agentq/evolve/upgrades.jsonl，agentq evolve upgrades 看。
 const (
 	observeTasks   = 3
@@ -44,8 +46,6 @@ const (
 	versionWait    = 30 * time.Second
 	// tickWait：动安装引擎前最多等前一个 tick 跑完（巡逻里的漏洞检查最长 5 分钟）。
 	tickWait = 10 * time.Minute
-	// holdMax：有要做的升级或回滚时最多挡这么久的新活，等不到空闲就先接活。
-	holdMax = 2 * time.Hour
 	// worseBad：观察期里失败、超时或卡在门上至少这么多个、比例又比升级前高，才算变差（一两个偶然失败不回滚）。
 	worseBad = 2
 	// worseRounds：平均过门轮数比升级前多这么多就算变差。
@@ -203,9 +203,9 @@ func countable(j *state.Job) bool {
 	return false
 }
 
-// gateFailed：CLI 做完了，门判不了、退回用完（卡住等用户）或被放弃，和失败一样算。
+// gateFailed：CLI 做完了，门判不了、退回用完（卡住等用户）或被放弃，和失败一样算。卡住后被同一条目别的任务取代的，这个任务也没过门。
 func gateFailed(j *state.Job) bool {
-	return j.Gate != nil && (j.Gate.State == state.GateStuck || j.Gate.State == state.GateAbandoned)
+	return j.Gate != nil && (j.Gate.State == state.GateStuck || j.Gate.State == state.GateAbandoned || j.Gate.State == state.GateSuperseded)
 }
 
 func observe(jobs []*state.Job) observation {
@@ -276,7 +276,7 @@ func worse(before, after observation) (bool, string) {
 	return false, why
 }
 
-// openUpgrade：最近一次升级，后面还没有留下或回滚、装着的还是它（用户自己换过版本就不观察了）。没有返回 nil。
+// openUpgrade：最近一次升级，后面还没有留下或回滚、装着的还是它（用户自己换过版本，recordManual 补记了新的一条才接着观察）。没有返回 nil。
 func openUpgrade(evs []UpgradeEvent, version string) *UpgradeEvent {
 	for i := len(evs) - 1; i >= 0; i-- {
 		switch evs[i].Kind {
@@ -292,12 +292,49 @@ func openUpgrade(evs []UpgradeEvent, version string) *UpgradeEvent {
 	return nil
 }
 
+// manualWhy 标明这条升级是用户自己装的，tick 补记的。
+const manualWhy = "手动装的：tick 发现装着的和升级记录不一样，从这时开始观察"
+
+// recordedVersion：升级记录里最后装上的版本（演练、升级、留下、回滚之后装着的都是 To，没做成的不算）；没有记录是空的。
+func recordedVersion(evs []UpgradeEvent) string {
+	for i := len(evs) - 1; i >= 0; i-- {
+		switch evs[i].Kind {
+		case EvDrill, EvUpgrade, EvKept, EvRollback:
+			return evs[i].To
+		}
+	}
+	return ""
+}
+
+// recordManual：装着的这一代（提交 commit）和升级记录里最后装上的不一样，就是用户自己装的：补记一条升级，观察期从 now 开始。
+// 没有记录（还没升级过）、回滚后报不出装着哪一代的不补：没有可信的上一代可比。
+// agentq evolve apply 拿着升级锁时不补：它装完新的一代到写下记录之间，新的一代跑的 tick 会看到对不上。返回加上这一行的记录。
+func (s *Service) recordManual(ctx context.Context, dir, commit string, evs []UpgradeEvent, now time.Time) []UpgradeEvent {
+	from := recordedVersion(evs)
+	if from == "" || from == unknownPrev || from == s.Version {
+		return evs
+	}
+	if _, _, applying := fsx.LockHolder(s.upgradeLockPath()); applying {
+		return evs
+	}
+	if full, err := runGit(ctx, dir, "rev-parse", "--verify", "-q", commit+"^{commit}"); err == nil {
+		commit = full // 和自己长大的记录一样记完整提交；仓库里没有就记版本里的短号
+	}
+	ev := UpgradeEvent{At: now, Kind: EvUpgrade, From: from, To: s.Version, Commit: commit, Why: manualWhy}
+	s.appendUpgrade(ev)
+	s.Logf("自己长大：%s", eventLine(ev))
+	return append(evs, ev)
+}
+
 // ObservedCommit：本机这一代（源码构建 dev-<提交>）装上后观察期满了、没变差（最近一条升级、留下、回滚的记录是它的「留下」）时返回它的提交；
 // 否则返回空和原因。self_project 自动发版前看（见 internal/release）。
 func (s *Service) ObservedCommit() (commit, why string) {
 	m := devVersionRe.FindStringSubmatch(s.Version)
 	if m == nil {
 		return "", "本机这一代 " + s.Version + " 不是从提交构建的，没有观察期"
+	}
+	if m[2] != "" {
+		return "", "本机这一代 " + s.Version + " 带着未提交的改动构建，跑稳了也不能说明提交 " + m[1] + " 跑稳了"
 	}
 	evs, err := s.LoadUpgrades()
 	if err != nil {
@@ -409,6 +446,7 @@ func (s *Service) selfPlan(ctx context.Context, st *state.State, now time.Time) 
 	if err != nil {
 		return upgradePlan{Note: "升级记录读不了，先不升级：" + err.Error()}
 	}
+	evs = s.recordManual(ctx, p.Dir, m[1], evs, now)
 	pl, evs, done := s.observing(evs, st, now)
 	if done {
 		return pl
@@ -450,30 +488,8 @@ func (s *Service) selfPlan(ctx context.Context, st *state.State, now time.Time) 
 	return upgradePlan{Note: note}
 }
 
-// holdMark 记下这次升级（或回滚）从什么时候开始挡着接新活，超过 holdMax 就放开。
-type holdMark struct {
-	Key   string    `json:"key"`
-	Since time.Time `json:"since"`
-}
-
-func (s *Service) holdPath() string { return filepath.Join(s.evolveDir(), "hold.json") }
-
-// heldFor：这件事已经挡了多久；第一次挡（或 restart）就从现在算。
-func (s *Service) heldFor(key string, now time.Time, restart bool) time.Duration {
-	var h holdMark
-	if b, err := os.ReadFile(s.holdPath()); !restart && err == nil && json.Unmarshal(b, &h) == nil && h.Key == key && !h.Since.After(now) {
-		return now.Sub(h.Since)
-	}
-	if b, err := json.Marshal(holdMark{Key: key, Since: now}); err == nil {
-		if err := os.MkdirAll(s.evolveDir(), 0o700); err == nil {
-			_ = fsx.WriteFileAtomic(s.holdPath(), b) // 记不下就每次从现在算：最多是一直挡到空闲，和没有上限一样
-		}
-	}
-	return 0
-}
-
 // SelfUpdate：tick 在挑活之前调用（拿着 tick.lock）。有要做的升级或回滚时 hold 为真：这次不接新活，
-// 没有任务在跑、没有在过门的就起 agentq evolve apply 去做。挡了 holdMax 还没空闲就放开接活，等下次自然空闲。出错只记日志，不影响 tick。
+// 没有任务在跑、没有在过门的就起 agentq evolve apply 去做；不空闲就一直挡到空闲（和等发版一样：任务几乎不停，挡一阵就放开永远等不到空闲）。出错只记日志，不影响 tick。
 func (s *Service) SelfUpdate(st *state.State) (hold bool, note string) {
 	defer func() {
 		if p := recover(); p != nil {
@@ -488,7 +504,6 @@ func (s *Service) SelfUpdate(st *state.State) (hold bool, note string) {
 	}
 	pl := s.plan(ctx, st, now)
 	if pl.Action == "" {
-		_ = os.Remove(s.holdPath())
 		return false, pl.Note
 	}
 	what := "自己长大：升级到 " + short(pl.Commit)
@@ -500,19 +515,14 @@ func (s *Service) SelfUpdate(st *state.State) (hold bool, note string) {
 	case pl.Action == EvRollback:
 		what = "自己长大：回滚 " + s.Version
 	}
-	key := pl.Action + ":" + pl.Commit + pl.Release
 	_, _, applying := fsx.LockHolder(s.upgradeLockPath())
 	n := st.ActiveJobs()
-	if !applying && n == 0 { // 空闲：现在就做，挡新活从这时算起
+	if !applying && n == 0 { // 空闲：现在就做
 		if err := s.spawnApply(); err != nil {
 			s.Logf("自己长大：起不来 agentq evolve apply：%v", err)
 			return false, ""
 		}
-		s.heldFor(key, now, true)
 		return true, what + "：已开始（agentq evolve apply，日志 " + s.Tilde(s.upgradeLogPath()) + "），这次不接新活"
-	}
-	if s.heldFor(key, now, false) >= holdMax {
-		return false, fmt.Sprintf("%s，已经挡了 %s 新活还没空闲，先照常接活，下次空闲再做", what, holdMax)
 	}
 	if applying {
 		return true, what + "：正在做，这次不接新活"

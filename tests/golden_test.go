@@ -37,7 +37,7 @@ type filler struct{ n int }
 
 // goldenOptional 是老文件没有的键：为空时省略，黄金文件要证明老用户的字节不变，所以不填它们。写出来的样子由 TestGoldenBackendField 查。
 var goldenOptional = map[string]bool{"AutopushLog": true, "Backend": true, "Jobs[].Backend": true, "ProjectBackends": true, "Backends": true, "Usage.CostUnknown": true, "Jobs[].Usage.CostUnknown": true,
-	"Gate": true, "Jobs[].Gate": true, "GateRound": true, "Jobs[].GateRound": true, "GateScope": true, "Jobs[].GateScope": true, "GateScopeFrom": true, "Jobs[].GateScopeFrom": true, "NoteAsk": true, "Jobs[].NoteAsk": true, "GateContract": true, "Jobs[].GateContract": true, "Pending[].Card.GateJob": true, "Cards.value.GateJob": true, "Pending[].Card.MessageID": true, "Cards.value.MessageID": true,
+	"Gate": true, "Jobs[].Gate": true, "GateRound": true, "Jobs[].GateRound": true, "GateConflicts": true, "Jobs[].GateConflicts": true, "GateScope": true, "Jobs[].GateScope": true, "GateScopeFrom": true, "Jobs[].GateScopeFrom": true, "NoteAsk": true, "Jobs[].NoteAsk": true, "GateContract": true, "Jobs[].GateContract": true, "Pending[].Card.GateJob": true, "Cards.value.GateJob": true, "Pending[].Card.MessageID": true, "Cards.value.MessageID": true,
 	"DiscussKey": true, "Jobs[].DiscussKey": true, "Direction": true, "Jobs[].Direction": true, "Pending[].Card.DiscussKey": true, "Cards.value.DiscussKey": true}
 
 func goldenSkip(path string) bool {

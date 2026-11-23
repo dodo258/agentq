@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -500,4 +501,31 @@ func TestGateResultOlderThanLastSeen(t *testing.T) {
 	if cs, _ := r.s.LoadConstraints("web"); len(cs) != 1 {
 		t.Fatalf("改名后的门结果漏了：%+v", cs)
 	}
+}
+
+// 门卡住后、信号还没收（每小时一次）之前，同一条目由别的任务做完、门被标成已被取代：卡住的信号和领域账照样记。
+// 卡住时已经收过一次的，被取代后 meta.json 重写再收，不重复记。
+func TestSupersededStillCountsStuck(t *testing.T) {
+	r := newSigRig(t, nil)
+	end := r.now.Add(-time.Hour)
+	superseded := func(id string) *state.Job {
+		return &state.Job{ID: id, Project: "web", Fingerprint: "fp-" + id, Title: "按钮布局 " + id, Item: "按钮布局 —— 改（范围：web/）", EndedAt: &end, Status: state.StatusDone,
+			Gate: &state.GateRecord{State: state.GateSuperseded, Report: "退回 2 轮还没过", SupersededBy: "later", SupersededMerge: "202013523e5c"}}
+	}
+	r.meta(superseded("a")) // 收之前就被取代了
+	j := superseded("b")    // 卡住时收过一次
+	j.Gate.State = state.GateStuck
+	r.meta(j)
+	r.collect()
+	r.meta(superseded("b"))
+	r.collect()
+	stucks := r.signals(KindStuck)
+	if len(stucks) != 1 || stucks[0].Seen != 2 || !slices.Contains(stucks[0].Evidence, "任务 a（web）") || !slices.Contains(stucks[0].Evidence, "任务 b（web）") {
+		t.Fatalf("两个任务各记一次卡在门上：%+v", stucks)
+	}
+	stats := domainStats(r.store().Domains, r.now)
+	if len(stats) != 1 || stats[0].Domain != DomainFrontend || stats[0].Tasks != 2 || stats[0].Stuck != 2 {
+		t.Fatalf("领域账：%+v", stats)
+	}
+	r.noCLI()
 }

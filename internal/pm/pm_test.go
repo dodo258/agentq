@@ -3,6 +3,8 @@ package pm
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -71,12 +73,33 @@ func TestParseIdeasRunawayCap(t *testing.T) {
 }
 
 func TestRequestReadOnlyWeb(t *testing.T) {
-	req := Request(config.Default(), "p", "demo", "sid")
+	req := Request(config.Default(), "p", "demo", "sid", t.TempDir())
 	if req.Profile != backend.ProfileReadOnly || !req.Web || !req.NoExternalMCP || req.Must != backend.MustPM || req.Schema == "" || req.MaxTurns == 0 || req.BudgetUSD == 0 || req.Permission != "" {
 		t.Fatalf("%+v", req)
 	}
 	if req.Model != "sonnet" {
 		t.Errorf("模型：%s", req.Model)
+	}
+	if req.AddDirs != nil || req.Images != nil {
+		t.Errorf("没截图不加目录、不附图：%+v", req)
+	}
+}
+
+// 起调研前截了图：截图目录加进能读的目录（调研进程只读工作目录），截图附上；只开截图目录，不开整个任务目录。
+func TestRequestCapturedShots(t *testing.T) {
+	job := t.TempDir()
+	shots := filepath.Join(job, ShotsDir)
+	os.MkdirAll(filepath.Join(shots, "m"), 0o755)
+	for _, f := range []string{"b.png", "a.png", "m/c.png", "notes.txt"} {
+		os.WriteFile(filepath.Join(shots, f), []byte("x"), 0o644)
+	}
+	req := Request(config.Default(), "p", "demo", "sid", job)
+	if strings.Join(req.AddDirs, "|") != shots {
+		t.Errorf("能读的目录：%q", req.AddDirs)
+	}
+	want := []string{filepath.Join(shots, "a.png"), filepath.Join(shots, "b.png"), filepath.Join(shots, "m", "c.png")}
+	if strings.Join(req.Images, "|") != strings.Join(want, "|") {
+		t.Errorf("附图：%q", req.Images)
 	}
 }
 

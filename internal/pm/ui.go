@@ -1,6 +1,7 @@
 package pm
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,6 +19,9 @@ const (
 	uiSkill = "no-ai-look"
 	// checklistMax：审查表进提示词的上限。
 	checklistMax = 3000
+	// ShotsDir 是起调研前截的图在任务目录里的位置，跟任务目录按保留期一起清；uiWorkDir 放截图脚本的输出和一次性 worktree。
+	ShotsDir  = "screenshots"
+	uiWorkDir = "ui"
 )
 
 // shotExts 是算截图的图片后缀。
@@ -31,6 +35,57 @@ func (a *Service) uiOf(p backlog.Project) *UI {
 		return nil
 	}
 	return &UI{Checklist: a.checklist(p), Shots: shots(files)}
+}
+
+// captureUI：项目默认分支上有 .agentq/ui 就先跑一次，截现在的界面给调研看。截图放进这次调研的任务目录，所以先分好任务号，返回它；没跑是空的。
+// 超时和失败照界面门的规矩（gate.CaptureUI，超时用 verify_timeout）。没截到不挡调研：原因进 ui.Missed，提示词里写明，日志和当天汇总各记一句。
+// tick 拿着锁等它跑完：调研只在又做完一版、待做清空时起，截图脚本一般一两分钟。
+func (a *Service) captureUI(p backlog.Project, ui *UI) string {
+	branch, err := a.Gitx.DefaultBranch(p.Dir)
+	if err != nil {
+		if _, serr := os.Stat(filepath.Join(p.Dir, gate.UIScript)); serr == nil {
+			a.missed(p, ui, "", "认不出默认分支："+textfmt.OneLine(err.Error(), 160))
+		}
+		return ""
+	}
+	id, err := a.Runner.NewJobID(p.Name)
+	if err != nil {
+		a.missed(p, ui, "", "分不了任务目录："+textfmt.OneLine(err.Error(), 160))
+		return ""
+	}
+	dir := a.JobDir(id)
+	c, ran := gate.CaptureUI(context.Background(), gate.CaptureOpts{Home: a.Home, Project: p.Dir, Branch: branch,
+		WorkDir: filepath.Join(dir, uiWorkDir), Shots: filepath.Join(dir, ShotsDir), Mark: "pm-ui-" + id, Timeout: a.Cfg.VerifyTimeout.Duration})
+	if !ran {
+		os.RemoveAll(dir)
+		return ""
+	}
+	ui.Captured = c.Shots
+	if c.Problem != "" {
+		why := c.Problem
+		if c.Log != "" {
+			why += "（日志 " + a.Tilde(c.Log) + "）"
+		}
+		a.missed(p, ui, id, why)
+	}
+	if len(c.Shots) > 0 {
+		a.Logf("产品经理：%s 起调研前在 %s 上截了 %d 张界面图，在 %s", p.Name, branch, len(c.Shots), a.Tilde(filepath.Join(dir, ShotsDir)))
+	}
+	return id
+}
+
+// missed 记下这次截图的问题：一张没截到的写「这次没截到图」，截到了但有不合格的写明哪几张。
+func (a *Service) missed(p backlog.Project, ui *UI, id, why string) {
+	ui.Missed = why
+	msg := "产品经理：" + p.Name + " 这次没截到图：" + why
+	if len(ui.Captured) > 0 {
+		msg = "产品经理：" + p.Name + " 起调研前截的图里" + why
+	}
+	if id != "" {
+		msg += "（调研任务 " + id + "）"
+	}
+	a.Logf("%s", msg)
+	a.Ledger.AppendNightlyLine(a.Now(), msg)
 }
 
 // tracked：项目里 git 管的文件（相对项目目录）。读不了是空的，只少了按文件判断这一条。

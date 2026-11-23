@@ -175,7 +175,19 @@ func (g uiGate) baselineFiles(ctx context.Context, c Candidate) []string {
 
 // checkShots 查目录里的 PNG：返回相对路径（排好序）和有问题的。软链接不跟：可能指到项目外。
 func checkShots(dir string) ([]string, []string, error) {
-	var shots, problems []string
+	shots, err := pngFiles(dir)
+	var problems []string
+	for _, rel := range shots {
+		if why := shotProblem(filepath.Join(dir, rel)); why != "" {
+			problems = append(problems, rel+" "+why)
+		}
+	}
+	return shots, problems, err
+}
+
+// pngFiles：目录里的 PNG（相对路径，排好序）。软链接不跟：可能指到项目外。
+func pngFiles(dir string) ([]string, error) {
+	var shots []string
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -188,14 +200,10 @@ func checkShots(dir string) ([]string, []string, error) {
 			return err
 		}
 		shots = append(shots, rel)
-		if why := shotProblem(p); why != "" {
-			problems = append(problems, rel+" "+why)
-		}
 		return nil
 	})
 	sort.Strings(shots)
-	sort.Strings(problems)
-	return shots, problems, err
+	return shots, err
 }
 
 // shotProblem 解码一张 PNG，返回问题，没有就是空。

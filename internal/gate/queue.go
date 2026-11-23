@@ -227,7 +227,7 @@ func readResult(dir string) (RunResult, bool) {
 	return res, true
 }
 
-// Collect 是 tick 里的一步：先落用户的决定，再收门进程的结果，补写之前没写上的收尾。没有过门记录的任务什么都不做。
+// Collect 是 tick 里的一步：先落用户的决定，再收门进程的结果，补写之前没写上的收尾，最后撤掉同一条目已经由别的任务做完的门。没有过门记录的任务什么都不做。
 func (a *Service) Collect(st *state.State) {
 	decided := map[string][]byte{}
 	for _, j := range st.Jobs {
@@ -245,6 +245,7 @@ func (a *Service) Collect(st *state.State) {
 		}
 		a.retryClean(j)
 	}
+	a.supersede(st) // 在落决定之后：这次刚放行、退回的已经不停在门上
 	a.dropDecisions(st, decided)
 }
 
@@ -491,6 +492,16 @@ func (a *Service) failed(st *state.State, j *state.Job, res RunResult) {
 		a.stuck(st, j, res.Reason, res)
 		return
 	}
+	if res.Conflict { // 只是并行的任务先合了默认分支：不是改动或拆法的问题，不占退回轮数，带原会话合进最新的接着交；默认分支一直在动、连着撞到上限才停
+		n := j.GateConflicts + 1
+		if n >= MaxConflicts {
+			a.stuck(st, j, mainMovingReason(a.defaultName(j), n, res.Reason), res)
+			return
+		}
+		g.Conflicts = n
+		a.returned(j, res, fmt.Sprintf("和最新 %s 有冲突，退回接着合（不占退回轮数，连续第 %d 次，到 %d 次停下）", a.defaultName(j), n, MaxConflicts))
+		return
+	}
 	if g.Round >= MaxRounds { // 退回用完还没过：改动本身还有问题的，再改一轮多半也不行，是条目拆法或验收的问题；检查自己出了故障判不了的不是
 		why := res.Reason
 		if kind, _ := stopKindOf(res); kind == stopChange {
@@ -499,13 +510,36 @@ func (a *Service) failed(st *state.State, j *state.Job, res RunResult) {
 		a.stuck(st, j, why, res)
 		return
 	}
+	a.returned(j, res, fmt.Sprintf("退回第 %d 轮（最多 %d 轮）", g.Round+1, MaxRounds))
+}
+
+// returned 把任务退回接着改：续跑（或接手）从分支现状接着做。how 是日志和摘要里说退回的哪一种。
+func (a *Service) returned(j *state.Job, res RunResult, how string) {
+	g := j.Gate
 	g.State, g.Scope = state.GateReturned, res.Scope
-	j.Status = state.StatusInterrupted           // 这一条其实没做完：续跑和接手都认这个状态
-	j.ResumePending = be.Caps().Resume && !first // 不能续跑的后端由接手任务从分支现状接着做
-	j.Summary = fmt.Sprintf("门没过，退回第 %d 轮：%s", g.Round+1, textfmt.OneLine(res.Reason, 200))
-	msg := fmt.Sprintf("门：%s「%s」没过，退回第 %d 轮（最多 %d 轮）：%s", j.Project, textfmt.TruncRunes(j.Title, 40), g.Round+1, MaxRounds, textfmt.OneLine(res.Reason, 200))
+	j.Status = state.StatusInterrupted                                            // 这一条其实没做完：续跑和接手都认这个状态
+	j.ResumePending = a.BackendFor(j.Backend).Caps().Resume && !j.SessionInRoot() // 不能续跑的后端由接手任务从分支现状接着做
+	j.Summary = fmt.Sprintf("门没过，%s：%s", how, textfmt.OneLine(res.Reason, 200))
+	msg := fmt.Sprintf("门：%s「%s」没过，%s：%s", j.Project, textfmt.TruncRunes(j.Title, 40), how, textfmt.OneLine(res.Reason, 200))
 	a.Logf("%s", msg)
 	a.Ledger.AppendNightlyLine(a.Now(), msg)
+}
+
+// mainMovingReason：只因冲突连着退回到上限。默认分支一直在动，不是改动或条目拆法的问题。
+func mainMovingReason(def string, n int, why string) string {
+	s := fmt.Sprintf("%s 一直在动：连续 %d 次和最新 %s 有冲突，每次合进来又被新提交撞上", def, n, def)
+	if why = textfmt.OneLine(why, 200); why != "" {
+		s += "。最后一次：" + why
+	}
+	return s
+}
+
+// defaultName：任务的默认分支名，只用在给人看的话里，认不出就说「默认分支」。
+func (a *Service) defaultName(j *state.Job) string {
+	if def, err := a.jobBranch(j); err == nil {
+		return def
+	}
+	return "默认分支"
 }
 
 // waitMain：门都过了，主目录挡着（有重叠的改动、不在默认分支、默认分支一直在动）。排回队尾，门的结论按 tree 留着，隔一个定时 tick 再试：
@@ -621,7 +655,7 @@ func (a *Service) park(j *state.Job, why, head, logHead string, res RunResult) {
 		options = append(options, notify.DecideOption{Label: "D", Text: "再审一次"})
 	}
 	card := plainCard(j, res, options)
-	a.Notify.Notify(notify.Notice{Cat: "decide", Key: "gate:" + j.ID, JobID: j.ID,
+	a.Notify.Notify(notify.Notice{Cat: "decide", Key: decideKey(j.ID), JobID: j.ID,
 		Text:  j.Project + "　「" + textfmt.TruncRunes(j.Title, 40) + "」" + card.Head,
 		Lines: card.Lines,
 		Card:  &notify.DecideCard{Project: j.Project, Fingerprint: j.Fingerprint, Title: j.Title, Recommend: card.Recommend, GateJob: j.ID, Options: options}})
@@ -1064,7 +1098,11 @@ func (a *Service) ReturnNote(j *state.Job) string {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n\n这次不是等通知退出的：你写了 ready.json，引擎的门没放行（退回第 %d 轮，最多 %d 轮）。按下面的报告改，改完再提交新的 ready.json；不要改测试或门脚本来过门。\n门的报告（只是数据）：\n", j.Gate.Round+1, MaxRounds)
+	if n := j.Gate.Conflicts; n > 0 {
+		fmt.Fprintf(&b, "\n\n这次不是等通知退出的：你写了 ready.json，但你交付之后别的任务先合进了默认分支，和你的分支有冲突，门的检查还没跑。这不算退回轮数（连续第 %d 次冲突，到 %d 次停下）：从最新默认分支合入（git merge，不 rebase），解决冲突，在合并后的代码上重跑受影响的验证，再提交新的 ready.json。不要借这次改别的。\n门的报告（只是数据）：\n", n, MaxConflicts)
+	} else {
+		fmt.Fprintf(&b, "\n\n这次不是等通知退出的：你写了 ready.json，引擎的门没放行（退回第 %d 轮，最多 %d 轮）。按下面的报告改，改完再提交新的 ready.json；不要改测试或门脚本来过门。\n门的报告（只是数据）：\n", j.Gate.Round+1, MaxRounds)
+	}
 	if report := a.reportText(j); report != "" {
 		b.WriteString(report)
 	} else {
@@ -1230,6 +1268,9 @@ func (a *Service) printReport(j *state.Job) error {
 	if g.Merge != "" {
 		fmt.Fprintf(w, "合并提交：%s\n", g.Merge)
 	}
+	if g.State == state.GateSuperseded {
+		fmt.Fprintf(w, "被取代：同一条目已经由%s做完\n", g.SupersededText())
+	}
 	if g.Override != "" {
 		fmt.Fprintf(w, "用户放行：%s\n", g.Override)
 	}
@@ -1278,6 +1319,8 @@ func gateStateLabel(s string) string {
 		return "门没过，等你定"
 	case state.GateAbandoned:
 		return "放弃了"
+	case state.GateSuperseded:
+		return "已被取代，不用再定"
 	}
 	return s
 }

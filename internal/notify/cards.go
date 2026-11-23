@@ -318,6 +318,8 @@ func GateSettled(st *state.State, jobID string) (GateOutcome, bool) {
 		return GateOutcome{}, false
 	case state.GateAbandoned:
 		return GateOutcome{Choice: "放弃", Note: "分支留着"}, true
+	case state.GateSuperseded:
+		return GateOutcome{Note: "同一条目已经由" + g.SupersededText() + "做完，不用再定"}, true
 	case state.GateReturned:
 		return GateOutcome{Choice: "退回", Reason: g.ReturnWhy, Note: "任务接着改"}, true
 	case state.GateMerged:

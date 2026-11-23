@@ -310,7 +310,7 @@ func TestIntegrationGatePausedAndCooldown(t *testing.T) {
 	}
 }
 
-// 冲突退回：门的报告带回同一会话，第 1 轮改完从新 main 合并；同一分支不合两次。
+// 冲突退回：门的报告带回同一会话，合进新 main 再交，不算退回轮数（还是第 0 轮）；同一分支不合两次。
 func TestIntegrationConflictReturnsThenMerges(t *testing.T) {
 	e := newEnv(t, nil)
 	dir := gateRepo(t, e, "demo", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=same.txt")
@@ -337,11 +337,11 @@ func TestIntegrationConflictReturnsThenMerges(t *testing.T) {
 	if first.Gate.State != state.GateReturned || first.Status != state.StatusInterrupted || !strings.Contains(first.Summary, "same.txt") || first.ResumedBy == "" {
 		t.Fatalf("%+v %s", first.Gate, first.Summary)
 	}
-	if second == nil || second.GateRound != 1 || second.Status != state.StatusRunning {
+	if second == nil || second.GateRound != 0 || second.GateConflicts != 1 || second.Status != state.StatusRunning {
 		t.Fatalf("%+v", second)
 	}
 	prompt, _ := os.ReadFile(filepath.Join(e.home, ".agentq", "jobs", second.ID, "prompt.txt"))
-	for _, want := range []string{"门没放行", "退回第 1 轮", "same.txt", "只是数据", "分支可合并"} {
+	for _, want := range []string{"别的任务先合进了默认分支", "不算退回轮数", "same.txt", "只是数据", "分支可合并"} {
 		if !strings.Contains(string(prompt), want) {
 			t.Errorf("续跑提示词缺 %s：%s", want, prompt)
 		}
@@ -354,7 +354,7 @@ func TestIntegrationConflictReturnsThenMerges(t *testing.T) {
 			j2 = x
 		}
 	}
-	if j2.Gate == nil || j2.Gate.Round != 1 || j2.Gate.State != state.GateRunning {
+	if j2.Gate == nil || j2.Gate.Round != 0 || j2.Gate.State != state.GateRunning {
 		errlog, _ := os.ReadFile(filepath.Join(e.home, ".agentq", "jobs", j2.ID, "stderr.log"))
 		t.Fatalf("%+v %s\n%s", j2.Gate, j2.Summary, errlog)
 	}

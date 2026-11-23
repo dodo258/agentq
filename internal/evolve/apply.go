@@ -299,7 +299,7 @@ func (s *Service) rollback(self string, pl upgradePlan) error {
 	}
 	to, err := versionOf(s.BinPath())
 	if err != nil {
-		to = "上一代"
+		to = unknownPrev
 	}
 	now := s.Now()
 	if pl.Release != "" {
@@ -312,6 +312,9 @@ func (s *Service) rollback(self string, pl upgradePlan) error {
 	s.reportRegression(pl.Commit, s.Version, pl.Why, now)
 	return nil
 }
+
+// unknownPrev：回滚后报不出装着的版本时记的 To。
+const unknownPrev = "上一代"
 
 func (s *Service) alert(key, text string) {
 	s.Notify.Notify(notify.Notice{Cat: "alert", Key: "selfgrow:" + key, Text: text})

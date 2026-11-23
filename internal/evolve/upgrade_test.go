@@ -3,6 +3,7 @@ package evolve
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -232,10 +233,116 @@ func TestUpgradeObservation(t *testing.T) {
 		if pl := u.s.plan(t.Context(), u.st, u.now); pl.Action == EvRollback {
 			t.Fatalf("装的不是升级的那一代，不回滚：%+v", pl)
 		}
+		evs, _ := u.s.LoadUpgrades()
+		if last := evs[len(evs)-1]; last.Kind != EvUpgrade || last.To != "dev-1234567" || last.From != "dev-"+u.b[:7] || last.Commit != "1234567" || last.Why != manualWhy {
+			t.Fatalf("自己换的版本要补记一条手动装的升级（仓库里没有这个提交就记短号）：%+v", last)
+		}
 	})
 }
 
-// 有任务在跑、在过门（排队或在跑）：不起 apply，这次不接新活；挡满 2 小时还不空闲就放开接活；有一个 apply 正在做也挡着。
+// 手动装的一代（scripts/update.sh、setup --yes）：升级记录里最后装上的是别的版本，tick 补记一条升级，从这时开始观察，
+// 满了没变差记「留下」、发版看得到它的提交；变差照样回滚。
+func TestUpgradeManualInstall(t *testing.T) {
+	setup := func(t *testing.T) *upRig {
+		u := newUpRig(t)
+		for i := range 5 {
+			u.job("pre"+string(rune('a'+i)), u.now.Add(-time.Duration(10-i)*time.Hour), state.StatusDone, 0)
+		}
+		u.s.appendUpgrade(UpgradeEvent{At: u.now.Add(-48 * time.Hour), Kind: EvKept, To: "dev-" + u.a[:7], Commit: u.a})
+		u.s.Version = "dev-" + u.b[:7] // 用户自己装上了 B
+		return u
+	}
+	manual := func(t *testing.T, u *upRig) UpgradeEvent {
+		t.Helper()
+		evs, _ := u.s.LoadUpgrades()
+		var got []UpgradeEvent
+		for _, ev := range evs {
+			if ev.Why == manualWhy {
+				got = append(got, ev)
+			}
+		}
+		if len(got) != 1 {
+			t.Fatalf("要补记一条（只一条）手动装的升级：%+v", evs)
+		}
+		return got[0]
+	}
+	t.Run("观察期没变差留下", func(t *testing.T) {
+		u := setup(t)
+		pl := u.s.plan(t.Context(), u.st, u.now)
+		if pl.Action != "" || !strings.Contains(pl.Note, "0/3") {
+			t.Fatalf("补记后从现在开始观察：%+v", pl)
+		}
+		ev := manual(t, u)
+		if ev.Kind != EvUpgrade || !ev.At.Equal(u.now) || ev.From != "dev-"+u.a[:7] || ev.To != u.s.Version || ev.Commit != u.b || ev.Job != "" {
+			t.Fatalf("记录不对：%+v", ev)
+		}
+		if c, why := u.s.ObservedCommit(); c != "" || !strings.Contains(why, "还没过观察期") {
+			t.Fatalf("还在观察：%q %q", c, why)
+		}
+		u.s.plan(t.Context(), u.st, u.now) // 再看一次不重复记
+		manual(t, u)
+		for i := range 3 {
+			u.job("o"+string(rune('1'+i)), u.now.Add(time.Duration(i+1)*time.Minute), state.StatusDone, 0)
+		}
+		u.now = u.now.Add(time.Hour)
+		if pl := u.s.plan(t.Context(), u.st, u.now); pl.Action != "" {
+			t.Fatalf("没变差不动：%+v", pl)
+		}
+		evs, _ := u.s.LoadUpgrades()
+		if last := evs[len(evs)-1]; last.Kind != EvKept || last.To != u.s.Version || last.Commit != u.b {
+			t.Fatalf("要记留下：%+v", evs)
+		}
+		if c, why := u.s.ObservedCommit(); c != u.b[:7] {
+			t.Fatalf("过了观察期要返回这一代的提交：%q %q", c, why)
+		}
+		manual(t, u)
+	})
+	t.Run("变差回滚", func(t *testing.T) {
+		u := setup(t)
+		u.s.plan(t.Context(), u.st, u.now)
+		for i, st := range []string{state.StatusFailed, state.StatusTimeout, state.StatusDone} {
+			u.job("o"+string(rune('1'+i)), u.now.Add(time.Duration(i+1)*time.Minute), st, 0)
+		}
+		u.now = u.now.Add(time.Hour)
+		if pl := u.s.plan(t.Context(), u.st, u.now); pl.Action != EvRollback || pl.Commit != u.b {
+			t.Fatalf("手动装的变差了照样回滚：%+v", pl)
+		}
+	})
+	for name, edit := range map[string]func(u *upRig){
+		"没有记录":     func(u *upRig) { os.Remove(u.s.upgradesPath()) },
+		"装着的就是记录的": func(u *upRig) { u.s.Version = "dev-" + u.a[:7] },
+		"回滚后报不出版本": func(u *upRig) {
+			u.s.appendUpgrade(UpgradeEvent{At: u.now.Add(-time.Hour), Kind: EvRollback, From: "dev-" + u.a[:7], To: unknownPrev, Commit: u.a})
+		},
+		"没做成的不算": func(u *upRig) {
+			u.s.Version = "dev-" + u.a[:7]
+			u.s.appendUpgrade(UpgradeEvent{At: u.now.Add(-time.Hour), Kind: EvFail, From: u.s.Version, Commit: u.b})
+		},
+	} {
+		t.Run("不补："+name, func(t *testing.T) {
+			u := setup(t)
+			edit(u)
+			u.s.plan(t.Context(), u.st, u.now)
+			if evs, _ := u.s.LoadUpgrades(); slices.ContainsFunc(evs, func(ev UpgradeEvent) bool { return ev.Why == manualWhy }) {
+				t.Fatalf("不该补记：%+v", evs)
+			}
+		})
+	}
+	t.Run("不补：正在升级", func(t *testing.T) {
+		u := setup(t)
+		lock, err := fsx.AcquireLock(u.s.upgradeLockPath(), 0)
+		if err != nil || lock == nil {
+			t.Fatal(err)
+		}
+		defer lock.Close()
+		u.s.plan(t.Context(), u.st, u.now)
+		if evs, _ := u.s.LoadUpgrades(); slices.ContainsFunc(evs, func(ev UpgradeEvent) bool { return ev.Why == manualWhy }) {
+			t.Fatalf("apply 拿着升级锁（装完还没写记录）时不补记：%+v", evs)
+		}
+	})
+}
+
+// 有任务在跑、在过门（排队或在跑）：不起 apply，这次不接新活，挡多久都一直等到空闲；有一个 apply 正在做也挡着。
 func TestSelfUpdateHoldsWhileBusy(t *testing.T) {
 	u := newUpRig(t)
 	u.st.Jobs = append(u.st.Jobs, &state.Job{ID: "run1", Project: "web", Status: state.StatusRunning, StartedAt: u.now},
@@ -247,16 +354,11 @@ func TestSelfUpdateHoldsWhileBusy(t *testing.T) {
 	if _, err := os.Stat(u.s.upgradeLogPath()); err == nil {
 		t.Fatal("不空闲不该起 apply")
 	}
-	u.now = u.now.Add(119 * time.Minute)
-	if hold, _ := u.s.SelfUpdate(u.st); !hold {
-		t.Fatal("不到 2 小时还挡着")
+	u.now = u.now.Add(24 * time.Hour)
+	if hold, note := u.s.SelfUpdate(u.st); !hold || !strings.Contains(note, "等 2 个在跑或在过门的任务做完") {
+		t.Fatalf("挡多久都不放开，一直等到空闲（放开了就再也等不到空闲）：%v %s", hold, note)
 	}
-	u.now = u.now.Add(time.Minute)
-	if hold, note := u.s.SelfUpdate(u.st); hold || !strings.Contains(note, "先照常接活") {
-		t.Fatalf("挡满 2 小时放开：%v %s", hold, note)
-	}
-	u.st.Jobs = u.st.Jobs[:1]
-	os.Remove(u.s.holdPath()) // 换一次：apply 正在做
+	u.st.Jobs = u.st.Jobs[:1] // 换一次：apply 正在做
 	os.MkdirAll(u.s.evolveDir(), 0o700)
 	lock, err := fsx.AcquireLock(u.s.upgradeLockPath(), 0)
 	if err != nil || lock == nil {
@@ -328,6 +430,7 @@ func TestUpgradeSkipsDescendantsOfRollback(t *testing.T) {
 // 发版看的观察期：最近一条升级、留下、回滚的记录是这一代的「留下」才算过了；演练、失败不算数。
 func TestObservedCommit(t *testing.T) {
 	u := newUpRig(t)
+	u.s.Version = "dev-" + u.a[:7]
 	if c, why := u.s.ObservedCommit(); c != "" || !strings.Contains(why, "还没过观察期") {
 		t.Fatalf("没有记录：%q %q", c, why)
 	}
@@ -344,8 +447,25 @@ func TestObservedCommit(t *testing.T) {
 	if c, _ := u.s.ObservedCommit(); c != "" {
 		t.Fatalf("回滚之后不算：%q", c)
 	}
+	dirty := "dev-" + u.a[:7] + "+dirty"
+	u.s.Version = dirty
+	u.s.appendUpgrade(UpgradeEvent{At: u.now, Kind: EvKept, To: dirty})
+	if c, why := u.s.ObservedCommit(); c != "" || !strings.Contains(why, "未提交的改动") {
+		t.Fatalf("带未提交改动构建的留下了也不算观察过：%q %q", c, why)
+	}
 	u.s.Version = "v0.3.0"
 	if c, why := u.s.ObservedCommit(); c != "" || !strings.Contains(why, "不是从提交构建的") {
 		t.Fatalf("发行版：%q %q", c, why)
+	}
+}
+
+// 卡在门上后被同一条目别的任务取代的，这个任务也没过门：观察期照样算一次不好，不因为后来有人做完就变好看。
+func TestObserveCountsSupersededAsBad(t *testing.T) {
+	jobs := []*state.Job{
+		{Status: state.StatusDone, Gate: &state.GateRecord{State: state.GateSuperseded}},
+		{Status: state.StatusDone, Gate: &state.GateRecord{State: state.GateMerged}},
+	}
+	if o := observe(jobs); o.N != 2 || o.Bad != 1 {
+		t.Fatalf("%+v", o)
 	}
 }

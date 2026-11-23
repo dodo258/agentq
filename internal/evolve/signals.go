@@ -323,6 +323,7 @@ func (s *Service) Collect(force bool) (bool, error) {
 		s.absorbGateDomains(ctx, st, g)
 	}
 	for _, j := range in.metas {
+		j = stuckView(j)
 		for _, c := range s.absorbMeta(st, j, now) {
 			learned[c.project] = append(learned[c.project], c)
 		}
@@ -550,6 +551,19 @@ func (st *SignalStore) takePending(j *state.Job) []pendingFail {
 }
 
 func short(commit string) string { return textfmt.TruncRunes(commit, 12) }
+
+// stuckView：门已被取代的任务（卡在门上时同一条目由别的任务做完了，见 gate 的 supersede）在这里还是卡在门上的那次。
+// 信号每小时才收一次，任务可能在被收到之前就已经被取代：不这样看，卡住的信号和领域账就丢了。
+// 同一个任务卡住时收过一次也不会重复：信号按证据、领域账按任务去重。返回副本，不改 j。
+func stuckView(j *state.Job) *state.Job {
+	if j.Gate == nil || j.Gate.State != state.GateSuperseded {
+		return j
+	}
+	c, g := *j, *j.Gate
+	g.State = state.GateStuck
+	c.Gate = &g
+	return &c
+}
 
 // absorbMeta：一份任务记录。返回这次确认的拦截。
 func (s *Service) absorbMeta(st *SignalStore, j *state.Job, now time.Time) []confirmed {

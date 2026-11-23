@@ -552,7 +552,7 @@ func TestGateFailureNoEndNotice(t *testing.T) {
 	if got := f.endNotices(j); len(got) != 0 {
 		t.Fatalf("退回不说：%+v", got)
 	}
-	j.Gate.Round = gate.MaxRounds
+	j.GateConflicts = gate.MaxConflicts - 1 // 只因冲突退回不占轮数，连着冲突到上限才停
 	j.Gate.State = state.GateQueued
 	f.collect(j, f.run(j))
 	if j.Gate.State != state.GateStuck {

@@ -28,6 +28,7 @@ import (
 	"agentq/internal/config"
 	"agentq/internal/env"
 	"agentq/internal/fsx"
+	"agentq/internal/gate"
 	"agentq/internal/gitx"
 	"agentq/internal/ledger"
 	"agentq/internal/notify"
@@ -95,6 +96,10 @@ type UI struct {
 	Checklist string
 	// Shots 是项目里现有的界面截图（相对项目目录），可能一张都没有。
 	Shots []string
+	// Captured 是起调研前在默认分支上跑 .agentq/ui 刚截的图（绝对路径，在这次调研的任务目录里）；Missed 是没截到或有截图不合格的原因。
+	// 项目没有 .agentq/ui 时两个都是空的。
+	Captured []string
+	Missed   string
 }
 
 // Record 是一个项目的调研记录。
@@ -170,10 +175,19 @@ func (a *Service) note(r *Record, project, why string) {
 const Schema = `{"type":"object","properties":{"suggestions":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"why":{"type":"string"},"source":{"type":"string"},"online":{"type":"string"}},"required":["title","why","source"],"additionalProperties":false}},"ui":{"type":"string"}},"required":["suggestions"],"additionalProperties":false}`
 
 // Request：只读加联网（CLI 强制，MustPM 要求）、不接 MCP、有回合和预算上限。不传权限模式：读文件的边界靠默认模式。
-func Request(cfg config.Config, prompt, project, session string) backend.Request {
+// workDir 是这次调研的任务目录：起之前截了界面（ShotsDir 下有 PNG）就把截图目录加进能读的目录，要显式附图的后端附上。
+func Request(cfg config.Config, prompt, project, session, workDir string) backend.Request {
 	model, effort := cfg.Role(cfg.PMModel, "high")
-	return backend.Request{Prompt: prompt, Label: proc.NameMarker(project) + "产品经理", Session: session, Model: model, Effort: effort,
+	req := backend.Request{Prompt: prompt, Label: proc.NameMarker(project) + "产品经理", Session: session, Model: model, Effort: effort,
 		Profile: backend.ProfileReadOnly, Web: true, NoExternalMCP: true, Schema: Schema, MaxTurns: pmTurns, BudgetUSD: pmBudget, Must: backend.MustPM}
+	if workDir == "" {
+		return req
+	}
+	dir := filepath.Join(workDir, ShotsDir)
+	if shots := gate.CapturedShots(dir); len(shots) > 0 {
+		req.AddDirs, req.Images = []string{dir}, shots
+	}
+	return req
 }
 
 // BuildPrompt 拼提示词。evidence 是 agentq 记下的这个项目的事（门退回、中断），notDoing 是不做清单的标题；
@@ -193,12 +207,9 @@ func BuildPrompt(project, trigger string, evidence, notDoing []string, ui *UI) s
 		"第 3 路 用户抱怨：同类在 GitHub issues、讨论区、论坛里用户真实在抱怨什么，打开原帖看原话，不凭搜索摘要转述。\n")
 	if ui != nil {
 		b.WriteString("第 4 路 界面和视觉（这个项目有界面）：同类的界面怎么做（布局、信息层级、关键操作走几步），用户对同类观感和易用性的抱怨；" +
+			"同类的界面要当场看真的：打开它们的官网截图、README 里的图、应用商店页，和这个项目的界面逐处对比，出处写那个页面的地址，不凭印象描述别人的界面。" +
 			"再看这个项目现有的界面，逐条对照下面的审查表，点出具体问题：哪个界面、哪一条不过、看到的是什么。")
-		if len(ui.Shots) > 0 {
-			b.WriteString("现有截图（用读文件打开看，问题的出处写截图路径）：" + strings.Join(ui.Shots, "、") + "。")
-		} else {
-			b.WriteString("项目里没有现成截图，就读界面代码（页面、组件、样式文件）判断，出处写文件路径和行号；缺截图本身不算一条建议。")
-		}
+		writeShots(&b, ui)
 		b.WriteString("\n")
 		if ui.Checklist != "" {
 			b.WriteString("审查表（no-ai-look）：\n" + ui.Checklist + "\n")
@@ -233,6 +244,30 @@ func BuildPrompt(project, trigger string, evidence, notDoing []string, ui *UI) s
 	}
 	b.WriteString("。")
 	return b.String()
+}
+
+// writeShots 写第 4 路要看的界面：刚截的图优先，项目里存的截图其次，都没有就读界面代码。
+func writeShots(b *strings.Builder, ui *UI) {
+	if len(ui.Captured) > 0 {
+		fmt.Fprintf(b, "\nagentq 起调研前在默认分支上跑 %s 截了现在的界面，共 %d 张，逐张用读文件打开看，每一张都要看，不能只看几张就下结论：\n", gate.UIScript, len(ui.Captured))
+		for _, s := range ui.Captured {
+			b.WriteString("- " + s + "\n")
+		}
+		b.WriteString("界面建议必须指到具体哪张截图的哪里：source 写截图路径，why 写图上哪个位置、看到的是什么。")
+		if ui.Missed != "" {
+			b.WriteString("其中" + ui.Missed + "（这本身也是线索）。")
+		}
+	} else if ui.Missed != "" {
+		b.WriteString("这次没截到图：" + ui.Missed + "。")
+	}
+	switch {
+	case len(ui.Shots) > 0 && len(ui.Captured) > 0:
+		b.WriteString("项目里还存着这些截图（可能过期，和刚截的对不上时以刚截的为准）：" + strings.Join(ui.Shots, "、") + "。")
+	case len(ui.Shots) > 0:
+		b.WriteString("现有截图（用读文件打开看，问题的出处写截图路径）：" + strings.Join(ui.Shots, "、") + "。")
+	case len(ui.Captured) == 0:
+		b.WriteString("项目里没有现成截图，就读界面代码（页面、组件、样式文件）判断，出处写文件路径和行号；缺截图本身不算一条建议。")
+	}
 }
 
 // ParseIdeas 取结构化结果，校验不过返回错误。没出处的不要，说到线上现状却没给当场查过的线上地址的不要，超过 ideasCap 的不要（按价值排，丢的是排在后面的）；
@@ -418,7 +453,12 @@ func (a *Service) start(st *state.State, s *Store, p backlog.Project, trigger st
 			notDoing = append(notDoing, e.Title)
 		}
 	}
-	prompt := BuildPrompt(p.Name, trigger, evidence(st, p.Name), notDoing, a.uiOf(p))
+	ui := a.uiOf(p)
+	id := ""
+	if ui != nil {
+		id = a.captureUI(p, ui)
+	}
+	prompt := BuildPrompt(p.Name, trigger, evidence(st, p.Name), notDoing, ui)
 	what := "做完一版后想下一步"
 	if trigger == TriggerFirst {
 		what = "第一版合并后想下一步"
@@ -427,7 +467,7 @@ func (a *Service) start(st *state.State, s *Store, p backlog.Project, trigger st
 	prev := *r
 	r.LastAt, r.JobID, r.Trigger, r.Covering, r.Note = now, "", trigger, merged(st, p.Name), ""
 	a.save(s)
-	j := &state.Job{Kind: state.KindPM, Project: p.Name, ProjectDir: p.Dir, Item: what, Title: "产品经理：" + what}
+	j := &state.Job{ID: id, Kind: state.KindPM, Project: p.Name, ProjectDir: p.Dir, Item: what, Title: "产品经理：" + what}
 	started, err := a.Runner.Start(st, j, prompt, "")
 	if fresh, lerr := a.load(); lerr == nil {
 		*s = *fresh
@@ -436,8 +476,11 @@ func (a *Service) start(st *state.State, s *Store, p backlog.Project, trigger st
 		s.Projects[p.Name] = r
 	}
 	r = s.Projects[p.Name]
-	if started == nil { // 一个进程都没起：记录退回去，下次 tick 再看
+	if started == nil { // 一个进程都没起：记录退回去，下次 tick 再看；先分好的任务目录（放截图的）不留
 		*r = prev
+		if id != "" {
+			os.RemoveAll(a.JobDir(id))
+		}
 		a.note(r, p.Name, "调研没起来："+textfmt.OneLine(err.Error(), 160))
 		return false
 	}

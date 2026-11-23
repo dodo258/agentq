@@ -102,6 +102,14 @@ func plainCard(j *state.Job, res RunResult, options []notify.DecideOption) gateC
 		}
 	default:
 		c.Head = "门没过，等你定"
+		if res.Conflict { // 只是交付后主分支又有了新提交，检查还没跑：不是改动或拆法的问题
+			why = "不是改动查出了问题，是交付后主分支上又有了别的任务的新提交：" + changePoint(block)
+			if n := j.GateConflicts + 1; n >= MaxConflicts {
+				why += fmt.Sprintf("。主分支一直在动，已经连着 %d 次这样", n)
+			}
+			c.Recommend, advice = "B", "退回让它再合一次最新的主分支，不用改拆法；并行的任务多时可以等一等再退回，改动留在分支上不会丢"
+			break
+		}
 		why = "检查发现改动本身有问题：" + changePoint(block)
 		if g := j.Gate; g.Round >= MaxRounds && g.Override == "" && !g.Rerun {
 			why += fmt.Sprintf("。它已经自己改了 %d 轮还没过", g.Round)

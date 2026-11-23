@@ -26,7 +26,7 @@ import (
 //     只是 user-stop 不算，quick-stop 照算（派错条目、改了说法再派，正是要查的说明问题）。怎么判见下面「按任务记录判的信号」一节的 jobCounts。
 //   - 门卡片上用户点了退回或放弃：门的审计日志 gate/audit.log 的「退回」「放弃」行（卡片和 gate 命令写的都是这一行）。
 //     只算门都过了、等人拍板时用户不认的；门自己挡下的照门的结论走，已经记成别的信号（decideHold）。
-//   - 返工：项目 BACKLOG 里出现「验收 <原条目标题> 的意见」（dispatch 的固定写法），按条目范围、原条目范围和提到的合并提交改了的文件归到领域。
+//   - 返工：项目 BACKLOG 里出现「验收 <原条目标题> 的意见」（dispatch 的固定写法），标了（改需求）的不算，见 rework.go。
 //   - 巡逻报过、当天又自己消失的问题（疑似误报）：信号文件记着上次还在的巡逻问题，这次不在了、首次发现是今天，就算。
 //   - 同一条目被 retry_after 挡住超过 6 小时：还在「待做」、能挑，最近一次任务结束满 6 小时、还没到 retry_after。
 //
@@ -287,103 +287,7 @@ func (s *Service) recheckDecisions(st *SignalStore) {
 	})
 }
 
-// ---- 返工 ----
-
-// reworkItem 是 BACKLOG 里一条「验收 <标题> 的意见」。
-type reworkItem struct {
-	project string
-	key     string // reworkKey，记进 ReworkSeen
-	title   string // 原条目标题
-	text    string
-	domains []string
-	basis   string // 按什么归的领域
-}
-
-// reworkRe：dispatch 写的「验收 <原条目标题> 的意见」，只认标题开头的固定写法，正文顺带提到不算。
-var (
-	reworkRe  = regexp.MustCompile(`^验收\s+(.+?)\s*的意见`)
-	mentionRe = regexp.MustCompile(`\b[0-9a-f]{7,40}\b`)
-)
-
-const reworkMax = 8 // 一条意见最多看几个提交
-
-// scanRework：各项目 BACKLOG（含已完成）里没见过的返工意见。被排除的项目也看：亲手派的活照样会返工。
-func (s *Service) scanRework(ctx context.Context, st *SignalStore, in *scanned) {
-	projects, _ := s.Backlog.AllProjects() // 扫描不全时看得到几个算几个
-	for _, p := range projects {
-		b, err := os.ReadFile(p.BacklogPath())
-		if err != nil {
-			continue
-		}
-		text := string(b)
-		backlog.EachBacklogLine(text, func(_, line string) {
-			body, ok := checkboxBody(line)
-			if !ok {
-				return
-			}
-			m := reworkRe.FindStringSubmatch(backlog.ItemTitle(body))
-			if m == nil {
-				return
-			}
-			orig := strings.Trim(strings.TrimSpace(m[1]), "「」“”\"`")
-			key := reworkKey(p.Name, body)
-			if slices.Contains(st.ReworkSeen, key) || slices.ContainsFunc(in.rework, func(r reworkItem) bool { return r.key == key }) {
-				return
-			}
-			r := reworkItem{project: p.Name, key: key, title: orig, text: body}
-			r.domains, r.basis = s.reworkDomains(ctx, p, text, orig, body)
-			in.rework = append(in.rework, r)
-			in.touched = true
-		})
-	}
-}
-
-// reworkKey：一条意见的键。去掉进行中、卡住标记和合并后补的「合并提交 …」，认领、合并移到「已完成」都还是同一条；
-// 同一条目第二轮的意见写的内容不一样，是另一条。
-func reworkKey(project, body string) string {
-	b := backlog.InProgressRe.ReplaceAllString(body, "")
-	for _, cut := range []string{"合并提交 ", "（卡住"} {
-		if i := strings.Index(b, cut); i >= 0 {
-			b = b[:i]
-		}
-	}
-	return project + "|" + textfmt.TruncRunes(backlog.TitleKey(b), 80)
-}
-
-// checkboxBody：「- [ ] 」「- [x] 」后面的原文。
-func checkboxBody(line string) (string, bool) {
-	for _, pre := range []string{"- [ ]", "- [x]", "- [X]"} {
-		if strings.HasPrefix(line, pre) {
-			return strings.TrimSpace(line[len(pre):]), true
-		}
-	}
-	return "", false
-}
-
-// reworkDomains：按路径归领域——意见和原条目写的（范围：…），意见里提到的提交、原条目「已完成」里记的合并提交改了的文件。
-// 一个路径都归不了时才看意见的文字。都没有是「未分类」。
-func (s *Service) reworkDomains(ctx context.Context, p backlog.Project, backlogText, orig, body string) ([]string, string) {
-	paths := backlog.ItemScope(body)
-	backlog.EachBacklogLine(backlogText, func(_, line string) {
-		if t, ok := checkboxBody(line); ok && backlog.ItemTitle(t) == orig {
-			paths = append(paths, backlog.ItemScope(t)...)
-		}
-	})
-	commits := mentionRe.FindAllString(body, reworkMax)
-	if c := backlog.DoneMergeCommit(backlogText, orig); c != "" && !slices.Contains(commits, c) {
-		commits = append(commits, c)
-	}
-	for _, c := range commits {
-		paths = append(paths, changedFiles(ctx, p.Dir, c)...)
-	}
-	if out := filesDomains(paths); len(out) > 0 {
-		return out, "按范围和改动文件"
-	}
-	if out := wordDomains(body); len(out) > 0 {
-		return out, "按意见的文字"
-	}
-	return []string{domainUnknown}, "范围、改动文件、文字都看不出"
-}
+// ---- git 小工具（返工、按领域记账都用） ----
 
 // changedFiles：这个提交（合并提交按第一父）改了的文件。不是提交、git 出错都当没有。
 func changedFiles(ctx context.Context, dir, commit string) []string {
@@ -404,24 +308,6 @@ func gitFields(ctx context.Context, dir string, args ...string) (out []string, o
 		return nil, false
 	}
 	return strings.Fields(string(b)), true
-}
-
-// absorbRework：一条返工意见，每个领域记一次（E7 按领域看返工）。
-func (s *Service) absorbRework(st *SignalStore, r reworkItem, now time.Time) {
-	ev := "项目 " + r.project + "「验收 " + textfmt.TruncRunes(r.title, 30) + " 的意见」"
-	for _, d := range r.domains {
-		summary := d + "返工（" + r.basis + "）：「" + textfmt.TruncRunes(r.title, 30) + "」" + textfmt.OneLine(strings.TrimPrefix(r.text, backlog.ItemTitle(r.text)), 120)
-		st.add(now, KindRework, r.project, SignalKey(KindRework, d, ""), summary, ev)
-		if d != domainUnknown {
-			st.addDomain(now, []string{d}, evRework, r.key, ev)
-		}
-	}
-	if !slices.Contains(st.ReworkSeen, r.key) {
-		st.ReworkSeen = append(st.ReworkSeen, r.key)
-	}
-	if len(st.ReworkSeen) > reworkSeenMax {
-		st.ReworkSeen = st.ReworkSeen[len(st.ReworkSeen)-reworkSeenMax:]
-	}
 }
 
 // ---- 巡逻：报了又自己消失 ----

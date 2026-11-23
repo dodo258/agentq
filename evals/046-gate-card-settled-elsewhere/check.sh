@@ -43,11 +43,12 @@ open(portfile, "w").write(str(s.server_address[1]))
 s.serve_forever()
 EOF
 calls="$EVAL_WORK/calls.log"
-python3 -I "$EVAL_WORK/tg.py" "$calls" "$EVAL_WORK/port" &
+python3 -I "$EVAL_WORK/tg.py" "$calls" "$EVAL_WORK/port" 2> "$EVAL_WORK/tg.err" &
 srv=$!
 trap 'kill $srv 2>/dev/null; wait $srv 2>/dev/null' EXIT
-i=0; while [ ! -s "$EVAL_WORK/port" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
-[ -s "$EVAL_WORK/port" ] || { echo "假 Telegram 没起来，这次判不了"; exit 2; }
+# 临时 HOME 下第一次起 python 可能要十几秒（CI 的 macOS 机器上 5 秒不够），最多等 30 秒
+i=0; while [ ! -s "$EVAL_WORK/port" ] && kill -0 $srv 2>/dev/null && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done
+[ -s "$EVAL_WORK/port" ] || { echo "假 Telegram 没起来，这次判不了：$(tail -3 "$EVAL_WORK/tg.err" 2>/dev/null)"; exit 2; }
 export AGENTQ_TELEGRAM_API="http://127.0.0.1:$(cat "$EVAL_WORK/port")"
 
 # 用放弃不用放行：放行落下后 tick 会起后台过门进程，判完分删现场时它还在写文件

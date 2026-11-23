@@ -188,6 +188,41 @@ func TestReworkSignal(t *testing.T) {
 	r.noCLI()
 }
 
+// 改需求不算返工：11-23 huitai 用户嫌原条目点名要的 ⌃] 难按、改成 ⌃Q，交付没错，却记成前端、后端返工各一次，
+// 和不相干的返工凑成两条「验收后返工反复出现」写进 agentq 的待做。dispatch 在标题末尾标（改需求）的，不记信号、不进按领域的账；
+// 没标的照算，摘要里别的项目的意见原文放在引号里。
+func TestReworkChangeRequestNotCounted(t *testing.T) {
+	r := newSigRig(t, nil)
+	reworkRepo(t, r, "site", "- [ ] 验收 首页改版 的意见（改需求） —— 用户嫌按钮太小，改大一号（范围：web/）\n"+
+		"- [x] 验收 首页改版 的意见（改需求） —— 再加一个暗色主题；合并提交 abcdef1234567\n")
+	reworkRepo(t, r, "shop", "- [ ] 验收 首页改版 的意见 —— 手机宽度下按钮被挡住，没做到原验收\n")
+	r.collect()
+	sigs := r.signals(KindRework)
+	if len(sigs) != 1 || sigs[0].Seen != 1 || sigs[0].Evidence[0] != "项目 shop「验收 首页改版 的意见」" {
+		t.Fatalf("只有 shop 那条没标（改需求）的算返工：%+v", sigs)
+	}
+	if want := "前端返工（按范围和改动文件），最近一次：项目 shop「验收 首页改版 的意见」，意见原文「手机宽度下按钮被挡住，没做到原验收」"; sigs[0].Summary != want {
+		t.Fatalf("摘要：\n%s\n要\n%s", sigs[0].Summary, want)
+	}
+	st, err := r.s.LoadSignals()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evs []DomainEvent
+	for _, ev := range st.Domains {
+		if ev.Kind == evRework {
+			evs = append(evs, ev)
+		}
+	}
+	if len(evs) != 1 || !strings.Contains(evs[0].Evidence, "shop") {
+		t.Fatalf("按领域的账只记 shop 那条返工：%+v", evs)
+	}
+	if p := r.proposals(); strings.Contains(p, "返工") {
+		t.Fatalf("一次返工不该提案：\n%s", p)
+	}
+	r.noCLI()
+}
+
 // 合并提交顺手改的记录文件不算文档：11-16 两条不相干的返工（官网的样式、Flutter App 的密码页）因为合并提交都改了 DECISIONS.md，
 // 凑成了「文档返工反复出现」。
 func TestReworkRecordFilesNotDocs(t *testing.T) {

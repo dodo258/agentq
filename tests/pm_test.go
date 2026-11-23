@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentq/internal/backend"
+	"agentq/internal/gate"
 	"agentq/internal/state"
 	"agentq/internal/testkit"
 )
@@ -157,8 +158,13 @@ func TestPMWhenTodoEmpty(t *testing.T) {
 	testkit.GitT(t, e.home, dir, "commit", "-qam", "勾掉")
 	e.mustRun("tick")
 	j := pmRan(t, e, 1)
-	if p := promptOf(t, e, j); !strings.Contains(p, "待做都做完了") || strings.Contains(p, "第 4 路") {
+	if p := promptOf(t, e, j); !strings.Contains(p, "待做都做完了") || strings.Contains(p, "第 4 路") || strings.Contains(p, "截了现在的界面") || strings.Contains(p, "没截到图") {
 		t.Errorf("没有界面文件的项目不带界面那一路：%s", p)
+	}
+	for _, sub := range []string{"screenshots", "ui"} {
+		if _, err := os.Stat(filepath.Join(e.home, ".agentq", "jobs", j.ID, sub)); !os.IsNotExist(err) {
+			t.Errorf("没有 .agentq/ui 不截图：%s %v", sub, err)
+		}
 	}
 	if got := suggestNums(e.backlogOf(dir)); len(got) != 3 {
 		t.Fatalf("别处的 1 条加它的 2 条：%v", got)
@@ -283,5 +289,73 @@ func TestPMNeedsReadOnlyWeb(t *testing.T) {
 		if !be.Caps().WebTools && !strings.Contains(strings.Join(lacks, "；"), "联网") {
 			t.Errorf("%s 做不到要说原因：%v", name, lacks)
 		}
+	}
+}
+
+// pmUIRepo：demo 的 main 上带一个 .agentq/ui，第一条做到合并，返回项目目录。
+func pmUIRepo(t *testing.T, e *testEnv, script string) string {
+	t.Helper()
+	dir := gateRepo(t, e, "demo", "- [ ] 第一条 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
+	os.WriteFile(filepath.Join(dir, gate.UIScript), []byte(script), 0o755)
+	testkit.GitT(t, e.home, dir, "add", "-A")
+	testkit.GitT(t, e.home, dir, "commit", "-qm", "界面脚本")
+	e.mustRun("tick")
+	e.tickUntilGate("第一条 READYMERGE")
+	return dir
+}
+
+// 有 .agentq/ui 的项目：起调研前先在默认分支上截图，截图放进这次调研的任务目录，路径和「逐张看」进提示词，
+// 截图目录加进只读进程能读的目录；调研结束后截图还在，一次性 worktree 不留。
+func TestPMCapturesUI(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]any{"pm_enabled": true})
+	e.atNoon()
+	src := filepath.Join(e.home, "shot.png")
+	writeTestPNG(t, src, false)
+	dir := pmUIRepo(t, e, "#!/bin/sh\ncp "+src+" \"$AGENTQ_ARTIFACTS/home.png\"\n")
+	j := pmRan(t, e, 1)
+	shots := filepath.Join(e.home, ".agentq", "jobs", j.ID, "screenshots")
+	shot := filepath.Join(shots, "home.png")
+	p := promptOf(t, e, j)
+	for _, want := range []string{"第 4 路 界面和视觉", "截了现在的界面，共 1 张，逐张用读文件打开看", "- " + shot + "\n", "指到具体哪张截图的哪里", "官网截图、README 里的图、应用商店页"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("提示词缺 %q：\n%s", want, p)
+		}
+	}
+	if log := e.fakeLogOf(j); !strings.Contains(log, "ARG[--add-dir]\nARG["+shots+"]") {
+		t.Errorf("截图目录要能读：\n%s", log)
+	}
+	if _, err := os.Stat(shot); err != nil {
+		t.Errorf("调研结束后截图还在：%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(e.home, ".agentq", "jobs", j.ID, "ui", "wt")); !os.IsNotExist(err) {
+		t.Errorf("一次性 worktree 要删：%v", err)
+	}
+	if out := testkit.GitT(t, e.home, dir, "worktree", "list"); strings.Contains(out, j.ID) {
+		t.Errorf("git 里不留：%s", out)
+	}
+}
+
+// .agentq/ui 失败：调研照起，提示词和当天汇总写明「这次没截到图：原因」，不加截图目录。
+func TestPMCaptureUIFails(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]any{"pm_enabled": true})
+	e.atNoon()
+	dir := pmUIRepo(t, e, "#!/bin/sh\necho 浏览器没装\nexit 1\n")
+	j := pmRan(t, e, 1)
+	if p := promptOf(t, e, j); !strings.Contains(p, "这次没截到图：.agentq/ui 没过：退出码 1（日志 ~/.agentq/jobs/"+j.ID+"/ui/ui.log）") || strings.Contains(p, "逐张用读文件打开看") {
+		t.Errorf("提示词：\n%s", p)
+	}
+	if log := e.fakeLogOf(j); strings.Contains(log, "--add-dir") {
+		t.Errorf("没截到不加目录：\n%s", log)
+	}
+	if !strings.Contains(e.nightly(), "产品经理：demo 这次没截到图：.agentq/ui 没过：退出码 1") {
+		t.Errorf("当天汇总：\n%s", e.nightly())
+	}
+	if b, _ := os.ReadFile(filepath.Join(e.home, ".agentq", "jobs", j.ID, "ui", "ui.log")); !strings.Contains(string(b), "浏览器没装") {
+		t.Errorf("脚本输出留在任务目录：%q", b)
+	}
+	if !strings.Contains(e.backlogOf(dir), "加导出 CSV") {
+		t.Errorf("调研照常写建议：\n%s", e.backlogOf(dir))
 	}
 }

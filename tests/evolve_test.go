@@ -2,7 +2,9 @@ package tests
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +12,7 @@ import (
 
 	"agentq/internal/gate"
 	"agentq/internal/state"
+	"agentq/internal/testkit"
 )
 
 // seedConfirmedBlocks 造假数据：demo 的两条各被测试门 error 档拦过一次，一条后来合并了，一条用户放弃了（门拦得对）。
@@ -156,4 +159,93 @@ func TestIntegrationCapabilityGap(t *testing.T) {
 	if err != nil || strings.Count(string(prop), "能力缺口：前端") != 1 || strings.Contains(string(prop), "能力缺口：后端") {
 		t.Fatalf("只写前端一条：%v\n%s", err, prop)
 	}
+}
+
+// 验收：用户自己装上新的一代（和 scripts/update.sh 一样，用新构建的程序 setup --yes），升级记录里最后装上的是上一代：
+// tick 补记一条手动装的升级，从这时开始观察；跑完 3 个任务没变差记「观察期没变差」，变差照样回滚到上一代。
+func TestIntegrationManualInstallObserved(t *testing.T) {
+	t.Parallel()
+	for _, bad := range []bool{false, true} {
+		t.Run(fmt.Sprintf("变差=%v", bad), func(t *testing.T) {
+			t.Parallel()
+			e, dir := selfGrowEnv(t, "", nil)
+			verA, genA := e.version(), generation(t, e.home)
+			headA := testkit.GitT(t, e.home, dir, "rev-parse", "HEAD")
+			kept, _ := json.Marshal(map[string]any{"at": time.Now().Add(-48 * time.Hour), "kind": "kept", "to": verA, "commit": headA})
+			os.MkdirAll(filepath.Join(e.home, ".agentq", "evolve"), 0o700)
+			os.WriteFile(filepath.Join(e.home, ".agentq", "evolve", "upgrades.jsonl"), append(kept, '\n'), 0o600)
+			e.seedJobs(time.Now().Add(-3*time.Hour), state.StatusDone, "p1", "p2", "p3", "p4", "p5")
+
+			// 手动装 B：从新提交构建、用它 setup --yes，不经 agentq evolve apply
+			os.WriteFile(filepath.Join(dir, "manual.txt"), []byte("手动装的\n"), 0o644)
+			testkit.GitT(t, e.home, dir, "add", "-A")
+			testkit.GitT(t, e.home, dir, "commit", "-q", "-m", "手动装")
+			b := testkit.GitT(t, e.home, dir, "rev-parse", "HEAD")
+			binB := filepath.Join(t.TempDir(), "agentq")
+			build := exec.Command("go", "build", "-tags", "agentq_fake_deps", "-o", binB, ".")
+			build.Dir, build.Env = dir, append(os.Environ(), "HOME="+e.home)
+			if out, err := build.CombinedOutput(); err != nil {
+				t.Fatalf("构建 B：%v\n%s", err, out)
+			}
+			installed := e.bin
+			e.bin = binB
+			e.mustRun("setup", "--yes")
+			e.bin = installed
+			verB := "dev-" + b[:7]
+			if v := e.version(); v != verB {
+				t.Fatalf("手动装上的应该是 %s：%s", verB, v)
+			}
+			if strings.Contains(e.upgrades(), verB) {
+				t.Fatalf("手动装的还没有升级记录：\n%s", e.upgrades())
+			}
+
+			e.mustRun("tick")
+			var at time.Time
+			for _, line := range strings.Split(strings.TrimSpace(e.upgrades()), "\n") {
+				var ev struct {
+					At               time.Time
+					Kind, To, Commit string
+					Why              string
+				}
+				json.Unmarshal([]byte(line), &ev)
+				if ev.Kind == "upgrade" && ev.To == verB && ev.Commit == b && strings.Contains(ev.Why, "手动装的") {
+					at = ev.At
+				}
+			}
+			if at.IsZero() {
+				t.Fatalf("tick 要补记一条手动装的升级：\n%s", e.upgrades())
+			}
+			out := e.mustRun("evolve", "upgrades")
+			for _, want := range []string{"升级 " + verA + " → " + verB, "手动装的", "观察期：升级后 0/3 个任务"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("agentq evolve upgrades 缺 %s：\n%s", want, out)
+				}
+			}
+
+			if !bad {
+				e.seedJobs(at, state.StatusDone, "o1", "o2", "o3")
+				e.mustRun("tick")
+				if out := e.mustRun("evolve", "upgrades"); !strings.Contains(out, "观察期没变差 "+verB) {
+					t.Fatalf("跑完 3 个任务没变差要留下：\n%s", out)
+				}
+				return
+			}
+			e.seedJobs(at, state.StatusFailed, "q1", "q2")
+			e.seedJobs(at.Add(5*time.Minute), state.StatusTimeout, "q3")
+			e.mustRun("tick")
+			e.waitUpgrade("rollback")
+			if v := e.version(); v != verA || generation(t, e.home) != genA {
+				t.Fatalf("手动装的变差了要回滚到上一代（%s %s）：%s %s", verA, genA, v, generation(t, e.home))
+			}
+			e.mustRun("tick")
+			if n := strings.Count(e.upgrades(), "手动装的"); n != 1 {
+				t.Fatalf("回滚回来的那一代有记录，不再补记：\n%s", e.upgrades())
+			}
+		})
+	}
+}
+
+// version 是装着的这一代报的版本（去掉「agentq 」）。
+func (e *testEnv) version() string {
+	return strings.TrimPrefix(strings.TrimSpace(e.mustRun("version")), "agentq ")
 }

@@ -448,6 +448,16 @@ func DoneMergeCommit(text, title string) string {
 	return ""
 }
 
+// FinishedCommit：标题为 title 的条目做完了写的合并提交。「待做」里还有同标题的条目（比如标了卡住没合并）就不算，免得带出以前同名条目的旧号。
+func FinishedCommit(text, title string) string {
+	for _, it := range ParseBacklog(text) {
+		if it.Title == title {
+			return ""
+		}
+	}
+	return DoneMergeCommit(text, title)
+}
+
 func ItemTitle(text string) string {
 	t := stripMarks(waitCondRe.ReplaceAllString(InProgressRe.ReplaceAllString(text, ""), ""))
 	if i := strings.Index(t, "——"); i >= 0 {

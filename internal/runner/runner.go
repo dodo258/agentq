@@ -239,7 +239,7 @@ type Hooks struct {
 	ChatFilesDir    func(id string) string
 	FollowupRequest func(cfg config.Config, prompt, project, title, session, filesDir string) backend.Request
 	DiscussRequest  func(cfg config.Config, prompt, project, session string) backend.Request
-	PMRequest       func(cfg config.Config, prompt, project, session string) backend.Request
+	PMRequest       func(cfg config.Config, prompt, project, session, workDir string) backend.Request
 	// ConstraintsNote：这个项目学到的约束（门拦过、确认过的事），接在新任务合同末尾。没接或返回空时提示词一字不变。
 	ConstraintsNote func(project string) string
 
