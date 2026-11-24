@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -137,6 +138,85 @@ func TestReviewRequest(t *testing.T) {
 		if !strings.Contains(args, want) {
 			t.Errorf("缺 %s：%s", want, args)
 		}
+	}
+}
+
+// 一条发现只写得下一个文件，要跟着改的写在证据、复现里：带行号点到的仓库文件都进退回范围，下一轮改它们不算越界。
+// 照任务 1123-144152-huitai：发现写 src/ui/balance.rs，证据点名的快照 tests/ui_snapshots/balance-reset.txt 没进范围。
+// 说明（note）点到的、没改过的方案和指令文件（被引用的依据）、仓库里没有的、不带行号的不算。
+func TestReviewScopeTakesCitedFiles(t *testing.T) {
+	const snap = "tests/ui_snapshots/balance-reset.txt"
+	f := newReviewFix(t, fixBacklog, testkit.AllCaps(),
+		reply("block",
+			finding("src/ui/balance.rs", 2, "blocker", snap+":17 的 Kimi 一行没有「非公开接口」；规则在`src/quota/rules.json:105`、src/quota/plain.rs，要求见 docs/specs/v2.md:84 和 AGENTS.md:3，src/none.rs:1", "cargo test 后看 layout.rs:9"),
+			finding("src/ui/balance.rs", 1, "hint", "src/other.rs:1 只是说明", "")),
+		reply("pass"))
+	f.commitMain(map[string]string{"src/quota/rules.json": "{}", "src/quota/plain.rs": "p", "src/other.rs": "o", "src/host/layout.rs": "l", "docs/specs/v2.md": "方案", "AGENTS.md": "规矩"})
+	j := f.job(map[string]string{"src/ui/balance.rs": "一\n二\n", snap: "旧快照\n"})
+	res := f.run(j)
+	if r := reviewResult(t, res); r.Outcome != gate.Fail || !slices.Equal(r.Files, []string{"src/ui/balance.rs"}) {
+		t.Fatalf("%+v", r)
+	}
+	if want := []string{"src/host/layout.rs", "src/quota/rules.json", "src/ui/balance.rs", snap}; !slices.Equal(res.Scope, want) {
+		t.Fatalf("范围 %v，要 %v", res.Scope, want)
+	}
+	f.collect(j, res)
+	if !strings.Contains(f.a.ReturnNote(j), snap) {
+		t.Errorf("退回提示没写快照：%s", f.a.ReturnNote(j))
+	}
+	f.commit(filepath.Join(f.dir, ".claude", "worktrees", "x"), map[string]string{"src/ui/balance.rs": "一\n修\n", snap: "新快照\n"}, ready("agent/x"))
+	j2 := f.nextRound(j)
+	j2.Backend = f.name
+	res = f.run(j2)
+	if r, ran := resultOf(res, "scope"); !ran || r.Outcome != gate.Pass || res.Outcome != "merged" {
+		t.Fatalf("改报告点名的快照不算越界：%+v", res)
+	}
+}
+
+// 这一轮删掉的文件、新加的指令文件（审查前换回基点，不在候选的索引里）被点到，同样进退回范围：照报告改不算越界。
+func TestReviewScopeTakesCitedChangedFiles(t *testing.T) {
+	for _, tc := range []struct{ name, evidence, file string }{
+		{"删掉的", "src/old.txt:5 的处理被删了，要恢复", "src/old.txt"},
+		{"删掉的只写文件名", "old.txt:5 的处理被删了，要恢复", "src/old.txt"},
+		{"新加的指令文件", "和 src/CLAUDE.md:1 写的不一致，两处一起改", "src/CLAUDE.md"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newReviewFix(t, fixBacklog, testkit.AllCaps(), reply("block", finding("src/a.txt", 1, "blocker", tc.evidence, "跑")), reply("pass"))
+			f.commitMain(map[string]string{"src/old.txt": "旧\n"})
+			j := f.job(map[string]string{"src/a.txt": "a\n"})
+			wt := filepath.Join(f.dir, ".claude", "worktrees", "x")
+			files := map[string]string{"src/a.txt": "a1\n"}
+			if tc.file == "src/old.txt" {
+				testkit.GitT(t, f.home, wt, "rm", "-q", tc.file)
+			} else {
+				files[tc.file] = "规矩\n"
+			}
+			f.commit(wt, files, ready("agent/x"))
+			res := f.run(j)
+			want := []string{"src/a.txt", tc.file}
+			slices.Sort(want)
+			if res.Outcome != "fail" || !slices.Equal(res.Scope, want) {
+				t.Fatalf("范围 %v，要 %v：%+v", res.Scope, want, res)
+			}
+			f.collect(j, res)
+			f.commit(wt, map[string]string{"src/a.txt": "a2\n", tc.file: "改\n"}, ready("agent/x"))
+			j2 := f.nextRound(j)
+			j2.Backend = f.name
+			res = f.run(j2)
+			if r, ran := resultOf(res, "scope"); !ran || r.Outcome != gate.Pass || res.Outcome != "merged" {
+				t.Fatalf("改报告点到的文件不算越界：%+v", res)
+			}
+		})
+	}
+}
+
+// 审查点到的文件只会放宽范围：发现写的是测试文件时，证据点到一处不相干的代码，这一轮改的代码照旧在范围里。
+func TestReviewCitedFilesOnlyWiden(t *testing.T) {
+	f := newReviewFix(t, fixBacklog, testkit.AllCaps(), reply("block", finding("e2e/tests/a.txt", 1, "blocker", "main.go:1 的写法不受影响，lib/a.go 才错", "跑测试")))
+	f.commitMain(map[string]string{"main.go": "m"})
+	res := f.run(f.job(map[string]string{"lib/a.go": "a", "e2e/tests/a.txt": "t"}))
+	if want := []string{"e2e/tests/a.txt", "lib/a.go", "main.go"}; !slices.Equal(res.Scope, want) {
+		t.Fatalf("范围 %v，要 %v", res.Scope, want)
 	}
 }
 

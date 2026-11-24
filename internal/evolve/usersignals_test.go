@@ -682,3 +682,42 @@ func TestPlanSignalOnlyChangeStops(t *testing.T) {
 	}
 	r.noCLI()
 }
+
+// 照任务 1123-000756-huitai：冲突不占轮数以前的版本，最后一轮只因合并冲突也写成「退回用完」，任务记录里只有 merge 的结论。
+// 没有一道检查看过改动，不是条目拆法的问题：收的时候不记，以前记下的重判时去掉。
+func TestPlanSignalConflictOnlyNotPlan(t *testing.T) {
+	r := newSigRig(t, nil)
+	plan := fmt.Sprintf("退回 %d 轮还没过，多半是计划（条目拆法）的问题：建议重新拆或改验收。最后一次：", gate.MaxRounds)
+	stuck := func(id, report string, tally map[string]*state.GateTally) {
+		r.meta(&state.Job{ID: id, Project: "huitai", Title: "条目 " + id, Status: state.StatusInterrupted,
+			Gate: &state.GateRecord{State: state.GateStuck, Branch: "agent/" + id, Round: gate.MaxRounds, Report: report, Tally: tally}})
+	}
+	stuck("只冲突", plan+"和最新 main 有冲突：AGENTS.md", map[string]*state.GateTally{"merge": {Fail: 1}})
+	stuck("审查没过", plan+"review：审查发现 1 个有证据的问题", map[string]*state.GateTally{"test": {Pass: 1}, "review": {Fail: 1}})
+	stuck("冲突后没过", plan+"review：审查发现 1 个有证据的问题", map[string]*state.GateTally{"merge": {Fail: 1}, "review": {Fail: 1}})
+	r.collect()
+	want := []string{"任务 冲突后没过（huitai）", "任务 审查没过（huitai）"}
+	got := func() []string {
+		plans := r.signals(KindPlan)
+		if len(plans) != 1 {
+			t.Fatalf("%+v", plans)
+		}
+		return slices.Sorted(slices.Values(plans[0].Evidence))
+	}
+	if ev := got(); !slices.Equal(ev, want) {
+		t.Fatalf("%v", ev)
+	}
+
+	// 旧规则记下的：重判时去掉只冲突的那份
+	st := r.store()
+	i := slices.IndexFunc(st.Signals, func(sig Signal) bool { return sig.Kind == KindPlan })
+	st.Signals[i].Evidence = append(st.Signals[i].Evidence, "任务 只冲突（huitai）")
+	st.Signals[i].Seen++
+	r.write(r.s.SignalsPath(), st)
+	r.now = r.now.Add(2 * time.Hour)
+	r.meta(&state.Job{ID: "新数据", Project: "ops"})
+	r.collect()
+	if ev := got(); !slices.Equal(ev, want) {
+		t.Fatalf("%v", ev)
+	}
+}

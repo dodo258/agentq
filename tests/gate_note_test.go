@@ -23,6 +23,7 @@ esac
 // 验收：任务改名了测试函数、没写门说明。交了 ready.json 进门之前就被要回补：同一会话续一轮只补说明，
 // 不进门、不算审查轮次；补上了门只跑一次、第 0 轮合并。补了还缺照常进门，由测试门退回。
 func TestIntegrationNoteAskedBeforeGate(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, title string
 		fixes       bool

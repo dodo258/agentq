@@ -157,6 +157,7 @@ func TestFastRunning(t *testing.T) {
 
 // 回复别的消息、带附件的，哪怕文字一样也交给模型：可能在说那件事。
 func TestFastNotForRepliesAndAttachments(t *testing.T) {
+	t.Parallel()
 	for _, text := range []string{"暂停", "恢复", "额度", "在跑什么", "停 1104-120000-demo"} {
 		t.Run(text, func(t *testing.T) {
 			e := newNotifyEnv(t, true)

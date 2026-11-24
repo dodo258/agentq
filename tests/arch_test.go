@@ -202,6 +202,7 @@ var (
 )
 
 func TestArchClaudeFlagsOnlyInBackend(t *testing.T) {
+	t.Parallel()
 	check := func(pkg, path string) {
 		src, err := os.ReadFile(path)
 		if err != nil {
@@ -423,6 +424,7 @@ var (
 )
 
 func TestArchSingletons(t *testing.T) {
+	t.Parallel()
 	check := func(pkg, path string) {
 		b, err := os.ReadFile(path)
 		if err != nil {

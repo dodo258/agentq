@@ -1089,6 +1089,7 @@ func duringAuthCheck(t *testing.T, e *testEnv, during string) {
 
 // 查登录和额度最多要一分多钟，这期间 pause 了，同一次 tick 不能再启动任务。
 func TestRegressPauseDuringReadyStartsNothing(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	testkit.MkProject(t, e.root, "alpha", "- [ ] 甲一 —— SLEEP=30\n")
 	duringAuthCheck(t, e, fmt.Sprintf("%q pause >/dev/null 2>&1", agentqBin))
@@ -1104,6 +1105,7 @@ func TestRegressPauseDuringReadyStartsNothing(t *testing.T) {
 
 // 接活之前配置坏了：不知道有没有暂停，这次不接活，要记日志。
 func TestRegressConfigBrokenDuringReadyStartsNothing(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	testkit.MkProject(t, e.root, "alpha", "- [ ] 甲一 —— SLEEP=30\n")
 	duringAuthCheck(t, e, fmt.Sprintf("printf '{坏' > %q", filepath.Join(e.home, ".agentq", "config.json")))

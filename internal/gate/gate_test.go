@@ -1121,6 +1121,37 @@ func TestRunScript(t *testing.T) {
 	})
 }
 
+// 门进程杀在 git worktree add 半路上：git 里留着一条带 initializing 锁的记录，目录没了或里面还没有 .git。prune 不清带锁的，
+// 下次门要照样建得起来、合得进去，记录不留下。
+func TestLockedWorktreeLeftover(t *testing.T) {
+	for name, breakWt := range map[string]func(wt string) error{
+		"目录没了":       os.RemoveAll,
+		"目录里没有 .git": func(wt string) error { return os.Remove(filepath.Join(wt, ".git")) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFix(t, fixBacklog)
+			j := f.claim("做事", "agent/x", map[string]string{"a.txt": "a"}, ready("agent/x"))
+			wt := gate.Worktree(f.a.Dir(j.ID))
+			f.git("worktree", "add", "--detach", "--quiet", wt, "main")
+			if err := os.WriteFile(filepath.Join(f.dir, ".git", "worktrees", filepath.Base(wt), "locked"), []byte("initializing"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := breakWt(wt); err != nil {
+				t.Fatal(err)
+			}
+			if res := f.run(j); res.Outcome != "merged" {
+				t.Fatalf("留着带锁的记录也要合得进去：%+v", res)
+			}
+			if f.git("show", "main:a.txt") != "a" {
+				t.Error("a.txt 没进 main")
+			}
+			if out := f.git("worktree", "list", "--porcelain"); strings.Contains(out, "locked") || strings.Contains(out, j.ID) {
+				t.Errorf("记录要清掉：%s", out)
+			}
+		})
+	}
+}
+
 // 升级：老任务还标着核验在跑，改记未知、清 worktree；没写进去的修回归不写了；老进程还活着就等它。老记录其余字段不动。
 func TestMigrateVerify(t *testing.T) {
 	f := newFix(t, fixBacklog)

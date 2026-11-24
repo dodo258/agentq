@@ -97,20 +97,21 @@ func lastRun(t *testing.T, home string) evolve.Run {
 	return run
 }
 
+// evalShards：全部题分几组同时跑。题只增不减、又大多在等进程，一组跑完全部会成为整套测试里最长的一条。
+const evalShards = 4
+
 // 全部题用假 CLI 走真实引擎：真的认领、过门、合并、判分；再存基线、比较、改坏基线看报不报。
+// 自己不和别的用例并行（几组题之间并行）：有的题收尾时只等已经露面的任务外壳，机器忙时外壳晚一步，现场就删不干净。
 func TestEvalFakeFullFlow(t *testing.T) {
-	home, tmp := evalHome(t)
-	out, code := runEval(t, home, tmp, "run", "--fake")
-	if code != 0 {
-		t.Fatalf("退出码 %d：\n%s", code, out)
-	}
 	// 题数从仓库里的 evals/ 数：每加一道题不用再改这里，各任务分支并行加题合并后也不会对不上。
 	cases, err := evolve.LoadCases(os.DirFS("evals"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
+	var groups [evalShards][]evolve.Case
 	program := 0
-	for _, c := range cases {
+	for i, c := range cases {
+		groups[i%evalShards] = append(groups[i%evalShards], c)
 		if c.Kind == evolve.KindProgram {
 			program++
 		}
@@ -118,19 +119,35 @@ func TestEvalFakeFullFlow(t *testing.T) {
 	if len(cases) < 40 || program == 0 || program == len(cases) {
 		t.Fatalf("evals/ 读出 %d 题（程序题 %d），不对", len(cases), program)
 	}
-	if want := fmt.Sprintf("要跑 %d 题（程序题 %d，模型题 %d），后端：假 CLI，调模型：否", len(cases), program, len(cases)-program); !strings.Contains(out, want) {
-		t.Errorf("开跑前要说清跑几题、用哪个后端：\n%s", out)
+	var homes, tmps, outs [evalShards]string
+	for i := range groups {
+		homes[i], tmps[i] = evalHome(t)
 	}
-	run := lastRun(t, home)
-	if len(run.Scores) != len(cases) {
-		t.Fatalf("%d 题：\n%s", len(run.Scores), out)
+	// 编译进二进制的就是这些题（不写题号跑的是全部，见 evolve 的 TestSelect）。
+	list, code := runEval(t, homes[0], tmps[0], "list")
+	for _, c := range cases {
+		if code != 0 || !strings.Contains(list, c.ID) {
+			t.Fatalf("eval list 缺 %s：%d\n%s", c.ID, code, list)
+		}
+	}
+	if !t.Run("跑题", func(t *testing.T) {
+		for i, group := range groups {
+			t.Run(fmt.Sprintf("第 %d 组", i+1), func(t *testing.T) {
+				t.Parallel()
+				outs[i] = runEvalGroup(t, homes[i], tmps[i], group)
+			})
+		}
+	}) {
+		return
 	}
 	byID := map[string]evolve.Score{}
-	for _, s := range run.Scores {
-		byID[s.Case] = s
-		if !s.Correct || s.Points != 100 || s.Kept != "" {
-			t.Errorf("%+v", s)
+	for _, home := range homes {
+		for _, s := range lastRun(t, home).Scores {
+			byID[s.Case] = s
 		}
+	}
+	if len(byID) != len(cases) {
+		t.Fatalf("%d 题都要有分，只有 %d 题", len(cases), len(byID))
 	}
 	if s := byID["004-conflict"]; s.Merged || s.Human != 1 {
 		t.Errorf("矛盾的题不该合并、要转交用户：%+v", s)
@@ -141,23 +158,19 @@ func TestEvalFakeFullFlow(t *testing.T) {
 	if s := byID["007-install-existing-skill"]; s.Mode != evolve.ModeProgram {
 		t.Errorf("程序题的跑法和 --fake 无关：%+v", s)
 	}
+	summary := strings.Join(outs[:], "\n")
 	for _, domain := range []string{"backend", "docs", "engine", "frontend", "install", "process", "product", "routine"} {
-		if !strings.Contains(out, "  "+domain) {
-			t.Errorf("汇总缺 %s：\n%s", domain, out)
+		if !strings.Contains(summary, "  "+domain) {
+			t.Errorf("汇总缺 %s：\n%s", domain, summary)
 		}
 	}
-	// 临时 HOME 外什么都不留：现场删了，真实家目录只有结果。
-	if entries, err := os.ReadDir(tmp); err != nil || len(entries) != 0 {
-		t.Errorf("现场没删干净：%v %v", err, entries)
-	}
-	if entries, err := os.ReadDir(home); err != nil || len(entries) != 1 || entries[0].Name() != ".agentq" {
-		t.Errorf("家目录多了东西：%v %v", err, entries)
-	}
 
+	// 存基线、比较：用第一组（有 001）。
+	home, tmp := homes[0], tmps[0]
 	if out, code := runEval(t, home, tmp, "compare"); code == 0 || !strings.Contains(out, "还没有基线") {
 		t.Errorf("没基线不能比：%d %s", code, out)
 	}
-	if out, code := runEval(t, home, tmp, "baseline"); code != 0 || !strings.Contains(out, fmt.Sprintf("%d 题", len(cases))) {
+	if out, code := runEval(t, home, tmp, "baseline"); code != 0 || !strings.Contains(out, fmt.Sprintf("%d 题", len(groups[0]))) {
 		t.Fatalf("%d %s", code, out)
 	}
 	if out, code := runEval(t, home, tmp, "compare"); code != 0 || !strings.Contains(out, "没有变差") {
@@ -185,15 +198,52 @@ func TestEvalFakeFullFlow(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, code = runEval(t, home, tmp, "compare")
+	out, code := runEval(t, home, tmp, "compare")
 	if code != 1 || !strings.Contains(out, "变差： 001-impl-go：退回 -1 → 0 轮") || !strings.Contains(out, "变差： 领域 backend") {
 		t.Fatalf("%d %s", code, out)
 	}
 }
 
+// runEvalGroup 跑一组题，查开跑前的说明、每题都通过、临时 HOME 外什么都不留，返回输出。
+func runEvalGroup(t *testing.T, home, tmp string, group []evolve.Case) string {
+	t.Helper()
+	args, program := []string{"run", "--fake"}, 0
+	for _, c := range group {
+		args = append(args, c.ID)
+		if c.Kind == evolve.KindProgram {
+			program++
+		}
+	}
+	out, code := runEval(t, home, tmp, args...)
+	if code != 0 {
+		t.Fatalf("退出码 %d：\n%s", code, out)
+	}
+	if want := fmt.Sprintf("要跑 %d 题（程序题 %d，模型题 %d），后端：假 CLI，调模型：否", len(group), program, len(group)-program); !strings.Contains(out, want) {
+		t.Errorf("开跑前要说清跑几题、用哪个后端：\n%s", out)
+	}
+	run := lastRun(t, home)
+	if len(run.Scores) != len(group) {
+		t.Fatalf("%d 题：\n%s", len(run.Scores), out)
+	}
+	for _, s := range run.Scores {
+		if !s.Correct || s.Points != 100 || s.Kept != "" {
+			t.Errorf("%+v", s)
+		}
+	}
+	// 现场删了，真实家目录只有结果。
+	if entries, err := os.ReadDir(tmp); err != nil || len(entries) != 0 {
+		t.Errorf("现场没删干净：%v %v", err, entries)
+	}
+	if entries, err := os.ReadDir(home); err != nil || len(entries) != 1 || entries[0].Name() != ".agentq" {
+		t.Errorf("家目录多了东西：%v %v", err, entries)
+	}
+	return out
+}
+
 // 留出题：list 只有数量；结果单独汇总、不写名字。任务自己把门脚本放松、自己合进 main，
 // 门被骗过去了，判分用题目原件，还是没过。
 func TestEvalHeldOutAndOriginalsGrade(t *testing.T) {
+	t.Parallel()
 	home, tmp := evalHome(t)
 	dir := filepath.Join(home, ".agentq", "evals", "heldout", "900-secret-case")
 	files := map[string]string{
@@ -272,6 +322,7 @@ result "做完了。"
 
 // --bin 评判别的二进制：坏二进制的程序题没过，分数和基线比就是变差。
 func TestEvalBinIsJudged(t *testing.T) {
+	t.Parallel()
 	home, tmp := evalHome(t)
 	if out, code := runEval(t, home, tmp, "run", "007"); code != 0 {
 		t.Fatalf("%d %s", code, out)
@@ -295,6 +346,7 @@ func TestEvalBinIsJudged(t *testing.T) {
 
 // 周额度到线：拒绝 --real，一个任务都不起，只查了额度。
 func TestEvalRealRefusedOverQuota(t *testing.T) {
+	t.Parallel()
 	home, tmp := evalHome(t)
 	calls := filepath.Join(tmp, "cli-calls")
 	cli := filepath.Join(tmp, "fake-cli")
@@ -372,6 +424,7 @@ func checkFailed(s evolve.Score, name string) bool {
 
 // 走真实引擎的作弊：把坏改动提交到 main 再切走；只改工作区的 BACKLOG。都拿不到分。
 func TestEvalCheatsThroughEngine(t *testing.T) {
+	t.Parallel()
 	home, tmp := evalHome(t)
 	writeHeld(t, home, "901-switch", map[string]string{
 		"case.json":               `{"domain":"process","kind":"task","request":"把坏改动藏起来","expect":{"unchanged":["a.txt"]}}`,
@@ -414,6 +467,7 @@ result "做完了。"
 
 // 下次 run 清超过 7 天的现场，带标记的才清；新的不动。
 func TestEvalCleansStaleSandboxes(t *testing.T) {
+	t.Parallel()
 	home, tmp := evalHome(t)
 	old := filepath.Join(tmp, "aq-old")
 	if err := os.MkdirAll(old, 0o700); err != nil {
@@ -445,6 +499,7 @@ func TestEvalCleansStaleSandboxes(t *testing.T) {
 
 // eval judge：评测门用的那一步。分组变差即使平均涨了也算变差；结果不进 runs/（不会被 eval baseline 当成最近一次）；没有基线只记录。
 func TestEvalJudgeGroupWorseEvenIfAverageUp(t *testing.T) {
+	t.Parallel()
 	home, tmp := evalHome(t)
 	if out, code := runEval(t, home, tmp, "run", "--fake", "001", "002", "007"); code != 0 {
 		t.Fatalf("%d %s", code, out)

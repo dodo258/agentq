@@ -132,6 +132,7 @@ func TestCardFallsBackToText(t *testing.T) {
 
 // 点按钮：写进 BACKLOG 并提交（和 decide 同一条路）、消息改成结论、不起模型；重复点只生效一次。
 func TestCardClick(t *testing.T) {
+	t.Parallel()
 	e, p := cdEnv(t, "")
 	e.flush()
 	addDecision(t, e, p, "- [ ] 用哪个库 —— 说明（选项：A 用标准库｜B 用第三方；推荐 A）")
@@ -180,6 +181,7 @@ func TestCardClick(t *testing.T) {
 
 // 不是用户、过期、乱写的 data、指纹变了、条目没了：都要回应，都不生效。
 func TestCardRefused(t *testing.T) {
+	t.Parallel()
 	e, p := cdEnv(t, "")
 	e.flush()
 	addDecision(t, e, p, "- [ ] 用哪个库 —— 说明（选项：A 用标准库｜B 用第三方；推荐 A）")
@@ -247,6 +249,7 @@ func TestCardRefused(t *testing.T) {
 
 // 主目录脏：没定成就不算定了，能再点。
 func TestCardCommitFails(t *testing.T) {
+	t.Parallel()
 	e, p := cdEnv(t, "")
 	e.flush()
 	addDecision(t, e, p, "- [ ] 用哪个库 —— 说明（选项：A 用标准库｜B 用第三方；推荐 A）")
@@ -361,6 +364,7 @@ func TestAllowedUpdates(t *testing.T) {
 
 // notify.json 写坏成 "cards":{"x":null} 也不能崩：点按钮照常回应。
 func TestCardNullInNotifyJSON(t *testing.T) {
+	t.Parallel()
 	e, p := cdEnv(t, "")
 	e.flush()
 	addDecision(t, e, p, "- [ ] 用哪个库 —— 说明（选项：A 用标准库｜B 用第三方；推荐 A）")

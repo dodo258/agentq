@@ -54,6 +54,7 @@ func expireCodexUsage(t *testing.T, e *testEnv) {
 
 // Codex 后端领活前读订阅额度：有 5 小时窗口就按 usage_stop_session_pct，只有周窗口只按周，读不出当未知照常跑；status 的额度一行显示 Codex 各窗口。
 func TestCodexUsageGate(t *testing.T) {
+	t.Parallel()
 	e := codexEnv(t, map[string]any{"usage_stop_session_pct": 80, "usage_stop_week_pct": 50})
 	e.extra = append(e.extra, "CODEX_HOME="+filepath.Join(e.home, "ch"), "OPENAI_API_KEY=k1", "CODEX_API_KEY=k2")
 	testkit.MkProject(t, e.root, "alpha", codexItem("aaa", "ok")+"\n")
@@ -95,6 +96,7 @@ func TestCodexUsageGate(t *testing.T) {
 
 // 读不出（老版本没有这个方法、没登录 ChatGPT……）：当未知，照常领活，status 和汇总写明。
 func TestCodexUsageUnknown(t *testing.T) {
+	t.Parallel()
 	e := codexEnv(t, nil)
 	testkit.MkProject(t, e.root, "alpha", codexItem("bbb", "ok")+"\n")
 	out := e.mustRun("tick") // 没有 fake/quota.json：假 app-server 回报错

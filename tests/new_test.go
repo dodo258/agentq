@@ -1260,6 +1260,7 @@ func TestIntegrationNewOnMaster(t *testing.T) {
 
 // new 任务还在跑时，它的第一条不算孤儿：标记时间再老、分支还没提交，也不能被去掉。不然结尾的分支对不上，第一条改认不了。
 func TestOrphanScanSkipsRunningNew(t *testing.T) {
+	t.Parallel()
 	st := &State{Jobs: []*Job{{Kind: state.KindNew, Status: state.StatusRunning, ProjectsBefore: []string{"old"}}}}
 	if !st.NewProjectBusy("fresh") || st.NewProjectBusy("old") {
 		t.Errorf("启动后才出现的算它的")

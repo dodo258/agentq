@@ -31,6 +31,7 @@ func excludeEnv(t *testing.T, cfg map[string]any) (*testEnv, bl.Project, bl.Proj
 
 // tick 不接被排除项目的活，别的项目照常；进行中标记也不碰。
 func TestExcludeTickLeavesProjectAlone(t *testing.T) {
+	t.Parallel()
 	e, secret, _ := excludeEnv(t, nil)
 	stale := strings.Replace(excludeBacklog, "- [ ] 碰不得的活 —— 细节", "- [ ] 碰不得的活 —— 细节（进行中：agent/x 2020-01-01 10:00）", 1)
 	testkit.WriteInstall(t, secret.BacklogPath(), stale, 0o644)
@@ -54,6 +55,7 @@ func TestExcludeTickLeavesProjectAlone(t *testing.T) {
 
 // agentq run 明确指定时仍可跑，提示一句；tick 之后不接着续跑它。
 func TestExcludeExplicitRun(t *testing.T) {
+	t.Parallel()
 	e, secret, _ := excludeEnv(t, map[string]any{"paused": true})
 	testkit.WriteInstall(t, secret.BacklogPath(), strings.Replace(excludeBacklog, "碰不得的活 —— 细节", "碰不得的活 INTERRUPT", 1), 0o644)
 	testkit.GitT(t, e.home, secret.Dir, "commit", "-q", "-am", "x")
@@ -78,6 +80,7 @@ func TestExcludeExplicitRun(t *testing.T) {
 
 // 被排除的项目：tick 自己起的任务（排除前起的）中断了不自动续跑，摘要写清怎么接；agentq run 能接上。
 func TestExcludeAutoJobNotResumed(t *testing.T) {
+	t.Parallel()
 	e, secret, _ := excludeEnv(t, map[string]any{"paused": true})
 	testkit.WriteInstall(t, secret.BacklogPath(), strings.Replace(excludeBacklog, "碰不得的活 —— 细节", "碰不得的活 INTERRUPT", 1), 0o644)
 	testkit.GitT(t, e.home, secret.Dir, "commit", "-q", "-am", "x")
@@ -109,6 +112,7 @@ func TestExcludeAutoJobNotResumed(t *testing.T) {
 
 // status 列出被排除的项目，不把它算进待做。
 func TestExcludeStatus(t *testing.T) {
+	t.Parallel()
 	e, _, _ := excludeEnv(t, map[string]any{"paused": true})
 	out := e.mustRun("status")
 	testkit.AssertContains(t, out, "exclude_projects", "secret", "open：")
@@ -220,6 +224,7 @@ func TestExcludeJobBookkeepingLeavesBacklog(t *testing.T) {
 
 // 真流程：明确跑的任务中断后，tick 和巡逻都不往被排除项目提交，等着的续跑也放掉并说明。
 func TestExcludeInterruptedRunEndToEnd(t *testing.T) {
+	t.Parallel()
 	e, secret, _ := excludeEnv(t, map[string]any{"paused": true})
 	testkit.WriteInstall(t, secret.BacklogPath(), strings.Replace(excludeBacklog, "碰不得的活 —— 细节", "碰不得的活 INTERRUPT", 1), 0o644)
 	testkit.GitT(t, e.home, secret.Dir, "commit", "-q", "-am", "x")
@@ -271,6 +276,7 @@ func TestExcludeProjectsPromptsAndDocs(t *testing.T) {
 
 // 被排除的项目里亲手启动的条目第一轮门没过：和普通项目一样退回，tick 用同一会话接着改（不是直接卡住等人点）。
 func TestExcludeManualGateReturnResumes(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"notify_enabled": false, "exclude_projects": []string{"demo"}})
 	verifyRepo(t, e, "demo", "#!/bin/sh\necho 就是不过\nexit 1\n", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
 	testkit.AssertContains(t, e.mustRun("run", "demo", "修东西"), "已启动任务", "门退回或中断了 tick 也会接着做")

@@ -69,6 +69,7 @@ func TestStatePruneAndFind(t *testing.T) {
 // 状态文件内容坏了：tick 备份坏文件、按 meta.json 重建（读不出的 meta.json 跳过并报出来），
 // 用量冷却按撞上限任务的结束时间估回来；那次不启动任务。
 func TestTickRecoversCorruptState(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	root := t.TempDir()
 	testkit.MkProject(t, root, "alpha", "- [ ] 一条活 —— x\n")

@@ -86,6 +86,7 @@ func (f exportFixture) runRepo(t *testing.T, out, repo string) (string, int) {
 }
 
 func TestExportPublic(t *testing.T) {
+	t.Parallel()
 	clean := map[string]string{"README.md": "下载 <owner>/agentq\n"}
 
 	t.Run("干净的导出：去掉私有路径，填仓库名，不带 git，工作区改动不算", func(t *testing.T) {

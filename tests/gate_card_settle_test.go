@@ -58,6 +58,7 @@ func settledEdit(t *testing.T, e *notifyEnv, msgID int64) string {
 
 // 命令行放行后、tick 落决定前点卡片：回已经定过（谁定的、选了什么），消息改成结论，不改写命令行的决定。
 func TestGateCardAfterCommandPass(t *testing.T) {
+	t.Parallel()
 	e, j, btns, msgID := gateCardEnv(t)
 	if err := e.a.Gate.CmdGate([]string{"pass", j.ID, "--reason", "命令行看过了"}); err != nil {
 		t.Fatal(err)

@@ -43,6 +43,7 @@ func qualityRepo(t *testing.T, dir string) func(msg string, at time.Time) string
 
 // 有意见、无意见、判断不了三种，加上正文顺带提到「验收」「的意见」的反例、本条自己分支上的提交、窗口外的旧提交。
 func TestQuality(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	now := time.Date(2026, 10, 11, 12, 0, 0, 0, time.Local)
 	day := func(d, h int) time.Time { return time.Date(2026, 10, d, h, 0, 0, 0, time.Local) }

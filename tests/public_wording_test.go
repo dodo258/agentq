@@ -74,6 +74,7 @@ func TestNoOwnerWordingInPublicSources(t *testing.T) {
 
 // 公开候选里不带指向维护者记录的引用：这些文件对外不存在。普通项目自己的 docs/specs、docs/BACKLOG.md 是另一回事，查的是带日期的具体文件和维护者才有的文件。
 func TestNoPrivateRecordRefsInPublicSources(t *testing.T) {
+	t.Parallel()
 	ref := regexp.MustCompile(`docs/(specs|research)/20\d\d-|docs/verification/|docs/VISION|docs/ASSETS|docs/audit-|（方案 [P0-9]`)
 	for _, path := range publicFiles(t) {
 		if path == "tests/public_wording_test.go" || path == "config/clean-source.json" {

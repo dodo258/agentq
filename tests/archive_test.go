@@ -298,6 +298,7 @@ func TestCmdBacklogArchiveArgs(t *testing.T) {
 // 同一份 fixture 归档前后 agentq quality 输出相同：窗口内条目（含有验收意见的）都在 14 天保留范围里，
 // 指向窗口内条目、自身没有合并号的验收意见排在 20 条之外也不移走。
 func TestArchiveKeepsQualityOutput(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	day := func(d int) time.Time { return now.Add(-time.Duration(d) * 24 * time.Hour) }
 	a, out, p := archiveFixture(t, "placeholder\n")

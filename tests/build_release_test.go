@@ -23,6 +23,7 @@ func sha256Hex(b []byte) string {
 
 // 发行构建：四个 tar.gz 和 SHA256SUMS，包里只有 agentq，本平台的程序带版本号；CGO 关闭后仍能编译。
 func TestBuildReleaseScript(t *testing.T) {
+	t.Parallel()
 	out := filepath.Join(t.TempDir(), "dist with space")
 	cmd := exec.Command("/bin/sh", filepath.Join("scripts", "build-release.sh"), "v9.8.7-test", out, "some-owner/agentq")
 	if b, err := cmd.CombinedOutput(); err != nil {

@@ -565,6 +565,7 @@ func systemdPatrolEnv(t *testing.T) (*patrolEnv, *fakeSystemd) {
 }
 
 func TestSystemdPatrolHealthy(t *testing.T) {
+	t.Parallel()
 	e, f := systemdPatrolEnv(t)
 	r := e.patrol()
 	for _, is := range r.New {
@@ -583,6 +584,7 @@ func TestSystemdPatrolHealthy(t *testing.T) {
 }
 
 func TestSystemdPatrolFailures(t *testing.T) {
+	t.Parallel()
 	e, f := systemdPatrolEnv(t)
 	label := e.a.Service.ServiceLabel()
 	logp := filepath.Join(e.a.Home, ".agentq", "launchd.log")
@@ -623,6 +625,7 @@ func TestSystemdPatrolFailures(t *testing.T) {
 }
 
 func TestSystemdPatrolMissingRoutineAndListen(t *testing.T) {
+	t.Parallel()
 	e, f := systemdPatrolEnv(t)
 	night := e.a.Service.RoutineLabel(config.KindNight)
 	delete(f.enabled, night+".timer")
@@ -679,6 +682,7 @@ func TestSystemdPatrolMissingRoutineAndListen(t *testing.T) {
 }
 
 func TestSystemdPatrolListFailure(t *testing.T) {
+	t.Parallel()
 	e, f := systemdPatrolEnv(t)
 	f.fail["show"] = errors.New("exit status 1")
 	r := e.patrol()

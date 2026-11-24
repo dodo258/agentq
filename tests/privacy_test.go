@@ -210,6 +210,7 @@ func TestPrivacyScanDetectsValuesWithoutPrintingThem(t *testing.T) {
 }
 
 func TestPrivacyScanStagedReadsIndexNotWorkingTree(t *testing.T) {
+	t.Parallel()
 	secret := "private-" + privacyID(t)
 	fixture := newPrivacyFixture(t, map[string]string{"identity": secret})
 	initPrivacyGit(t, fixture)
@@ -260,6 +261,7 @@ func TestPrivacyScanIgnoresGitReplaceObjects(t *testing.T) {
 }
 
 func TestPrivacyScanStagedManifestComesFromIndex(t *testing.T) {
+	t.Parallel()
 	secret := "private-" + privacyID(t)
 	fixture := newPrivacyFixture(t, map[string]string{"identity": secret})
 	initPrivacyGit(t, fixture)
@@ -380,6 +382,7 @@ func TestPrivacyScanPrivateClassificationAndNoTextApprovalBypass(t *testing.T) {
 }
 
 func TestPrivacyScanFailsClosedForInvalidConfiguration(t *testing.T) {
+	t.Parallel()
 	fixture := newPrivacyFixture(t, map[string]string{"sentinel": "not-present-" + privacyID(t)})
 	writePrivacyFile(t, filepath.Join(fixture.repo, "safe.txt"), []byte("safe\n"))
 
@@ -510,6 +513,7 @@ func TestPrivacyScanRejectsExternalSymlink(t *testing.T) {
 }
 
 func TestPrivacyPreCommitRejectsRealCommit(t *testing.T) {
+	t.Parallel()
 	secret := "private-" + privacyID(t)
 	credential := strings.Join([]string{"sk", "ant", strings.Repeat("Q", 28)}, "-")
 	personalPath := filepath.Join(string(os.PathSeparator), "Users", secret, "work")
@@ -587,6 +591,7 @@ func TestPrivacyPreCommitRejectsRealCommit(t *testing.T) {
 }
 
 func TestPrivacyPreCommitHidesPythonSyntaxSource(t *testing.T) {
+	t.Parallel()
 	fixture := newPrivacyFixture(t, map[string]string{"sentinel": "not-present-" + privacyID(t)})
 	initPrivacyGit(t, fixture)
 	privacyScanGit(t, fixture, "config", "core.hooksPath", "/dev/null")
@@ -633,6 +638,7 @@ func TestPrivacyPreCommitHidesPythonSyntaxSource(t *testing.T) {
 }
 
 func TestPrivacySource(t *testing.T) {
+	t.Parallel()
 	root := privacySourceRoot(t)
 	fixture := newPrivacyFixture(t, map[string]string{"source-sentinel": "not-present-" + privacyID(t)})
 	args := []string{"--patterns", fixture.patterns}

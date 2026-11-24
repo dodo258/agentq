@@ -77,6 +77,7 @@ var jobKinds = []string{KindUserStop, KindQuickStop, KindGateOverride, KindPlan}
 //   - gate-override：合并了、是用户放行的，不是门都过了只因为改了尺子等人看（heldOnPurpose）。
 //   - plan：门退回用完、改动本身还没过时写的报告（gate.IsPlanReport）。轮数用完后又停下的不全是这种：门都过了等人拍板、
 //     检查自己出了故障判不了，都和条目拆法无关（11-21 那次把等拍板的、评测题布置不起来的都凑进来写了待做）。
+//     这个任务的门只走到合并那一步、一道检查都没跑的也不算：冲突不占轮数以前的版本会写成退回用完（11-24 那次还留着凑数）。
 func (s *Service) jobCounts(kind string, j *state.Job) bool {
 	switch kind {
 	case KindQuickStop:
@@ -87,9 +88,14 @@ func (s *Service) jobCounts(kind string, j *state.Job) bool {
 		g := j.Gate
 		return g != nil && g.State == state.GateMerged && (g.Passes > 0 || g.Override != "") && !s.heldOnPurpose(j)
 	case KindPlan:
-		return j.Gate != nil && gate.IsPlanReport(j.Gate.Report)
+		return j.Gate != nil && gate.IsPlanReport(j.Gate.Report) && !neverChecked(j.Gate.Tally)
 	}
 	return false
+}
+
+// neverChecked：这个任务的门只走到合并那一步（多半是撞上冲突），没有一道检查看过改动。
+func neverChecked(tally map[string]*state.GateTally) bool {
+	return len(tally) == 1 && tally["merge"] != nil
 }
 
 // jobUndecided：用户停的（刚启动就停的不算），停了还不到 30 分钟、也还没重派，看不出是不是改需求：这次先不收这份任务记录。

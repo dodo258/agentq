@@ -189,8 +189,9 @@ func RunCLI(ctx context.Context, inv backend.Invocation, o CLIOpts) error {
 	return nil
 }
 
-// RemoveWorktree：git 记录和目录都清掉，可以重复调用。--force 两次：被杀时 worktree 可能还带着初始化的锁。
-// 目录已经没了也要 prune，否则 git 里还记着它。只读的（脚本改的权限、外面动过）先改回能写：这个目录是 agentq 自己建的一次性检出。
+// RemoveWorktree：git 记录和目录都清掉，可以重复调用。--force 两次：被杀在 git worktree add 半路上的还带着 initializing 锁。
+// 目录已经没了的也用 remove 清记录：prune 不清带锁的，留着它下次 add 就报「丢失但锁定的工作区」。没有记录时 remove 会报错，由 prune 收尾。
+// 只读的（脚本改的权限、外面动过）先改回能写：这个目录是 agentq 自己建的一次性检出。
 func RemoveWorktree(project, wt string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cleanWait)
 	defer cancel()
@@ -200,18 +201,21 @@ func RemoveWorktree(project, wt string) error {
 		cmd.WaitDelay = 5 * time.Second
 		return cmd.Run()
 	}
-	if _, err := os.Lstat(wt); errors.Is(err, os.ErrNotExist) {
-		return run("worktree", "prune")
-	}
-	if run("worktree", "remove", "--force", "--force", wt) == nil {
+	remove := func() bool { return run("worktree", "remove", "--force", "--force", wt) == nil }
+	if remove() {
 		return nil
 	}
-	makeTreeWritable(filepath.Dir(wt), wt)
-	if run("worktree", "remove", "--force", "--force", wt) == nil {
-		return nil
-	}
-	if err := os.RemoveAll(wt); err != nil {
-		return err
+	if _, err := os.Lstat(wt); !errors.Is(err, os.ErrNotExist) {
+		makeTreeWritable(filepath.Dir(wt), wt)
+		if remove() {
+			return nil
+		}
+		if err := os.RemoveAll(wt); err != nil {
+			return err
+		}
+		if remove() { // 检出坏了的（里面没有 .git）删掉目录后 git 才肯清记录
+			return nil
+		}
 	}
 	return run("worktree", "prune")
 }

@@ -46,6 +46,7 @@ func projectJob(e *testEnv, project string) *Job {
 
 // Codex 撞限只停 Codex 的项目：Claude 的项目照常接活，冷却记在 Codex 名下。
 func TestLimitOnOtherBackendDoesNotStopDefault(t *testing.T) {
+	t.Parallel()
 	e := mixedClaudeDefault(t, nil)
 	gateRepo(t, e, "cx", codexItem("aaa", "limitmid"))
 	e.mustRun("tick")
@@ -77,6 +78,7 @@ func TestLimitOnOtherBackendDoesNotStopDefault(t *testing.T) {
 
 // 反过来：默认 Codex，Claude 项目撞限也只停 Claude。没写后端的任务记录是 Claude，不能记到默认后端头上。
 func TestLimitOnClaudeProjectDoesNotStopCodexDefault(t *testing.T) {
+	t.Parallel()
 	e := mixedCodexDefault(t, nil)
 	testkit.MkProject(t, e.root, "cl", "- [ ] 撞上限 —— LIMIT\n")
 	e.mustRun("tick")
@@ -97,6 +99,7 @@ func TestLimitOnClaudeProjectDoesNotStopCodexDefault(t *testing.T) {
 
 // 默认 Codex 时也读 Claude 项目的额度：到门槛的不领活，Codex 的项目不受影响。之前额度门只看默认后端。
 func TestUsageGatePerBackend(t *testing.T) {
+	t.Parallel()
 	e := mixedCodexDefault(t, nil)
 	e.setUsage(usageLine("99"))
 	testkit.MkProject(t, e.root, "cl", "- [ ] 甲 —— 正常\n")
@@ -124,6 +127,7 @@ func TestUsageGatePerBackend(t *testing.T) {
 
 // 老 state.json 只有顶层 cooldown_until：迁到写它时的默认后端（Claude）名下，别的后端的项目照常接活；存回去是新格式。
 func TestOldStateCooldownBelongsToDefault(t *testing.T) {
+	t.Parallel()
 	e := mixedClaudeDefault(t, nil)
 	until := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
 	old := `{"jobs":[],"cooldown_until":"` + until + `","breaker_until":"0001-01-01T00:00:00Z"}` + "\n"
@@ -151,6 +155,7 @@ func TestOldStateCooldownBelongsToDefault(t *testing.T) {
 
 // 换默认后端前后，冷却跟着原后端走：Claude 撞限后把默认换成 Codex，Codex 照常接活；还指定 Claude 的项目继续冷却，不再撞一次。
 func TestCooldownFollowsBackendAcrossDefaultSwitch(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"max_parallel": 5,
 		"backends": map[string]any{"codex": map[string]any{"path": codexFake(t), "permission": "danger-full-access"}, "claude": map[string]any{"permission": "bypassPermissions"}}})
 	testkit.MkProject(t, e.root, "cl", "- [ ] 撞上限 —— LIMIT\n- [ ] 乙 —— 正常\n")
@@ -231,6 +236,7 @@ func TestAllBackendsCoolingAndClamp(t *testing.T) {
 
 // 默认后端冷却时，别的后端的任务照样过门合并：门用任务的后端。
 func TestGateNotHeldByOtherBackendCooldown(t *testing.T) {
+	t.Parallel()
 	e := mixedClaudeDefault(t, nil)
 	gateRepo(t, e, "cx", codexItem("fff", "ok"))
 	e.mustRun("tick")
@@ -247,6 +253,7 @@ func TestGateNotHeldByOtherBackendCooldown(t *testing.T) {
 
 // 只用一种后端：不会多读别的后端的额度，backend_limits 里只有它自己。
 func TestSingleBackendNoOtherUsage(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	e.setUsage(usageLine("10"))
 	testkit.MkProject(t, e.root, "aa", "- [ ] 甲 —— 正常\n")

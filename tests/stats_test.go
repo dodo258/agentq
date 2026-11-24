@@ -12,6 +12,7 @@ import (
 
 // 真二进制：只读（状态和任务记录一个字节都不变），status 输出不变。
 func TestIntegrationStats(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	testkit.MkProject(t, e.root, "demo", "- [ ] 第一条 USAGE\n")
 	e.mustRun("tick")

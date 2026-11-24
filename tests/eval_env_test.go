@@ -52,6 +52,7 @@ func setupCalls(t *testing.T, path string) int {
 // eval judge：候选上因为取依赖失败判不了的题重跑一次，还不行就单列成环境问题，不算变差，退出码 0；
 // 同一次里真变差的题照旧算变差。偶发失败重跑过了就什么都不记。
 func TestEvalJudgeEnvNotWorse(t *testing.T) {
+	t.Parallel()
 	home, tmp := evalHome(t)
 	if out, code := runEval(t, home, tmp, "run", "--fake", "001", "002", "007"); code != 0 {
 		t.Fatalf("%d %s", code, out)

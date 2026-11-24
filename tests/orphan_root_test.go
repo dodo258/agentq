@@ -119,6 +119,7 @@ func TestScanOrphansSkipsHeldProject(t *testing.T) {
 
 // 用户停掉的任务：标记还在时不接手、不去标记、不标卡住，只报一次；status和「状态」各列一行；删了标记或有了新任务恢复。
 func TestScanOrphansStopped(t *testing.T) {
+	t.Parallel()
 	setup := func(t *testing.T, takeover bool) *rootOrphanEnv {
 		e := newRootOrphanEnv(t, "")
 		e.branch("agent/x", true)

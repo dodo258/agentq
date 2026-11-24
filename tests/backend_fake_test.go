@@ -859,6 +859,7 @@ func TestDegradeFollowupFallsBack(t *testing.T) {
 
 // project_backends 写错，这个项目永远不启动：status 不能写「正常」。
 func TestStatusReportsProjectBackend(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"project_backends": map[string]string{"demo": "nosuch"}, "paused": false})
 	testkit.MkProject(t, e.root, "demo", "- [ ] 修登录\n")
 	if out, code := e.run("tick"); code != 0 {

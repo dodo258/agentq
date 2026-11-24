@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +14,21 @@ import (
 	"agentq/internal/testkit"
 )
 
-// selfRepoEnv 把这份源码复制成 projects_root 下的一个项目（agentq 自己的仓库），只开评测门。
+// selfRepoCases 是复制出来的 agentq 仓库里留下的评测题：两道 install 的程序题和一道走完引擎的模型题。
+// 自己过评测门、自己长大的用例验的是流程，跑几题就够；每道题都能过由 TestEvalFakeFullFlow 验。
+var selfRepoCases = []string{"001-impl-go", "007-install-existing-skill", "008-service-env-user"}
+
+// selfRepoKeeps：源码里的这个文件要不要复制。评测题只留 selfRepoCases，别的都留。
+func selfRepoKeeps(file string) bool {
+	rest, isEval := strings.CutPrefix(file, "evals/")
+	id, _, inDir := strings.Cut(rest, "/")
+	if !isEval || !inDir || id[0] < '0' || id[0] > '9' {
+		return true
+	}
+	return slices.Contains(selfRepoCases, id)
+}
+
+// selfRepoEnv 把这份源码复制成 projects_root 下的一个项目（agentq 自己的仓库，评测题只留几道），只开评测门。
 // 任务（假 claude 的 READYMERGE TASKSCRIPT）提交前跑 task 这段脚本。go 构建缓存指向本机的，临时 HOME 里不用从头编译。
 func selfRepoEnv(t *testing.T, task string) (*testEnv, string) {
 	t.Helper()
@@ -41,6 +56,9 @@ func selfRepoEnv(t *testing.T, task string) (*testEnv, string) {
 		t.Fatal(err)
 	}
 	for _, f := range strings.Split(strings.TrimRight(string(files), "\x00"), "\x00") {
+		if !selfRepoKeeps(f) {
+			continue
+		}
 		src, err := os.Lstat(f)
 		if err != nil || !src.Mode().IsRegular() { // 删掉还没提交的、子模块之类
 			continue
@@ -61,6 +79,18 @@ func selfRepoEnv(t *testing.T, task string) (*testEnv, string) {
 	testkit.GitT(t, e.home, dir, "add", "-A")
 	testkit.GitT(t, e.home, dir, "commit", "-q", "-m", "init")
 	return e, dir
+}
+
+// buildSelf 从 selfRepoEnv 的仓库构建一个带 agentq_fake_deps 的 agentq（不联网，题目是那个仓库里的几道）。
+func buildSelf(t *testing.T, e *testEnv, dir string) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "agentq")
+	build := exec.Command("go", "build", "-tags", "agentq_fake_deps", "-o", bin, ".")
+	build.Dir, build.Env = dir, append(os.Environ(), "HOME="+e.home)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("从 self_project 构建失败：%v\n%s", err, out)
+	}
+	return bin
 }
 
 // gateOnce 起任务、等它交付，再等过门结束收结果。评测门要构建候选、跑一遍评测，等得久一点。
@@ -107,8 +137,9 @@ func init() {
 EOF
 printf '#!/bin/sh\nexit 0\n' > evals/007-install-existing-skill/check.sh
 `
-	e, _ := selfRepoEnv(t, task)
-	// 基线：运行中这一代（测试编出来的 agentq）跑两道程序题。
+	e, dir := selfRepoEnv(t, task)
+	e.bin = buildSelf(t, e, dir)
+	// 基线：运行中这一代跑两道程序题。
 	e.mustRun("eval", "run", "007", "008")
 	e.mustRun("eval", "baseline")
 	j := e.gateOnce(evalGateTitle)
@@ -130,6 +161,7 @@ printf '#!/bin/sh\nexit 0\n' > evals/007-install-existing-skill/check.sh
 func TestIntegrationEvalGateNoBaselineAndJudgeChangeHolds(t *testing.T) {
 	t.Parallel()
 	e, dir := selfRepoEnv(t, "echo 多一行 >> evals/README.md\n")
+	e.bin = buildSelf(t, e, dir)
 	j := e.gateOnce(evalGateTitle)
 	report := e.mustRun("gate", "report", j.ID)
 	for _, want := range []string{"eval（error 档）：pass 没有能比的基线，只记录不挡", "agentq eval baseline", "耗时 ", "评判的尺子", "evals/README.md"} {

@@ -24,7 +24,7 @@ Go 标准库，单二进制，分模块见下一节。平台差异只在 `*_darw
 - 只给测试 import：`testkit`（`GitT`、`MkProject` 这类夹具）、`testkit/stack`（建到 `runner` 为止的一套真实例，不接钩子）。
 - 接新后端见 `docs/backends.md`：新增一个包，`app` 加一行 import。后端实现只有 `app` 能 import（注册），其余都走 `backend.Backend`；各家 CLI 的参数、结果格式、会话文件位置只能写在自己的包里（`TestArchBackendImpls`、`TestArchClaudeFlagsOnlyInBackend`，Codex、pi 也查）。
 - 每个模块的实例类型都叫 `Service`，匿名嵌入 `*env.Env`，依赖是具名字段；只有 `internal/app` 能建（`TestArchSingletons`）。`app.Wire` 最后四行的顺序固定，`Hooks` 最后（`TestArchWireOrder`）。
-- 单独测一块：`go test -race ./internal/<模块>`。跑真二进制的行为用例在 `tests/`（`go test -race ./tests`，约 5 分钟，`TestMain` 把工作目录切到仓库根；黄金文件在 `tests/testdata/`）；要走到钩子或多个功能的用例放 `tests/` 走导出 API。
+- 单独测一块：`go test -race ./internal/<模块>`。跑真二进制的行为用例在 `tests/`（`go test -race ./tests`，约 5 分钟，`TestMain` 把工作目录切到仓库根；黄金文件在 `tests/testdata/`）；要走到钩子或多个功能的用例放 `tests/` 走导出 API。`tests/` 的新用例不改环境变量、工作目录、包级变量的都加 `t.Parallel()`，不跑随题数变长的全套评测（只有 `TestEvalFakeFullFlow` 跑全部题）：这个包要在测试门的 900 秒内跑完。
 - 反复出问题的模块重写时接口尽量不变，要变就写进提交说明。`Job`、`NotifyState` 仍是共享数据，改字段要看所有读写方，落盘格式由 `tests/testdata/` 的黄金文件固定。
 
 ## 常用命令

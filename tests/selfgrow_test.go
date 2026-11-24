@@ -30,13 +30,7 @@ func selfGrowEnv(t *testing.T, task string, cfg map[string]any) (*testEnv, strin
 		full[k] = v
 	}
 	e.mergeConfig(full)
-	bin := filepath.Join(t.TempDir(), "agentq")
-	build := exec.Command("go", "build", "-tags", "agentq_fake_deps", "-o", bin, ".")
-	build.Dir, build.Env = dir, append(os.Environ(), "HOME="+e.home)
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("从 self_project 构建失败：%v\n%s", err, out)
-	}
-	e.bin = bin
+	e.bin = buildSelf(t, e, dir)
 	e.mustRun("setup", "--yes")
 	e.mustRun("setup", "--yes") // 再装一代：有回滚点（previous.json），演练要把它放回去
 	e.bin = filepath.Join(e.home, ".local", "bin", "agentq")

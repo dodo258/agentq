@@ -82,6 +82,7 @@ func updateHome(t *testing.T) (home, bin, fails string) {
 
 // 新版本自检失败（tick 非 0）或编译不过：不替换、不留 agentq.prev、不动失败计数。
 func TestUpdateSelfCheckFailKeepsOld(t *testing.T) {
+	t.Parallel()
 	for name, src := range map[string]string{
 		"自检失败": fakeSource(t, 3, ""),
 		"编译失败": fakeSource(t, 0, "package main\nfunc main() { x }\n"),
@@ -107,6 +108,7 @@ func TestUpdateSelfCheckFailKeepsOld(t *testing.T) {
 
 // 自检通过：用临时 HOME 跑过 status 和 tick，旧版本留成 agentq.prev，新的装上，失败计数清零。
 func TestUpdateInstallsAndKeepsPrev(t *testing.T) {
+	t.Parallel()
 	home, bin, fails := updateHome(t)
 	code, out := runUpdate(t, home, fakeSource(t, 0, ""))
 	if code != 0 || !strings.Contains(out, "自检通过") {
@@ -142,6 +144,7 @@ func TestUpdateInstallsAndKeepsPrev(t *testing.T) {
 
 // 第一次安装（还没有 agentq）：直接装上，没有 agentq.prev。
 func TestUpdateFirstInstall(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	bin := filepath.Join(home, ".local", "bin", "agentq")
 	if code, out := runUpdate(t, home, fakeSource(t, 0, "")); code != 0 {
@@ -154,6 +157,7 @@ func TestUpdateFirstInstall(t *testing.T) {
 
 // 现在装着的版本在 launchd 下已经失败过（guard-fails 非空）且已有 agentq.prev：保留原来的 prev，不拿可能坏的版本覆盖它。
 func TestUpdateKeepsPrevWhenCurrentFailing(t *testing.T) {
+	t.Parallel()
 	home, bin, fails := updateHome(t)
 	os.WriteFile(bin+".prev", []byte("GOOD"), 0o755)
 	code, out := runUpdate(t, home, fakeSource(t, 0, ""))

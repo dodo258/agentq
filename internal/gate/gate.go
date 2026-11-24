@@ -47,6 +47,8 @@ type Result struct {
 	Evidence []string `json:"evidence,omitempty"`
 	// Files 是门知道出问题的文件（仓库内相对路径），退回时引擎拿它定下一轮的范围。认不出就空着，不硬凑。
 	Files []string `json:"files,omitempty"`
+	// Cited 是审查报告里带行号点到的别的文件（要跟着改的快照、另一处代码），也进退回的范围。
+	Cited []string `json:"cited,omitempty"`
 	// Level 由引擎填：跑这道门时的档位。
 	Level Level `json:"level,omitempty"`
 	// Defer 非空表示这次不算结论，过一会儿重跑，比如审查撞了用量上限。不消耗退回的轮数。
@@ -68,6 +70,8 @@ type Result struct {
 	Ruler bool `json:"ruler,omitempty"`
 	// Unjudged：没过是因为检查自己没跑成（比如评测题这次连现场都布置不起来），不是改动被判错。档位照旧，卡片按「判不了」说。
 	Unjudged bool `json:"unjudged,omitempty"`
+	// NoChange：scope 门查到这一轮任务除了合默认分支和 ready.json 什么都没变，见 scope.go 的 onlyMerged、queue.go 的 idleRound。
+	NoChange bool `json:"no_change,omitempty"`
 	// Caps：能力门这次用上的每项能力和它的检查结果，见 capability.go。
 	Caps []CapRun `json:"caps,omitempty"`
 }

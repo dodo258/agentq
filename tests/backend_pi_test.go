@@ -45,6 +45,7 @@ func authCalls(e *testEnv) []string {
 
 // 完整闭环：tick 启动、提示词走标准输入、预设会话 id、分支提交、ready.json、测试门、审查门（同样是 pi，靠提示词要 JSON）、引擎合并。
 func TestPiFullLoopMerges(t *testing.T) {
+	t.Parallel()
 	e := piEnv(t, nil)
 	e.extra = append(e.extra, "PI_CODING_AGENT_DIR="+filepath.Join(e.home, ".pi", "agent"), "DEEPSEEK_API_KEY=k1", "OPENAI_API_KEY=k2", "ANTHROPIC_API_KEY=k3", "CODEX_HOME="+filepath.Join(e.home, "ch"))
 	dir := gateRepo(t, e, "demo", codexItem("aaa", "ok"))
@@ -98,6 +99,7 @@ func TestPiFullLoopMerges(t *testing.T) {
 
 // 进程被杀：没有 agent_settled，不当成功；用启动时预设的会话 id 续跑（--session）。
 func TestPiKilledMidwayResumes(t *testing.T) {
+	t.Parallel()
 	e := piEnv(t, nil)
 	gateRepo(t, e, "demo", codexItem("eee", "claimhang"))
 	e.mustRun("run", "demo")
@@ -141,6 +143,7 @@ func TestPiKilledMidwayResumes(t *testing.T) {
 
 // 做到一半撞限（429 只在事件里，退出码 0）：记中断、冷却，过后同一会话接着做完并合并。
 func TestPiLimitThenResumes(t *testing.T) {
+	t.Parallel()
 	e := piEnv(t, map[string]any{"limit_cooldown": "1s"})
 	gateRepo(t, e, "demo", codexItem("ddd", "limitmid"))
 	e.mustRun("tick")
@@ -190,6 +193,7 @@ func TestPiLimitThenResumes(t *testing.T) {
 
 // 认证失败（401 在 message_end 的 errorMessage 里）：暂停这个后端，auth check 说 ready 也不解除。
 func TestPiAuthFailurePausesBackend(t *testing.T) {
+	t.Parallel()
 	e := piEnv(t, map[string]any{"notify_enabled": true})
 	gateRepo(t, e, "demo", codexItem("kkk", "e401"), codexItem("lll", "ok"))
 	e.mustRun("run", "demo", "ITEM-kkk")
@@ -257,6 +261,7 @@ func TestPiPermissionMissingRefuses(t *testing.T) {
 
 // 审查给不出整条 JSON（崩了、只有文字）：判不了，不合并。
 func TestPiReviewUnknownDoesNotMerge(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"bad", "crash"} {
 		t.Run(mode, func(t *testing.T) {
 			e := piEnv(t, nil)

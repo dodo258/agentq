@@ -38,6 +38,16 @@ func (e *testEnv) gateResult(j *Job) string {
 	return filepath.Join(e.home, ".agentq", "gate", j.ID, "result.json")
 }
 
+// waitCandidate 等门进程把任务分支合进一次性 worktree（file 是任务加的文件）。主目录锁占着时它之后停在等锁：
+// 杀它的用例都从这里开始，不会杀在 git worktree add 的半路上。
+func (e *testEnv) waitCandidate(j *Job, file string) {
+	e.t.Helper()
+	waitFor(e.t, 30*time.Second, "门建好候选", func() bool {
+		_, err := os.Stat(filepath.Join(gate.Worktree(filepath.Dir(e.gateResult(j))), file))
+		return err == nil
+	})
+}
+
 // tickUntilGate 收尾任务、起门，等门的结果，再 tick 一次收结果。
 func (e *testEnv) tickUntilGate(title string) *Job {
 	e.t.Helper()
@@ -58,6 +68,7 @@ func (e *testEnv) tickUntilGate(title string) *Job {
 
 // 验收：假 claude 不合并也能进 main。任务只提交到分支写 ready.json，引擎合并并写收尾。
 func TestIntegrationFakeNoMergeGetsToMain(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	dir := gateRepo(t, e, "demo", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt", "- [ ] 下一条")
 	before := testkit.GitT(t, e.home, dir, "rev-parse", "main")
@@ -135,6 +146,7 @@ func textTrunc(s string, n int) string {
 
 // 门进程被 SIGKILL：状态还是在过门，下次 tick 重跑，只合并一次。这里让它卡在排 <项目>-main 锁上。
 func TestIntegrationGateKilledReruns(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"max_parallel": 3})
 	dir := gateRepo(t, e, "demo", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
 	e.mustRun("tick")
@@ -155,6 +167,7 @@ func TestIntegrationGateKilledReruns(t *testing.T) {
 	if again := e.jobByTitle(title); again.Gate.PID != pid || again.Gate.State != state.GateRunning {
 		t.Fatalf("%+v", again.Gate)
 	}
+	e.waitCandidate(j, "a.txt")
 	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
@@ -181,6 +194,7 @@ func TestIntegrationGateKilledReruns(t *testing.T) {
 
 // 门进程过了期限还在（Mac 合盖睡过、卡住）：tick 杀掉它，算一次没结果，排回去重跑，不记失败。
 func TestIntegrationGateOverran(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	gateRepo(t, e, "demo", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
 	e.mustRun("tick")
@@ -201,6 +215,7 @@ func TestIntegrationGateOverran(t *testing.T) {
 		t.Fatal(err)
 	}
 	pid := e.jobByTitle(title).Gate.PID
+	e.waitCandidate(j, "a.txt")
 	e.mustRun("tick")
 	j = e.jobByTitle(title)
 	if j.Gate.Crashes != 1 || j.Gate.PID == pid || proc.ProcAlive(pid, gate.ProcToken+" "+j.ID) {
@@ -219,6 +234,7 @@ func TestIntegrationGateOverran(t *testing.T) {
 
 // 状态文件损坏：过门的记录从 meta.json 重建，接着走，只合并一次。那次 tick 不起新的门。
 func TestIntegrationGateSurvivesCorruptState(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	dir := gateRepo(t, e, "demo", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
 	e.mustRun("tick")
@@ -244,6 +260,7 @@ func TestIntegrationGateSurvivesCorruptState(t *testing.T) {
 
 // 状态文件损坏时门还在排队：重建后那次 tick 不起门（只收尾），下次接着走。
 func TestIntegrationQueuedSurvivesCorruptState(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	gateRepo(t, e, "demo", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
 	e.mustRun("tick")
@@ -273,6 +290,7 @@ func TestIntegrationQueuedSurvivesCorruptState(t *testing.T) {
 
 // 暂停时过门照跑（手动 run 的任务也要合并）；冷却时不起门，冷却过了接着走。
 func TestIntegrationGatePausedAndCooldown(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	gateRepo(t, e, "demo", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
 	e.mustRun("pause")
@@ -312,6 +330,7 @@ func TestIntegrationGatePausedAndCooldown(t *testing.T) {
 
 // 冲突退回：门的报告带回同一会话，合进新 main 再交，不算退回轮数（还是第 0 轮）；同一分支不合两次。
 func TestIntegrationConflictReturnsThenMerges(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	dir := gateRepo(t, e, "demo", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=same.txt")
 	e.mustRun("tick")
@@ -502,6 +521,7 @@ func verifyRepo(t *testing.T, e *testEnv, name, script string, lines ...string) 
 
 // 门进程被 SIGKILL 时脚本还在跑：脚本也杀掉，worktree 清掉，重跑；只合并一次。
 func TestIntegrationGateKilledDuringScript(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	dir := verifyRepo(t, e, "demo", "#!/bin/sh\n[ -f \"$HOME/放行\" ] && exit 0\ntouch \"$HOME/脚本开始了\"\nsleep 300\n", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
 	e.mustRun("tick")
@@ -553,6 +573,7 @@ func TestIntegrationGateKilledDuringScript(t *testing.T) {
 
 // 门进程 SIGTERM：自己清理干净再退出，不写结果，tick 重跑。
 func TestIntegrationGateTerminated(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	verifyRepo(t, e, "demo", "#!/bin/sh\n[ -f \"$HOME/放行\" ] && exit 0\ntouch \"$HOME/脚本开始了\"\nsleep 300\n", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
 	e.mustRun("tick")
@@ -591,6 +612,7 @@ func TestIntegrationGateTerminated(t *testing.T) {
 
 // main 在门跑到一半时前进：用新 main 重建候选，测试门重跑，合并提交的第一父是新 main。
 func TestIntegrationMainMovesDuringGate(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	dir := verifyRepo(t, e, "demo", "#!/bin/sh\necho x >> \"$HOME/跑过\"\nuntil [ -f \"$HOME/放行\" ]; do sleep 0.1; done\n", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
 	e.mustRun("tick")
@@ -632,6 +654,7 @@ func TestIntegrationMainMovesDuringGate(t *testing.T) {
 
 // 连续失败退回：门一直不过，退回两轮后标卡住，发决定卡片，分支留着；同项目下一条照常做；用户放行后合并，写审计。
 func TestIntegrationFailRoundsThenStuckThenPass(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"notify_enabled": false})
 	dir := verifyRepo(t, e, "demo", "#!/bin/sh\necho 就是不过\nexit 1\n", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt", "- [ ] 下一条 NOMERGE")
 	title := "修东西 READYMERGE"
@@ -729,6 +752,7 @@ func TestIntegrationFailRoundsThenStuckThenPass(t *testing.T) {
 
 // 审查门真二进制走一遍：有证据的问题退回，提示词带报告；任务改完重审，通过才合并。审查进程挂了不放行。
 func TestIntegrationReviewBlocksThenPasses(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	dir := gateRepo(t, e, "demo", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
 	block := `{"type":"result","subtype":"success","is_error":false,"result":"有问题","session_id":"s-rv","structured_output":{"verdict":"block","summary":"会崩","findings":[{"file":"a.txt","line":1,"kind":"crash","evidence":"第一行会崩","repro":"跑 a.txt 就崩"}]}}` + "\n"
@@ -789,6 +813,7 @@ func TestIntegrationReviewBlocksThenPasses(t *testing.T) {
 
 // 审查进程挂了：判不了，分支留着，等用户定，不进 main。
 func TestIntegrationReviewCrashDoesNotMerge(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	dir := gateRepo(t, e, "demo", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
 	os.WriteFile(filepath.Join(e.home, "fake-review.json"), []byte("{坏了\n"), 0o644)
@@ -834,6 +859,7 @@ func TestGateTakeoverCarriesReport(t *testing.T) {
 
 // 任务写了 ready.json 又自己合并：门一道没跑，不能记成过门合并；提醒用户，main 上残留的 ready.json 删掉，不连累后面的任务。
 func TestIntegrationSelfMergeWithReady(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	dir := verifyRepo(t, e, "demo", "#!/bin/sh\nexit 1\n", "- [ ] 修东西 READYMERGE SELFREADY —— BRANCH=agent/t-a FILE=a.txt")
 	e.mustRun("tick")
@@ -884,6 +910,7 @@ func TestIntegrationSelfMergeWithReady(t *testing.T) {
 
 // 排队时别人把分支合了：同样不算过门。
 func TestIntegrationBranchMergedWhileQueued(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	dir := verifyRepo(t, e, "demo", "#!/bin/sh\nexit 1\n", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
 	e.mustRun("tick")
@@ -920,6 +947,7 @@ func TestIntegrationBranchMergedWhileQueued(t *testing.T) {
 
 // 审查进程认证失败：不算门的结论，不卡住、不发决定卡片，暂停这个后端（通知见 TestAuthFailureNotifiesAndPauses），过一会儿重跑。
 func TestIntegrationReviewAuthDefers(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, nil)
 	gateRepo(t, e, "demo", "- [ ] 修东西 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
 	os.WriteFile(filepath.Join(e.home, "fake-review.json"), []byte(`{"type":"result","subtype":"success","is_error":true,"api_error_status":401,"result":"Invalid API key · Please run /login","session_id":"s-rv"}`+"\n"), 0o644)
@@ -935,6 +963,7 @@ func TestIntegrationReviewAuthDefers(t *testing.T) {
 
 // extra_projects 登记的项目在 projects_root 外面，门和引擎合并照样走：按任务记的项目目录，不拼 projects_root。
 func TestIntegrationExtraProjectThroughGate(t *testing.T) {
+	t.Parallel()
 	outer, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

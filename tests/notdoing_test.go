@@ -43,6 +43,7 @@ func ndEnv(t *testing.T) (*notifyEnv, backlog.Project) {
 
 // 回「不做 1」：不起模型；从「建议」拿掉，写进不做清单，两个文件一次提交；编号作废，再说一次算失效；另一条不动。
 func TestNotDoFastPath(t *testing.T) {
+	t.Parallel()
 	e, p := ndEnv(t)
 	before := commits(t, e.a, p)
 	e.tg.msg(1, ownerChat, 11, "不做 1", "")
@@ -114,6 +115,7 @@ func TestNotDoNotIntercepted(t *testing.T) {
 
 // 主目录脏：不写清单、建议留着、索引留着，回复说没能移。
 func TestNotDoCommitRefused(t *testing.T) {
+	t.Parallel()
 	e, p := ndEnv(t)
 	orig := backlogOf(t, p)
 	dirty := orig + "用户正在改\n"
@@ -142,6 +144,7 @@ func TestNotDoCommitRefused(t *testing.T) {
 
 // 提交被钩子拒绝：两个文件都改回去，暂存区也干净；新文件不留。
 func TestCommitNotDoingRollback(t *testing.T) {
+	t.Parallel()
 	e, p := ndEnv(t)
 	hook := filepath.Join(p.Dir, ".git", "hooks", "pre-commit")
 	os.MkdirAll(filepath.Dir(hook), 0o755)

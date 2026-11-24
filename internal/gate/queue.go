@@ -502,6 +502,11 @@ func (a *Service) failed(st *state.State, j *state.Job, res RunResult) {
 		a.returned(j, res, fmt.Sprintf("和最新 %s 有冲突，退回接着合（不占退回轮数，连续第 %d 次，到 %d 次停下）", a.defaultName(j), n, MaxConflicts))
 		return
 	}
+	how := ""
+	if a.idleRound(st, j, res) { // 上一轮是默认分支或机器的问题把测试弄没过的，白占了一轮，还回来
+		g.Round--
+		how = "，上一轮" + idleWhy
+	}
 	if g.Round >= MaxRounds { // 退回用完还没过：改动本身还有问题的，再改一轮多半也不行，是条目拆法或验收的问题；检查自己出了故障判不了的不是
 		why := res.Reason
 		if kind, _ := stopKindOf(res); kind == stopChange {
@@ -510,7 +515,68 @@ func (a *Service) failed(st *state.State, j *state.Job, res RunResult) {
 		a.stuck(st, j, why, res)
 		return
 	}
-	a.returned(j, res, fmt.Sprintf("退回第 %d 轮（最多 %d 轮）", g.Round+1, MaxRounds))
+	a.returned(j, res, fmt.Sprintf("退回第 %d 轮（最多 %d 轮%s）", g.Round+1, MaxRounds, how))
+}
+
+// idleWhy 是 idleRound 认出来时的说法，写进日志和摘要。
+const idleWhy = "没改代码测试就过了，不占轮数"
+
+// idleRound：上一轮的测试、成品脚本没过，这一轮任务除了合默认分支和 ready.json 什么都没变（scope 门的 NoChange）、那道门就过了：
+// 那次没过不是改动的问题（默认分支自己的毛病、机器忙撞超时），不该占退回轮数。
+// 测试门还会因为缺门说明、动了基线、撤掉修复还过退回，那是任务自己的事，补个说明、换个 type 就能过，不算；
+// 审查、界面这些调模型的门也不算：同一份改动两次结论不一样，说明不了是谁的问题。
+func (a *Service) idleRound(st *state.State, j *state.Job, res RunResult) bool {
+	scope, ok := resultNamed(res.Results, "scope")
+	if !ok || !scope.NoChange || j.Gate.Round == 0 {
+		return false
+	}
+	last := lastOnBranch(st, j)
+	if last == nil || last.Gate.State != state.GateReturned {
+		return false
+	}
+	prev, ok := a.lastRun(last.ID)
+	if !ok {
+		return false
+	}
+	_, block := stopKindOf(prev)
+	if block == nil || !slices.Contains(deterministicGates, block.Gate) || !scriptFailed(*block) {
+		return false
+	}
+	now, ok := resultNamed(res.Results, block.Gate)
+	return ok && now.Outcome == Pass
+}
+
+// lastOnBranch 是同一条分支上、j 之前最近一个过过门的任务，没有返回 nil。不顺着 ResumeOf 找：接手任务、去掉卡住标记重接的任务没有它，
+// 分支是同一条；这一轮中断过的，中间那几个没过门的跳过。
+func lastOnBranch(st *state.State, j *state.Job) *state.Job {
+	var last *state.Job
+	for _, o := range st.Jobs { // 按启动先后排
+		if o.ID == j.ID {
+			break
+		}
+		if o.Gate != nil && o.Project == j.Project && o.Gate.Branch == j.Gate.Branch {
+			last = o
+		}
+	}
+	return last
+}
+
+// scriptFailed：门没过是脚本自己退出非 0（连跑结果不一致的也算）。摘要由门写，只认这个固定开头。
+func scriptFailed(r Result) bool {
+	return r.Outcome == Fail && (strings.HasPrefix(r.Summary, VerifyScript+" 没过") || strings.HasPrefix(r.Summary, SmokeScript+" 没过"))
+}
+
+// lastRun 读这个任务上一次过门的结果（last.json）。
+func (a *Service) lastRun(id string) (RunResult, bool) {
+	b, err := os.ReadFile(filepath.Join(a.Dir(id), "last.json"))
+	if err != nil {
+		return RunResult{}, false
+	}
+	var res RunResult
+	if json.Unmarshal(b, &res) != nil {
+		return RunResult{}, false
+	}
+	return res, true
 }
 
 // returned 把任务退回接着改：续跑（或接手）从分支现状接着做。how 是日志和摘要里说退回的哪一种。
@@ -1122,26 +1188,15 @@ func (a *Service) ReturnNote(j *state.Job) string {
 
 // mustRewrite：这次是 error 档的补丁门退回的，合同改成重写。
 func (a *Service) mustRewrite(j *state.Job) bool {
-	raw, err := os.ReadFile(filepath.Join(a.Dir(j.ID), "last.json"))
-	if err != nil {
-		return false
-	}
-	var res RunResult
-	if json.Unmarshal(raw, &res) != nil {
-		return false
-	}
-	return slices.ContainsFunc(res.Results, func(r Result) bool {
+	res, ok := a.lastRun(j.ID)
+	return ok && slices.ContainsFunc(res.Results, func(r Result) bool {
 		return r.Gate == "patch" && r.Level == LevelError && r.Outcome == Fail
 	})
 }
 
 func (a *Service) reportText(j *state.Job) string {
-	b, err := os.ReadFile(filepath.Join(a.Dir(j.ID), "last.json"))
-	if err != nil {
-		return ""
-	}
-	var res RunResult
-	if json.Unmarshal(b, &res) != nil {
+	res, ok := a.lastRun(j.ID)
+	if !ok {
 		return ""
 	}
 	var s strings.Builder

@@ -139,17 +139,16 @@ func TestIntegrationRoutineRuns(t *testing.T) {
 	}
 }
 
-// 夜班、复盘超过各自的超时（night_timeout 1s、review_timeout 2s，待做的 timeout 不管它们）：tick 杀掉整个进程组，记超时、写汇总。
+// 夜班、复盘超过各自的超时（night_timeout、review_timeout，待做的 timeout 不管它们）：tick 杀掉整个进程组，记超时、写汇总。
 func TestIntegrationRoutineTimeout(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, map[string]any{"night_enabled": true, "night_timeout": "1s", "review_timeout": "2s", "timeout": "1h"})
+	e := newEnv(t, map[string]any{"night_enabled": true, "night_timeout": "30s", "review_timeout": "90s", "timeout": "1h"})
 	e.extra = []string{"AGENTQ_FAKE_SLEEP=30"}
 	e.mustRun("night", "--scheduled")
 	e.mustRun("review")
 	j, r := e.routineJob("night"), e.routineJob("review")
-	time.Sleep(1500 * time.Millisecond)
-	out := e.mustRun("tick")
-	if !strings.Contains(out, "本次收尾 1") || !strings.Contains(out, "运行超过 1s") {
+	out := e.runAt(time.Now().Add(40*time.Second), "tick") // 拨时钟，不真等：机器忙时几秒的间隔分不出先后
+	if !strings.Contains(out, "本次收尾 1") || !strings.Contains(out, "运行超过 30s") {
 		t.Errorf("tick 应按 night_timeout 杀掉夜班、复盘还没到时间：\n%s", out)
 	}
 	if got := e.routineJob("night"); got.Status != state.StatusTimeout {
@@ -158,15 +157,14 @@ func TestIntegrationRoutineTimeout(t *testing.T) {
 	if err := syscall.Kill(-j.PID, 0); err == nil {
 		t.Errorf("夜班的进程组 %d 应已被杀掉", j.PID)
 	}
-	time.Sleep(time.Second)
-	if out := e.mustRun("tick"); !strings.Contains(out, "运行超过 2s") {
+	if out := e.runAt(time.Now().Add(100*time.Second), "tick"); !strings.Contains(out, "运行超过 1m30s") {
 		t.Errorf("tick 应按 review_timeout 杀掉复盘：\n%s", out)
 	}
 	if err := syscall.Kill(-r.PID, 0); err == nil {
 		t.Errorf("复盘的进程组 %d 应已被杀掉", r.PID)
 	}
 	n := e.nightly()
-	if !strings.Contains(n, "夜班「agentq night」超时：运行超过 1s") || !strings.Contains(n, "复盘「agentq review」超时：运行超过 2s") {
+	if !strings.Contains(n, "夜班「agentq night」超时：运行超过 30s") || !strings.Contains(n, "复盘「agentq review」超时：运行超过 1m30s") {
 		t.Errorf("当天汇总应有夜班、复盘超时：\n%s", n)
 	}
 }

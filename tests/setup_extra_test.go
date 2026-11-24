@@ -56,6 +56,7 @@ func TestAuxiliaryServiceDefinitions(t *testing.T) {
 	}
 }
 func TestGenerationGuardCallsPreviousExecutable(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	i := &setup.Installer{Home: home}
 	previous := filepath.Join(home, "previous generation")

@@ -2,8 +2,10 @@ package gate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -14,7 +16,7 @@ import (
 )
 
 // 退回时限定范围：门没过，引擎定下一轮只该改哪些文件，写进退回提示；下一轮由 scope 门查有没有越界。
-//   - 范围 = 没过的门在 Result.Files 里点名的文件；都没点名就用这一轮任务改的文件（Candidate.Files）；再加这些文件同目录下已有的测试文件。
+//   - 范围 = 没过的门在 Result.Files 里点名的文件；都没点名就用这一轮任务改的文件（Candidate.Files）；再加审查报告里带行号点到的别的文件（Result.Cited）和这些文件同目录下已有的测试文件。
 //   - 同目录新加的测试文件也算范围内。多于 maxScope 个按目录折叠（「dir/」表示这个目录下都算），折叠后还多就不限定。
 //   - scope 门只在退回之后的轮次跑：比较上一轮分支尖到这次分支尖之间任务自己的提交改的文件。从默认分支合进来的提交不算。
 
@@ -41,16 +43,17 @@ func IsPlanReport(report string) bool { return planRe.MatchString(report) }
 // returnScope 算退回后的范围。rev 是看同目录测试文件的提交（候选合并提交或分支尖），空的就不加测试文件。算不出返回空：不限定。
 // 只收挡住合并的门点名的文件：按这次实际生效的档位（影响面广时 warn 升了 error 的也算），warn 档没过只是记录，不收窄范围。
 func (a *Service) returnScope(ctx context.Context, dir, rev string, results []Result, changed []string) []string {
-	var named []string
+	var named, cited []string
 	for _, r := range results {
 		if r.Level == LevelError && r.Outcome == Fail && r.Defer == "" {
 			named = append(named, r.Files...)
+			cited = append(cited, r.Cited...)
 		}
 	}
 	if len(named) == 0 {
 		named = changed
 	}
-	files := cleanScope(append(named, codeForTests(named, changed)...))
+	files := cleanScope(slices.Concat(named, codeForTests(named, changed), cited))
 	if len(files) == 0 {
 		return nil
 	}
@@ -208,7 +211,7 @@ func (g scopeGate) Run(ctx context.Context, c Candidate) Result {
 	}
 	scope := "范围：" + strings.Join(c.Scope, "、")
 	if len(outside) == 0 {
-		return Result{Outcome: Pass, Summary: fmt.Sprintf("这一轮改的 %d 个文件都在退回时定的范围里", len(changed)), Evidence: []string{how, scope}}
+		return Result{Outcome: Pass, Summary: fmt.Sprintf("这一轮改的 %d 个文件都在退回时定的范围里", len(changed)), Evidence: []string{how, scope}, NoChange: g.onlyMerged(ctx, c)}
 	}
 	ev := []string{how, scope}
 	for _, f := range outside {
@@ -243,14 +246,73 @@ func (g scopeGate) changedSince(ctx context.Context, c Candidate) ([]string, str
 	return cleanScope(strings.Split(out, "\n")), how, nil
 }
 
-// logFileRe 认输出里的「路径:行号」和 Python 的「File "路径", line N」。
-var logFileRe = regexp.MustCompile(`([^\s"'()\[\]<>:,]+\.[A-Za-z][A-Za-z0-9]{0,9})(?::\d+|", line \d+)`)
+// onlyMerged：上一轮分支尖到这次分支尖，除了合默认分支和 ready.json 什么都没变。拿上一轮分支尖和这次合进来的默认分支自动合一遍，
+// 合出来的内容要和这次分支尖一样：另外的提交、记录文件、在合并提交里改的都算改了。有冲突的，只有只追加的记录文件里两边各自新加的内容
+// 自动合得了（和门建候选时同一条规则，两边谁在前都行）；别的冲突、查不了的当改了。
+func (g scopeGate) onlyMerged(ctx context.Context, c Candidate) bool {
+	def, err := g.d.Git(ctx, c.ProjectDir, "merge-base", c.Head, c.Base)
+	if err != nil {
+		return false
+	}
+	return g.sameMerge(ctx, c, def, c.ScopeFrom) || g.sameMerge(ctx, c, c.ScopeFrom, def)
+}
+
+// sameMerge：first、second 自动合出来的内容除 ready.json 外和这次分支尖一样；只追加的记录文件两边都留，first 的在前。
+func (g scopeGate) sameMerge(ctx context.Context, c Candidate, first, second string) bool {
+	// 冲突标记写成 diff3、用 unionAppends 认的长度。属性文件只对这一条命令生效
+	attrs := filepath.Join(c.WorkDir, "merge-attrs")
+	if os.WriteFile(attrs, fmt.Appendf(nil, "* conflict-marker-size=%d\n", markerSize), 0o644) != nil {
+		return false
+	}
+	out, err := g.d.Git(ctx, c.ProjectDir, "-c", "merge.conflictStyle=diff3", "-c", "core.attributesFile="+attrs,
+		"merge-tree", "--write-tree", "--name-only", "--no-messages", first, second)
+	var exit *exec.ExitError
+	if err != nil && (!errors.As(err, &exit) || exit.ExitCode() != 1) { // 有冲突退出 1，第一行照样是合出来的树，后面是冲突的文件
+		return false
+	}
+	lines := strings.Split(out, "\n")
+	tree, conflicts := lines[0], lines[1:]
+	for _, f := range conflicts {
+		if f != ReadyFile && !g.sameAppends(ctx, c, tree, first, second, f) {
+			return false
+		}
+	}
+	diff, err := g.d.Git(ctx, c.ProjectDir, "diff", "--name-only", "--no-renames", tree, c.Head)
+	if err != nil {
+		return false
+	}
+	return !slices.ContainsFunc(strings.Split(diff, "\n"), func(f string) bool {
+		return f != "" && f != ReadyFile && !slices.Contains(conflicts, f)
+	})
+}
+
+// sameAppends：冲突的 f 是只追加的记录文件，两边新加的都留下来就是这次分支尖上的内容（空行不比：手工合的常差一两行）。
+func (g scopeGate) sameAppends(ctx context.Context, c Candidate, tree, first, second, f string) bool {
+	if !appendOnlyFiles[path.Base(f)] {
+		return false
+	}
+	var texts [4]string
+	for i, rev := range []string{tree, first, second, c.Head} { // 一边删了这个文件的查不到：不是追加
+		var err error
+		if texts[i], err = g.d.Git(ctx, c.ProjectDir, "show", rev+":"+f); err != nil {
+			return false
+		}
+	}
+	text, ok := unionAppends(texts[0])
+	return ok && text != texts[0] && !dupHeadings(text, texts[1], texts[2]) && slices.Equal(filledLines(text), filledLines(texts[3]))
+}
+
+func filledLines(s string) []string {
+	return slices.DeleteFunc(strings.Split(s, "\n"), func(l string) bool { return strings.TrimSpace(l) == "" })
+}
+
+// logFileRe 认输出里的「路径:行号」和 Python 的「File "路径", line N」。反引号和中文标点不算路径：审查报告里路径常常紧挨着它们。
+var logFileRe = regexp.MustCompile(`([^\s"'\x60()\[\]<>:,，。；：、（）「」“”]+\.[A-Za-z][A-Za-z0-9]{0,9})(?::\d+|", line \d+)`)
 
 // maxLogScan：日志最多看这么多字节（从尾部），出错的地方一般在最后。
 const maxLogScan = 1 << 20
 
-// filesInLog 从门脚本的日志里认出仓库里的文件：完整路径直接认；只有文件名或包内路径（go test 的输出）的，按后缀找，
-// 优先这次改过的文件，其次改过的文件同目录的，剩下的只有一个匹配才算。认不出的不硬凑。
+// filesInLog 从门脚本的日志里认出仓库里的文件。
 func filesInLog(ctx context.Context, d Deps, c Candidate, logPath string) []string {
 	raw, err := os.ReadFile(logPath)
 	if err != nil {
@@ -259,6 +321,12 @@ func filesInLog(ctx context.Context, d Deps, c Candidate, logPath string) []stri
 	if len(raw) > maxLogScan {
 		raw = raw[len(raw)-maxLogScan:]
 	}
+	return filesInText(ctx, d, c, string(raw))
+}
+
+// filesInText 认出文字里带行号的仓库文件：完整路径直接认；只有文件名或包内路径（go test 的输出）的，按后缀找，
+// 优先这次改过的文件，其次改过的文件同目录的，剩下的只有一个匹配才算。认不出的不硬凑。
+func filesInText(ctx context.Context, d Deps, c Candidate, text string) []string {
 	list, err := d.Git(ctx, c.Dir, "ls-files") // 门跑前 worktree 还原成了候选，索引就是候选的文件
 	if err != nil {
 		return nil
@@ -273,7 +341,7 @@ func filesInLog(ctx context.Context, d Deps, c Candidate, logPath string) []stri
 		dirs[path.Dir(f)] = true
 	}
 	var out []string
-	for _, m := range logFileRe.FindAllStringSubmatch(string(raw), -1) {
+	for _, m := range logFileRe.FindAllStringSubmatch(text, -1) {
 		tok := m[1]
 		for _, r := range roots {
 			tok = strings.TrimPrefix(tok, r)

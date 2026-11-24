@@ -52,6 +52,7 @@ func treeSnapshot(t *testing.T, dirs ...string) map[string]string {
 // 每个子命令（含二级命令）见到 -h、--help 都只打印这条命令的用法、退出码 0，什么都不做：
 // 不写 BACKLOG、不起任务、不改 state.json，临时 HOME 和 projects_root 下一个字节都不变。
 func TestHelpFlagEveryCommand(t *testing.T) {
+	t.Parallel()
 	if got := app.Commands(); !slices.Equal(got, helpCommands) {
 		t.Fatalf("用法表里的命令 %v，和这里列的 %v 对不上", got, helpCommands)
 	}

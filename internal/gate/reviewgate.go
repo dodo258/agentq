@@ -151,7 +151,7 @@ func (g reviewGate) Run(ctx context.Context, c Candidate) Result {
 	dir := ReviewsDir(g.d.DataDir(), c.Project)
 	// 只改 type 不改代码时 tree 不变：按修复审过的结论不能算重写审过了
 	if rec, how, ok := findReview(dir, c); ok && !c.Fresh && (c.Type != "rewrite" || rec.Type == "rewrite") {
-		res := judge(rec, c)
+		res := g.judge(ctx, rec, c)
 		res.Evidence = append(res.Evidence, "审查结论沿用："+how+"（"+g.d.Tilde(filepath.Join(dir, rec.Tree+".json"))+"）")
 		return res
 	}
@@ -165,7 +165,7 @@ func (g reviewGate) Run(ctx context.Context, c Candidate) Result {
 	}
 	rec.Tree, rec.Commit, rec.PatchID, rec.JobID, rec.At, rec.Backend, rec.Type = c.Tree, c.Head, c.PatchID, c.JobID, time.Now(), be.Name(), c.Type
 	saveRecord(g.d, c, dir, rec)
-	out := judge(rec, c)
+	out := g.judge(ctx, rec, c)
 	out.Usage = usage
 	return out
 }
@@ -317,12 +317,14 @@ func parseReview(res backend.Result, schema, who string, caps backend.Caps) (Rev
 
 // judge 按证据定结论。不是 note 的问题要有文件行号、证据、复现步骤或失败测试，文件要真的在这次候选里；缺一样都只记提示。
 // 模型说 block 却拿不出证据的不阻塞；说 pass 却报了有证据的问题的照样阻塞。
-func judge(rec ReviewRecord, c Candidate) Result {
+func (g reviewGate) judge(ctx context.Context, rec ReviewRecord, c Candidate) Result {
 	var blockers, hints, files []string
+	var text strings.Builder // 有证据的问题的证据和复现，报告里的是截短过的
 	for _, f := range rec.Findings {
 		line := fmt.Sprintf("%s:%d %s", f.File, f.Line, textfmt.OneLine(f.Evidence, 200))
 		if isProblem(f) && hasEvidence(f, c) {
 			blockers = append(blockers, line+"；复现："+textfmt.OneLine(f.Repro, 200))
+			text.WriteString(f.Evidence + "\n" + f.Repro + "\n")
 			if file := filepath.ToSlash(filepath.Clean(f.File)); !slices.Contains(files, file) {
 				files = append(files, file)
 			}
@@ -333,7 +335,7 @@ func judge(rec ReviewRecord, c Candidate) Result {
 	summary := textfmt.OneLine(rec.Summary, 200)
 	switch {
 	case len(blockers) > 0:
-		return Result{Outcome: Fail, Summary: fmt.Sprintf("审查发现 %d 个有证据的问题：%s", len(blockers), textfmt.OneLine(blockers[0], 200)), Evidence: append(blockers, hints...), Files: files}
+		return Result{Outcome: Fail, Summary: fmt.Sprintf("审查发现 %d 个有证据的问题：%s", len(blockers), textfmt.OneLine(blockers[0], 200)), Evidence: append(blockers, hints...), Files: files, Cited: g.cited(ctx, c, text.String(), files)}
 	case rec.Verdict == "unknown":
 		return Result{Outcome: Unknown, Summary: "审查判不了：" + summary, Evidence: hints}
 	}
@@ -344,6 +346,26 @@ func judge(rec ReviewRecord, c Candidate) Result {
 		summary = "审查说有问题，但没给出能阻塞的证据，只记提示：" + summary
 	}
 	return Result{Outcome: Pass, Summary: summary, Evidence: hints}
+}
+
+// cited：一条发现只写得下一个文件，要跟着改的（快照、另一处代码）写在证据和复现里，带行号。没改过的方案和指令文件是被引用的依据，不算。
+// 这一轮删掉的、审查前换回基点的指令文件不在候选的索引里，另从 c.Files 认。
+func (g reviewGate) cited(ctx context.Context, c Candidate, text string, files []string) []string {
+	named := filesInText(ctx, g.d, c, text)
+	for _, m := range logFileRe.FindAllStringSubmatch(text, -1) {
+		tok := strings.TrimPrefix(strings.TrimPrefix(m[1], c.Dir+"/"), "./")
+		if f := pickTracked(tok, c.Files, c.Files, nil); f != "" {
+			named = append(named, f)
+		}
+	}
+	var out []string
+	for _, f := range named {
+		basis := !slices.Contains(c.Files, f) && (isInstructionFile(f) || strings.HasPrefix(f, specDir+"/"))
+		if !basis && !slices.Contains(files, f) && !slices.Contains(out, f) {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // isProblem：写了类别的按类别，note 以外都是问题；没写类别的是旧记录，按当时的 severity。

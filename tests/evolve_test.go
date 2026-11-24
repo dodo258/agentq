@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -52,6 +51,7 @@ func fakeCalls(t *testing.T, e *testEnv) int {
 
 // 门拦截确认过两次 → tick 收信号（不调模型）→ 下一条同项目任务的合同末尾带上约束和出处；dispatch 用的命令打印同样内容。
 func TestIntegrationLearnedConstraints(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"paused": true})
 	gateRepo(t, e, "demo", "- [ ] 新的活 NOMERGE")
 	seedConfirmedBlocks(t, e)
@@ -79,6 +79,7 @@ func TestIntegrationLearnedConstraints(t *testing.T) {
 
 // 亲手派了马上 stop（刚启动就被停）、门卡片上退回、验收后返工：tick 只读本机数据收成信号（不调模型），agentq evolve signals 看得到种类、领域和证据。
 func TestIntegrationUserSignals(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"paused": true})
 	gateRepo(t, e, "demo", "- [ ] 甲 —— SLEEP=120", "- [ ] 验收 首页改版 的意见 —— 按钮错位（范围：web/）")
 	e.mustRun("run", "demo", "甲")
@@ -181,14 +182,8 @@ func TestIntegrationManualInstallObserved(t *testing.T) {
 			testkit.GitT(t, e.home, dir, "add", "-A")
 			testkit.GitT(t, e.home, dir, "commit", "-q", "-m", "手动装")
 			b := testkit.GitT(t, e.home, dir, "rev-parse", "HEAD")
-			binB := filepath.Join(t.TempDir(), "agentq")
-			build := exec.Command("go", "build", "-tags", "agentq_fake_deps", "-o", binB, ".")
-			build.Dir, build.Env = dir, append(os.Environ(), "HOME="+e.home)
-			if out, err := build.CombinedOutput(); err != nil {
-				t.Fatalf("构建 B：%v\n%s", err, out)
-			}
 			installed := e.bin
-			e.bin = binB
+			e.bin = buildSelf(t, e, dir)
 			e.mustRun("setup", "--yes")
 			e.bin = installed
 			verB := "dev-" + b[:7]

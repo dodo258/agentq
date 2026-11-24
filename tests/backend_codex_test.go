@@ -105,6 +105,7 @@ func writeFakeMode(t *testing.T, e *testEnv, name, mode string) {
 
 // 完整闭环：tick 启动、提示词走标准输入、分支提交、ready.json、测试门、审查门（同样是 Codex）、引擎合并。
 func TestCodexFullLoopMerges(t *testing.T) {
+	t.Parallel()
 	e := codexEnv(t, nil)
 	e.extra = append(e.extra, "CODEX_HOME="+filepath.Join(e.home, "ch"), "CODEX_API_KEY=k1", "OPENAI_API_KEY=k2", "ANTHROPIC_API_KEY=k3", "CLAUDE_CODE_OAUTH_TOKEN=k4", "CLAUDE_CONFIG_DIR="+filepath.Join(e.home, ".claude"))
 	dir := gateRepo(t, e, "demo", codexItem("aaa", "ok"))
@@ -161,6 +162,7 @@ func TestCodexFullLoopMerges(t *testing.T) {
 
 // 撤修复验证：把默认后端的 opus 传给项目后端的问题。默认 Claude（model=opus），项目换成 Codex。
 func TestCodexProjectBackendGetsNoClaudeDefaults(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"model": "opus", "effort": "high", "permission_mode": "bypassPermissions",
 		"project_backends": map[string]any{"demo": "codex"},
 		"backends":         map[string]any{"codex": map[string]any{"path": codexFake(t), "model": "gpt-x", "permission": "danger-full-access"}}})
@@ -182,6 +184,7 @@ func TestCodexProjectBackendGetsNoClaudeDefaults(t *testing.T) {
 
 // 手写的配置只写了权限：模型和强度什么都不传，跟 Codex 自己的配置走。
 func TestCodexHandWrittenConfigPassesNothing(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"backend": "codex", "permission_mode": "danger-full-access", "backends": map[string]any{"codex": map[string]any{"path": codexFake(t)}}})
 	gateRepo(t, e, "demo", codexItem("ccc", "ok"))
 	e.mustRun("run", "demo")
@@ -200,6 +203,7 @@ func TestCodexHandWrittenConfigPassesNothing(t *testing.T) {
 
 // 默认 Codex 没配权限：不起任务，不计连环失败，tick 日志只记一次，status 和 run 都写明要设什么。
 func TestCodexPermissionMissingRefuses(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []any{nil, "default"} {
 		cfg := map[string]any{"backend": "codex", "backends": map[string]any{"codex": map[string]any{"path": codexFake(t)}}}
 		if mode != nil {
@@ -235,6 +239,7 @@ func TestCodexPermissionMissingRefuses(t *testing.T) {
 
 // 按项目用 Codex 没配权限：这个项目不起，别的项目照常；status 写的是 backends.codex.permission；配好就接上。
 func TestCodexProjectPermissionMissing(t *testing.T) {
+	t.Parallel()
 	fake := codexFake(t)
 	cfg := map[string]any{"max_parallel": 3, "project_backends": map[string]any{"demo": "codex"}, "backends": map[string]any{"codex": map[string]any{"path": fake}}}
 	e := newEnv(t, cfg)
@@ -278,6 +283,7 @@ func TestCodexProjectPermissionMissing(t *testing.T) {
 
 // 默认 Codex、项目用 Claude 也一样：Claude 不沿用默认后端的权限，也要配。
 func TestCodexDefaultClaudeProjectPermissionMissing(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"backend": "codex", "permission_mode": "danger-full-access", "project_backends": map[string]any{"demo": "claude"},
 		"backends": map[string]any{"codex": map[string]any{"path": codexFake(t)}}})
 	gateRepo(t, e, "demo", "- [ ] 活 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
@@ -288,6 +294,7 @@ func TestCodexDefaultClaudeProjectPermissionMissing(t *testing.T) {
 
 // 老配置不受影响：默认 Claude，default 只提示照跑。
 func TestPermissionDefaultStillRunsOnClaude(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"permission_mode": "default"})
 	gateRepo(t, e, "demo", "- [ ] 活 READYMERGE —— BRANCH=agent/t-a FILE=a.txt")
 	out := e.mustRun("run", "demo")
@@ -303,6 +310,7 @@ func TestPermissionDefaultStillRunsOnClaude(t *testing.T) {
 
 // 默认 Claude、项目 Codex：回复 Codex 任务的通知，Codex 做不到只读，回退普通对话，消息和附件都在。之前路由选了追问，Start 被拒，消息作废、附件被删。
 func TestCodexFollowupFallsBackOnProjectBackend(t *testing.T) {
+	t.Parallel()
 	e, tg := threadEnv(t, map[string]any{"project_backends": map[string]any{"demo": "codex"},
 		"backends": map[string]any{"codex": map[string]any{"path": codexFake(t), "permission": "danger-full-access"}}})
 	codexHome := filepath.Join(e.home, "ch")
@@ -362,6 +370,7 @@ func TestCodexFollowupFallsBackOnProjectBackend(t *testing.T) {
 
 // 反方向：默认 Codex、项目 Claude，回复 Claude 任务的通知能追问就追问。默认后端没登录也不挡，看的是原任务的后端。
 func TestClaudeFollowupWorksUnderCodexDefault(t *testing.T) {
+	t.Parallel()
 	e, _ := threadEnv(t, map[string]any{"backend": "codex", "permission_mode": "danger-full-access", "project_backends": map[string]any{"demo": "claude"},
 		"backends": map[string]any{"codex": map[string]any{"path": codexFake(t)}}})
 	writeFakeMode(t, e, "authmode", "out")
@@ -404,6 +413,7 @@ func TestCodexPermissionValidatedByBackend(t *testing.T) {
 
 // 做到一半撞限：记中断，冷却过后 exec resume 同一个会话接着做完。
 func TestCodexLimitThenResumes(t *testing.T) {
+	t.Parallel()
 	e := codexEnv(t, map[string]any{"limit_cooldown": "1s"})
 	gateRepo(t, e, "demo", codexItem("ddd", "limitmid"))
 	e.mustRun("tick")
@@ -461,6 +471,7 @@ func TestCodexLimitThenResumes(t *testing.T) {
 
 // 进程被杀：事件流没有终态，从第一个事件取到的会话 id 还能续跑，不当成成功。
 func TestCodexKilledMidwayResumes(t *testing.T) {
+	t.Parallel()
 	e := codexEnv(t, nil)
 	gateRepo(t, e, "demo", codexItem("eee", "claimhang"))
 	e.mustRun("run", "demo")
@@ -512,6 +523,7 @@ func TestCodexKilledMidwayResumes(t *testing.T) {
 
 // stop：杀掉真进程，不是别的。
 func TestCodexStopKills(t *testing.T) {
+	t.Parallel()
 	e := codexEnv(t, nil)
 	gateRepo(t, e, "demo", codexItem("fff", "hang"))
 	e.mustRun("run", "demo")
@@ -529,6 +541,7 @@ func TestCodexStopKills(t *testing.T) {
 
 // 超时：杀真进程组，按超时收尾。
 func TestCodexTimeoutKills(t *testing.T) {
+	t.Parallel()
 	e := codexEnv(t, map[string]any{"timeout": "1s"})
 	gateRepo(t, e, "demo", codexItem("ggg", "hang"))
 	e.mustRun("run", "demo")
@@ -544,6 +557,7 @@ func TestCodexTimeoutKills(t *testing.T) {
 
 // pid 被复用：记录的 pid 现在是别的程序。环境读得到、标记不对，就是结束了，按结果收尾，不杀那个程序。
 func TestCodexPIDReusedNotKilled(t *testing.T) {
+	t.Parallel()
 	e := codexEnv(t, map[string]any{"timeout": "1s"})
 	gateRepo(t, e, "demo", codexItem("hhh", "quick"))
 	e.mustRun("run", "demo")
@@ -579,6 +593,7 @@ func TestCodexPIDReusedNotKilled(t *testing.T) {
 
 // 认不出（macOS 上系统自带的程序环境读不到，外壳也不在了）：不当结束了重复启动，超时后也不杀，只放开名额。
 func TestCodexUnsureNeitherKillsNorDuplicates(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" {
 		t.Skip("Linux 上 /proc 总读得到自己用户的进程环境")
 	}
@@ -631,6 +646,7 @@ func TestCodexUnsureNeitherKillsNorDuplicates(t *testing.T) {
 
 // 认证失败：401 暂停这个后端。login status 说已登录也不解除：它只看本地有没有凭据（真实令牌失效时还是这么说）。
 func TestCodexAuthFailurePausesBackend(t *testing.T) {
+	t.Parallel()
 	e := codexEnv(t, map[string]any{"notify_enabled": true})
 	gateRepo(t, e, "demo", codexItem("kkk", "e401"), codexItem("lll", "ok"))
 	e.mustRun("run", "demo", "ITEM-kkk")
@@ -675,6 +691,7 @@ func TestCodexNotLoggedInRefuses(t *testing.T) {
 
 // 审查判不了（输出坏了、进程崩了、结构化输出被接口拒绝）：门不放行，不合并。
 func TestCodexReviewUnknownDoesNotMerge(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"bad", "crash", "reject", "failbare", "failempty", "faildetail", "errbare"} {
 		t.Run(mode, func(t *testing.T) {
 			e := codexEnv(t, nil)
@@ -698,6 +715,7 @@ func TestCodexReviewUnknownDoesNotMerge(t *testing.T) {
 
 // 审查有证据的问题：退回。
 func TestCodexReviewBlockReturns(t *testing.T) {
+	t.Parallel()
 	e := codexEnv(t, nil)
 	gateRepo(t, e, "demo", codexItem("ooo", "ok"))
 	writeFakeMode(t, e, "reviewmode", "block")
@@ -934,6 +952,7 @@ func TestCodexPermissionMissingCatchUpLogsOnce(t *testing.T) {
 
 // 界面门走任务的后端：假 codex 改 .tsx，截图用 --image 附上，截图目录进沙箱可写目录，结论按 schema 读。不调真实 CLI。
 func TestCodexUIGate(t *testing.T) {
+	t.Parallel()
 	e := codexEnv(t, nil)
 	dir := gateRepo(t, e, "demo", codexItem("aaa", "uifile"))
 	shot := filepath.Join(e.home, "shot.png")
@@ -973,6 +992,7 @@ func TestCodexUIGate(t *testing.T) {
 
 // 权限没配：new 不起进程；第一条退回后也不接手，配好了接着做。
 func TestCodexPermissionBlocksFirstVersion(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"backend": "codex", "backends": map[string]any{"codex": map[string]any{"path": codexFake(t)}}})
 	out, code := e.run("new", "做工具")
 	if code == 0 || !strings.Contains(out, "permission") {
@@ -1029,6 +1049,7 @@ func TestCodexPermissionBlocksFirstVersion(t *testing.T) {
 
 // 默认后端是 Claude、这个项目用 Codex：界面审查按 Codex 的配置，Claude 的默认模型不串过来。
 func TestCodexUIGateUsesBackendConfig(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"model": "opus", "project_backends": map[string]string{"demo": "codex"},
 		"backends": map[string]any{"codex": map[string]any{"path": codexFake(t), "permission": "danger-full-access"}}})
 	dir := gateRepo(t, e, "demo", codexItem("aaa", "uifile"))

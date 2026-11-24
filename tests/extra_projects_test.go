@@ -515,6 +515,7 @@ func TestInitWritesVerifyScript(t *testing.T) {
 
 // 真二进制：项目目录外的仓库，add 之后 tick 接得上任务，任务在那个目录里跑；再 add 一条不重复登记。
 func TestExtraProjectRunsThroughTick(t *testing.T) {
+	t.Parallel()
 	e, _ := sgEnv(t, nil)
 	dir := filepath.Join(e.home, "code", "far-app")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -553,6 +554,7 @@ func TestExtraProjectRunsThroughTick(t *testing.T) {
 
 // 自己配的 projects_root 丢了：extra 照跑，错误要说出来。
 func TestCustomRootMissingWithExtra(t *testing.T) {
+	t.Parallel()
 	far := filepath.Join(t.TempDir(), "far-app")
 	if err := os.MkdirAll(far, 0o755); err != nil {
 		t.Fatal(err)
@@ -645,6 +647,7 @@ func TestSkillsFindExtraProjects(t *testing.T) {
 
 // 没有 ~/projects：tick 不往日志写扫描失败，当作没有活；配了别的目录丢了还是报。
 func TestTickQuietWithoutDefaultProjectsRoot(t *testing.T) {
+	t.Parallel()
 	e, _ := sgEnv(t, map[string]any{"projects_root": "~/projects"})
 	if err := os.RemoveAll(filepath.Join(e.home, "projects")); err != nil {
 		t.Fatal(err)

@@ -56,6 +56,7 @@ func exists(path string) bool { _, err := os.Stat(path); return err == nil }
 
 // 正常时不回滚：一直返回 0，或失败 1 次后又成功（计数清零），agentq 都不换，汇总不写。
 func TestGuardNoRollbackWhenHealthy(t *testing.T) {
+	t.Parallel()
 	a, run := guardEnv(t, true)
 	for i := 0; i < 3; i++ {
 		if code, out := run(); code != 0 {
@@ -87,6 +88,7 @@ func TestGuardNoRollbackWhenHealthy(t *testing.T) {
 
 // 替换后连续 2 次失败：agentq.prev 换回来，坏的留成 agentq.bad，当天汇总写「已自动回滚」；换回的版本正常运行。
 func TestGuardRollsBackAfterTwoFailures(t *testing.T) {
+	t.Parallel()
 	a, run := guardEnv(t, true)
 	setCode(t, a.Home, "3")
 	if code, out := run(); code != 3 || strings.Contains(out, "回滚") {
@@ -121,6 +123,7 @@ func TestGuardRollsBackAfterTwoFailures(t *testing.T) {
 
 // 没有 agentq.prev：第 2 次失败只写一行报警，不换；之后再失败不重复写。
 func TestGuardNoPrev(t *testing.T) {
+	t.Parallel()
 	a, run := guardEnv(t, false)
 	setCode(t, a.Home, "1")
 	for i := 0; i < 3; i++ {

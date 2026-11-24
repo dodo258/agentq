@@ -52,6 +52,7 @@ func TestInstallShBackendFlag(t *testing.T) {
 
 // 默认后端不是 Claude：提示词不说 claude -p，也不让任务往 ~/.claude 写报告；引擎和技能的锁在同一处，不新建 ~/.claude。
 func TestNonClaudeHostPromptReportsLocks(t *testing.T) {
+	t.Parallel()
 	e := codexEnv(t, map[string]any{"review_enabled": true})
 	gateRepo(t, e, "demo")
 	e.mustRun("review")
@@ -92,6 +93,7 @@ func TestNonClaudeHostPromptReportsLocks(t *testing.T) {
 
 // 默认后端是 Claude 的老配置：提示词、报告和锁的位置一个字不变。
 func TestClaudeHostPathsUnchanged(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"review_enabled": true})
 	gateRepo(t, e, "demo")
 	e.mustRun("review")

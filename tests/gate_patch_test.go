@@ -18,6 +18,7 @@ import (
 
 // 派活前：条目提到反复修的模块，合同里加「先按重写流程梳理」；agentq health 能报出来。
 func TestIntegrationPatchNoteAndHealth(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"paused": true})
 	dir := gateRepo(t, e, "demo", "- [ ] 修 core 又算错 READYMERGE —— BRANCH=agent/t-a FILE=a.txt", "- [ ] 不相关的活 NOMERGE")
 	for i, msg := range []string{"加 core", "fix: A 算错", "修复：A 还是不对", "fix: A 边界", "修复：A 又错了"} {
@@ -47,6 +48,7 @@ func TestIntegrationPatchNoteAndHealth(t *testing.T) {
 
 // 界面门走真二进制：_gate 进程把截图目录告诉脚本，空白截图被拦（error 档）；有内容的交给审查进程，默认 warn 不挡。
 func TestIntegrationUIGate(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]any{"paused": true})
 	dir := gateRepo(t, e, "demo", "- [ ] 改页面 READYMERGE —— BRANCH=agent/t-a FILE=a.css")
 	shot := filepath.Join(e.home, "shot.png")
