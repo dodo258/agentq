@@ -61,6 +61,26 @@ func (t Teller) Say(text string) error {
 	return t.Flush()
 }
 
+// Render 把纯文字排成 Telegram 的样子：空行分段，第一段是标题（加粗）；
+// 每段第一行是段名（加粗，「名字　内容」只加粗名字），其余放进带竖条的块；末尾一行小字写时间。
+func Render(text string, now time.Time) string {
+	var out []string
+	for i, para := range strings.Split(strings.TrimSpace(text), "\n\n") {
+		lines := strings.Split(strings.TrimSpace(para), "\n")
+		head := html.EscapeString(lines[0])
+		if name, rest, ok := strings.Cut(head, "　"); ok && i > 0 {
+			head = "<b>" + name + "</b>　" + rest
+		} else {
+			head = "<b>" + head + "</b>"
+		}
+		if len(lines) > 1 {
+			head += "\n<blockquote>" + html.EscapeString(strings.Join(lines[1:], "\n")) + "</blockquote>"
+		}
+		out = append(out, head)
+	}
+	return strings.Join(out, "\n\n") + "\n<i>" + now.Format("15:04") + " · agentq</i>"
+}
+
 // errRefused：Telegram 不收这条，多半是 chat id 填错了。
 var errRefused = errors.New("发消息：Telegram 不收")
 
@@ -101,8 +121,7 @@ func (t Teller) send(text string) error {
 	token, chat := t.secrets()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	head, rest, _ := strings.Cut(html.EscapeString(text), "\n") // 第一行加粗当标题，手机上一眼分得开
-	form := url.Values{"chat_id": {chat}, "text": {strings.TrimSpace("<b>" + head + "</b>\n" + rest)}, "parse_mode": {"HTML"}, "disable_web_page_preview": {"true"}}
+	form := url.Values{"chat_id": {chat}, "text": {Render(text, time.Now())}, "parse_mode": {"HTML"}, "disable_web_page_preview": {"true"}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.API+"/bot"+token+"/sendMessage", strings.NewReader(form.Encode()))
 	if err != nil {
 		return fmt.Errorf("发消息：地址不对")

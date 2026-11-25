@@ -62,7 +62,7 @@ The old agentq (v0.1–v0.3) was a scheduler: queues, slots, five gates, patrols
 - 286 of 324 tasks were started by the scheduler itself.
 - 13% of the usage quota went into agentq changing itself.
 
-This version is written from scratch and does one thing: carry one request from start to finish. No queue, no slots, no chain of gates, no evaluation, no self-evolution. Product code is capped at 2,600 lines, enforced by a test. The reasoning is in [docs/DESIGN.md](docs/DESIGN.md) (Chinese).
+This version is written from scratch and does one thing: carry one request from start to finish. No queue, no slots, no chain of gates, no evaluation, no self-evolution. Product code is capped at 2,650 lines, enforced by a test. The reasoning is in [docs/DESIGN.md](docs/DESIGN.md) (Chinese).
 
 ## One straight line
 

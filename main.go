@@ -425,18 +425,18 @@ func brief(s *order.Store, now time.Time) string {
 		if o.Over() && now.Sub(o.Ended) > 24*time.Hour && o.State != order.Stuck {
 			continue
 		}
-		line := fmt.Sprintf("\n· %s「%s」", o.Project, flow.Title(o))
+		line := fmt.Sprintf("\n%s：%s", o.Project, flow.Title(o))
 		switch o.State {
 		case order.Done:
-			parts["🟢 做好了"] += line + " " + o.Ended.Sub(o.Started).Round(time.Minute).String()
+			parts["🟢 做好了"] += line + "（" + o.Ended.Sub(o.Started).Round(time.Minute).String() + "）"
 		case order.Stuck:
-			parts["🔴 卡住等你"] += line + " " + claude.Short(o.Why, 80) + "（" + o.ID + "）"
+			parts["🔴 卡住等你"] += line + "，" + claude.Short(o.Why, 60) + "，agentq retry " + o.ID
 		case order.Stopped:
 		default:
-			parts["🔵 在做"] += line + " " + o.State
+			parts["🔵 在做"] += line + "（" + o.State + "）"
 		}
 	}
-	text := "☀️ 早报 " + now.Format("01-02")
+	text := "☀️ 早报 · " + now.Format("1月2日")
 	for _, k := range []string{"🔴 卡住等你", "🟢 做好了", "🔵 在做"} {
 		if parts[k] != "" {
 			text += "\n\n" + k + parts[k]
@@ -445,9 +445,9 @@ func brief(s *order.Store, now time.Time) string {
 	if len(used) == 0 && len(parts) == 0 {
 		return text + "\n\n昨天没有派活"
 	}
-	text += fmt.Sprintf("\n\n用了 %.1fM token：", total)
+	text += fmt.Sprintf("\n\n📊 一天用了 %.1fM token", total)
 	for _, p := range slices.Sorted(maps.Keys(used)) {
-		text += fmt.Sprintf(" %s %.1fM", p, used[p])
+		text += fmt.Sprintf("\n%s：%.1fM", p, used[p])
 	}
 	return text
 }

@@ -58,7 +58,7 @@ func (f *Flow) Run(ctx context.Context, o *order.Order) error {
 	if serr := o.Update(func() { o.State, o.Why, o.Ended = order.Stuck, err.Error(), time.Now() }); serr != nil {
 		return errors.Join(err, serr)
 	}
-	f.Say(fmt.Sprintf("🔴 %s 卡住了\n%s\n%s\n接着做：agentq retry %s", o.Project, Title(o), claude.Short(err.Error(), 200), o.ID))
+	f.Say(fmt.Sprintf("🔴 卡住了 · %s\n\n%s　%s\n%s\n接着做：agentq retry %s", day(), o.Project, Title(o), claude.Short(err.Error(), 200), o.ID))
 	return err
 }
 
@@ -116,7 +116,7 @@ func (f *Flow) plan(ctx context.Context, o *order.Order) error {
 	}
 	f.hand(o, "产品经理", "交出方案，划成 %d 块：%s", len(p.Modules), p.Summary)
 	if !p.Small {
-		f.Say(fmt.Sprintf("📋 %s 开工\n%s\n分 %d 块：%s", o.Project, p.Title, len(p.Modules), claude.Short(p.Summary, 120)))
+		f.Say(fmt.Sprintf("📋 开工 · %s\n\n%s　%s\n分 %d 块：%s", day(), o.Project, p.Title, len(p.Modules), claude.Short(p.Summary, 120)))
 	}
 	return nil
 }
@@ -477,7 +477,7 @@ func (f *Flow) land(ctx context.Context, o *order.Order) error {
 		f.step(o, order.Landing, "主目录有改动挡着："+blocked)
 		if !told {
 			told = true
-			f.Say(fmt.Sprintf("🟠 %s 做好了，等合并\n%s\n%s 所在的目录有没提交的改动挡着，提交或挪开后自动合", o.Project, Title(o), o.Main))
+			f.Say(fmt.Sprintf("🟠 等合并 · %s\n\n%s　%s\n做好了，%s 所在的目录有没提交的改动挡着，提交或挪开后自动合", day(), o.Project, Title(o), o.Main))
 		}
 		select {
 		case <-ctx.Done():
@@ -661,15 +661,20 @@ func how(o *order.Order) string {
 
 // report 是做好了的那条消息：几行，一行一件事。
 func report(o *order.Order) string {
-	s := fmt.Sprintf("🟢 %s 做好了\n%s\n怎么看：%s\n%s · %s", o.Project, Title(o), how(o), o.Ended.Sub(o.Started).Round(time.Minute), o.Commit)
+	s := fmt.Sprintf("🟢 做好了 · %s\n\n%s　%s\n怎么看：%s\n用了 %s · 提交 %s", day(), o.Project, Title(o), how(o), o.Ended.Sub(o.Started).Round(time.Minute), o.Commit)
 	if n := len(o.Bugs); n > 0 {
 		s += fmt.Sprintf(" · 审计 %d 个大 bug，修了 %d 个", n, n-o.Invalid)
 	}
+	if len(o.Risks) > 0 {
+		s += "\n\n⚠️ 留意"
+	}
 	for _, x := range o.Risks[:min(3, len(o.Risks))] {
-		s += "\n⚠️ " + claude.Short(x, 80)
+		s += "\n" + claude.Short(x, 80)
 	}
 	return s
 }
+
+func day() string { return time.Now().Format("1月2日") }
 
 func lastPara(s string) string {
 	p := strings.Split(strings.TrimSpace(s), "\n\n")
