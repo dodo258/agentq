@@ -32,7 +32,7 @@ func TestHelperLostShell(t *testing.T) {
 	}
 	jobDir, projectDir, claude := args[1], args[2], args[3]
 	syscall.CloseOnExec(3) // 和真外壳一样：别让 claude 继承报 pid 的管道
-	if _, err := runner.StartCLI(claude, projectDir, filepath.Base(jobDir), args[4:], nil, "", filepath.Join(jobDir, "result.json"), filepath.Join(jobDir, "stderr.log")); err != nil {
+	if _, err := runner.StartCLI(claude, projectDir, filepath.Base(jobDir), args[4:], nil, "", "", filepath.Join(jobDir, "result.json"), filepath.Join(jobDir, "stderr.log")); err != nil {
 		os.Exit(8)
 	}
 	os.Exit(0) // 报 pid 的管道随退出关掉，启动方读到 EOF

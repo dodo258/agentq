@@ -78,6 +78,7 @@ func TestMain(m *testing.M) {
 // APIERR403、APIERR422、APIERR429、APIERR529：报错结束，带 api_error_status（403、422 的文案来自真实 result.json），没花钱。
 // ORPHANDONE：接手任务做完：把条目勾掉、去掉进行中标记。
 // TERMCHILD：留一个不理 SIGTERM 的子进程。KILLTICK：把启动自己的 tick（外壳的父进程）SIGKILL 掉，这时 tick 还没写完状态。
+// TMPWRITE：往 TMPDIR 里留文件和没写权限的目录，自己不清（用例给的 TMPDIR 末尾带斜杠）。
 // CLAIMFIRST：像 agent 认领一样先在 BACKLOG 这一条写进行中标记（再按 SLEEP 睡）。
 // INBOXWRITE：任务箱任务，把内容写进 prompt 里「产出文件：」那一行的路径；INBOXLINK：写成软链接，INBOXBLANK：写成空文件。
 // INBOXBUDGET：首次写半成品后撞预算，-r 接着做时写完；INBOXBUDGETTWICE：每次都撞。INBOXRATE：写好产出，结论里提到 rate limit；INBOXLIMITFILE：写好产出但真撞上限（is_error 为真）。
@@ -134,6 +135,7 @@ case "$prompt" in *TRANSCRIPT*)
   d="$HOME/.claude/projects/-fake/$session"; mkdir -p "$d/subagents"; echo '{}' > "$d.jsonl"
   ( while :; do echo '{}' >> "$d/subagents/agent-1.jsonl"; sleep 0.3; done ) & ;;
 esac
+case "$prompt" in *TMPWRITE*) mkdir -p "${TMPDIR}d/ro"; echo x > "${TMPDIR}d/ro/f"; chmod 555 "${TMPDIR}d/ro" ;; esac
 case "$prompt" in *CLAIMFIRST*) sedi '/^- \[ \] .*CLAIMFIRST/ s/$/（进行中：agent\/t-cf 2026-01-01 10:00）/' docs/BACKLOG.md ;; esac
 s=$(printf '%s' "$prompt" | sed -n 's/.*SLEEP=\([0-9]*\).*/\1/p')
 [ -z "$s" ] && s=$AGENTQ_FAKE_SLEEP # 夜班、复盘的 prompt 是固定的说明文件，睡多久靠环境变量给
@@ -993,7 +995,7 @@ func TestIntegrationTickAfterJobWaitsForLock(t *testing.T) {
 func TestStartJobReportsStartError(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	_, err := runner.StartJob(agentqBin, dir, backend.Invocation{Path: filepath.Join(dir, "没有这个 claude"), Dir: dir}, filepath.Join(dir, "launchd.log"))
+	_, err := runner.StartJob(agentqBin, dir, backend.Invocation{Path: filepath.Join(dir, "没有这个 claude"), Dir: dir}, filepath.Join(dir, "launchd.log"), "")
 	if err == nil || !strings.Contains(err.Error(), "没有这个 claude") {
 		t.Errorf("应报回启动错误：%v", err)
 	}

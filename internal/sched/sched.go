@@ -227,6 +227,9 @@ func (a *Service) Tick(after string) error {
 	a.NotifyTick(st)
 	if !recovered {
 		a.retention(st) // 不调模型，删不掉只记日志
+		doomed := a.Runner.SweepTmp(st)
+		lock.Close() // 删几十 GB 要一会儿，不拿着锁挡 run、stop 和任务结束后的 tick
+		a.Runner.RemoveTmp(doomed)
 	}
 	return nil
 }

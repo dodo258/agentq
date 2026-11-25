@@ -409,11 +409,11 @@ func (s *Service) runCases(ctx context.Context, h *harness, cases []Case) ([]Sco
 func (h *harness) cleanup(scores []Score) {
 	for _, s := range scores {
 		if s.Kept != "" {
-			_ = removeTree(filepath.Join(h.base, "gocache")) // 留现场时缓存没用，删不掉也不影响结论
+			_ = proc.RemoveTree(filepath.Join(h.base, "gocache")) // 留现场时缓存没用，删不掉也不影响结论
 			return
 		}
 	}
-	_ = removeTree(h.base) // 删不掉的下次 run 按时间清
+	_ = proc.RemoveTree(h.base) // 删不掉的下次 run 按时间清
 }
 
 func countKinds(cases []Case) string {

@@ -80,6 +80,9 @@ func (a *Env) Tilde(p string) string {
 
 func (a *Env) DataDir() string { return filepath.Join(a.Home, ".agentq") }
 
+// Tmps 登记任务和门的临时目录。
+func (a *Env) Tmps() proc.TmpStore { return proc.TmpStore{Dir: filepath.Join(a.DataDir(), "tmp")} }
+
 func (a *Env) ConfigPath() string { return filepath.Join(a.DataDir(), "config.json") }
 
 func (a *Env) StatePath() string { return filepath.Join(a.DataDir(), "state.json") }

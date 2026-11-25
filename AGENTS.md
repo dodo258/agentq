@@ -11,7 +11,7 @@ Go 标准库，单二进制，分模块见下一节。平台差异只在 `*_darw
 
 | 层 | 模块 | 负责 |
 |---|---|---|
-| 0 | `textfmt` `fsx` `proc` `backend` | 给人看的短文字；原子写和文件锁；子进程环境白名单和进程组；后端接口、注册表、共用类型（用量、额度档位、进展信号） |
+| 0 | `textfmt` `fsx` `proc` `backend` | 给人看的短文字；原子写和文件锁；子进程环境白名单、进程组、任务和门的临时目录（登记用 `fsx` 原子写）；后端接口、注册表、共用类型（用量、额度档位、进展信号） |
 | 1 | `config` `env` `backend/claude` `backend/codex` `backend/pi` `gitx` | config.json；运行环境（路径、时钟、日志、取后端）；Claude Code 后端（参数、结果解析、额度、会话记录、登录）；Codex 后端（参数、事件流解析、登录）；pi 后端（参数、事件流解析、登录）；跑 git |
 | 2 | `state` `backlog` `telegram` | state.json 和 Job；BACKLOG 文本和提交；Telegram 客户端 |
 | 3 | `quality` `ledger` `service` `envlayer` `notify` | 满意率；meta.json 和当天汇总；launchd、systemd；通用工程规则（`rules/`）放到后端的规则目录；通知队列、早报 |

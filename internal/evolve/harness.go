@@ -282,13 +282,25 @@ func (h *harness) runCase(ctx context.Context, c Case) Score {
 	s := Grade(c, f)
 	s.Mode, s.Model = h.mode, h.model
 	if s.Correct {
-		if err := removeTree(sb.dir); err != nil {
+		if err := removeSandbox(sb.dir); err != nil {
 			s.Kept = sb.dir // 删不干净不影响结论，留着路径
 		}
 	} else {
 		s.Kept = sb.dir
 	}
 	return s
+}
+
+// removeSandbox 删做对了的题的现场。题目只等得到已经露面的任务外壳，机器忙时晚一步的那个还在收尾（它结束时要跑一次 tick），边删边写会删不干净：等它走完再删。
+func removeSandbox(dir string) error {
+	var err error
+	for range 20 {
+		if err = proc.RemoveTree(dir); err == nil {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return err
 }
 
 // runProgram：程序题，不调模型。脚本从题目原件放出来，HOME 是临时的，被评判的二进制是 $AGENTQ_BIN。
@@ -639,7 +651,7 @@ func (h *harness) cloneMain(ctx context.Context, sb *sandbox, c Case, project st
 		if exit, _, err := sb.exec(ctx, stepWait, sb.dir, nil, "git", "clone", "-q", "-b", b, project, clone); err == nil && exit == 0 {
 			return clone
 		}
-		if err := removeTree(clone); err != nil {
+		if err := proc.RemoveTree(clone); err != nil {
 			return ""
 		}
 	}
@@ -900,21 +912,6 @@ const (
 	staleAfter = 7 * 24 * time.Hour
 )
 
-// removeTree 删目录，不跟软链接：现场里有指向钥匙串的链接，删的只是链接。
-// go 的模块缓存是只读的，先把目录改成可写，否则删不掉。WalkDir 不进软链接，不会改到链接指向的目录。
-func removeTree(dir string) error {
-	walkErr := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err == nil && d.IsDir() {
-			_ = os.Chmod(p, 0o700) // 改不了的话下面的 RemoveAll 会报
-		}
-		return nil
-	})
-	if walkErr != nil {
-		return walkErr
-	}
-	return os.RemoveAll(dir)
-}
-
 // cleanStale 清 root 下超过 7 天的自家现场（kill -9、没通过留下的）。别的东西一律不碰：
 // 前缀不对、不是真目录（软链接）、没有标记文件、标记还新的都留着。返回清了几个。
 func cleanStale(root string, now time.Time) int {
@@ -932,7 +929,7 @@ func cleanStale(root string, now time.Time) int {
 		if err != nil || !info.Mode().IsRegular() || now.Sub(info.ModTime()) < staleAfter {
 			continue
 		}
-		if removeTree(dir) == nil {
+		if proc.RemoveTree(dir) == nil {
 			n++
 		}
 	}

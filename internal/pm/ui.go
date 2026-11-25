@@ -55,7 +55,7 @@ func (a *Service) captureUI(p backlog.Project, ui *UI) string {
 	}
 	dir := a.JobDir(id)
 	c, ran := gate.CaptureUI(context.Background(), gate.CaptureOpts{Home: a.Home, Project: p.Dir, Branch: branch,
-		WorkDir: filepath.Join(dir, uiWorkDir), Shots: filepath.Join(dir, ShotsDir), Mark: "pm-ui-" + id, Timeout: a.Cfg.VerifyTimeout.Duration})
+		WorkDir: filepath.Join(dir, uiWorkDir), Shots: filepath.Join(dir, ShotsDir), Mark: "pm-ui-" + id, Timeout: a.Cfg.VerifyTimeout.Duration, Tmps: a.Tmps()})
 	if !ran {
 		os.RemoveAll(dir)
 		return ""

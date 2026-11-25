@@ -20,7 +20,7 @@ import (
 var archAllowed = map[string]string{
 	"textfmt":        "",
 	"fsx":            "",
-	"proc":           "",
+	"proc":           "fsx",
 	"config":         "textfmt fsx backend",
 	"env":            "fsx proc config backend",
 	"backend":        "textfmt proc",

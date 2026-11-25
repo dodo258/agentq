@@ -25,6 +25,7 @@
 | `tick.lock` | 防止两个 tick 重叠（定时 tick、任务结束后的 tick、`run`、`stop`、`backlog archive` 共用） | 没有持有者超时 |
 | `jobs/<id>/` | `prompt.txt`、`result.json`（claude 的 JSON 输出）、`stderr.log`、`meta.json`（任务记录，结束后带用量）、`claude.pid`（外壳写的 pid）、`files/`（对话任务收到的附件）、`screenshots/` 和 `ui/ui.log`（产品经理调研前在默认分支上跑 `.agentq/ui` 截的图和脚本输出） | 读不出的 meta 跳过。结束的任务记录保留 30 天 |
 | `starting/<id>` | 正在启动的任务记录，tick 被杀后据此接回 | |
+| `tmp/<目录名>.json`、`tmp/remove.lock` | 任务和门的临时目录的登记，目录删掉时一起删，见[临时目录](scheduling.md#临时目录)；删目录时拿的锁 | 改名 `.bad` 留着，它指的目录不动 |
 | `launchd.log` | 每次 tick 的日志（包括保护脚本记的失败和回滚）、定点叫醒的日志、任务外壳和任务结束后那次 tick 的日志。超过 10MB 时只留尾部 2MB | |
 | `retention-day` | 今天清理过了，见下面「磁盘清理」 | 当今天没清过 |
 | `tick-guard.sh`、`guard-fails` | 服务调用的保护脚本和它记的连续失败次数，见[保护脚本](#保护脚本) | |
@@ -37,7 +38,7 @@
 | `gate/reviews/<项目>/<tree>.json`、`gate/reviews/<项目>/ui/<tree>.json` | 审查门、界面门模型部分的结论，绑定 tree hash。保留 90 天，任务还在记录里（在跑、在过门、卡住的）不清 | 删了就重审 |
 | `gate/audit.log` | 人工放行、再审、退回、放弃的记录。进早报 | |
 | `evals/runs/<时间>/results.json`、`evals/baseline.json` | `agentq eval` 的结果和基线，只有明确运行才写 | |
-| 系统临时目录下的 `aq-*` | 没通过的题留下的现场（有标记文件 `.agentq-eval`），下次 `agentq eval run` 清掉超过 7 天的 | |
+| 系统临时目录下的 `aq-*` | 没通过的题留下的现场（有标记文件 `.agentq-eval`），下次 `agentq eval run` 清掉超过 7 天的。评测门跑的在门的临时目录里，跑完一起清 | |
 | `evals/heldout/<题号>-<短名>/` | 留出题，和仓库 `evals/` 同样的格式，自己放，`list` 只显示数量 | |
 | `verify/<任务id>/` | 升级前合并后核验留下的，只等过期清掉 | |
 | `patrol.json` | 巡逻的现有问题（指纹、证据、处理、首次和最后发现时间）、上次巡逻时间、当天分析次数 | 备份一次，从空的开始，报过的问题会再报一次 |

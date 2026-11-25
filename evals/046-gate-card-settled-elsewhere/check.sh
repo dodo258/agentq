@@ -15,7 +15,7 @@ chmod 600 "$HOME/.agentq/secrets/telegram.env"
 
 # 假 Telegram：第一次 getUpdates 交出一次点「A 放行」的回调，其余请求原样记进 calls.log
 cat > "$EVAL_WORK/tg.py" <<'EOF'
-import http.server, json, sys, urllib.parse
+import http.server, json, socketserver, sys, urllib.parse
 log, portfile = sys.argv[1], sys.argv[2]
 served = []
 class H(http.server.BaseHTTPRequestHandler):
@@ -38,7 +38,7 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
     do_GET = do_POST
     def log_message(self, *a): pass
-s = http.server.HTTPServer(("127.0.0.1", 0), H)
+s = socketserver.TCPServer(("127.0.0.1", 0), H)  # HTTPServer 启动时反查本机域名，CI 的 macOS 机器上会卡很久
 open(portfile, "w").write(str(s.server_address[1]))
 s.serve_forever()
 EOF

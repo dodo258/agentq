@@ -37,6 +37,22 @@ jobs:
           AGENTQ_STRESS_ROUNDS: '20'
         run: go test -race -count=1 -v -timeout 110m -run '^TestStress$' ./tests
 
+  # 发版前的检查（release.yml）也在 macOS 上跑；平时就跑，不用等推了 tag 才知道。
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Git identity for test repositories
+        run: |
+          sudo git config --system user.name ci
+          sudo git config --system user.email ci
+      - name: go test
+        run: go test -race -count=1 -timeout 1500s ./...
+
   linux:
     runs-on: ubuntu-latest
     timeout-minutes: 30

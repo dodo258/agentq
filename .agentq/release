@@ -65,12 +65,14 @@ if git -C "$tmp/pub" ls-remote --exit-code --tags origin "refs/tags/$v" >/dev/nu
 fi
 git -C "$tmp/pub" tag "$v"
 git -C "$tmp/pub" push -q origin "refs/tags/$v"
+# 同名 tag 删过重打时还有旧的运行：只认这个提交的
+sha=$(git -C "$tmp/pub" rev-parse HEAD)
 
 step "等 release 工作流"
 deadline=$(($(date +%s) + 1800))
 id=
 while :; do
-	id=$(gh run list --repo "$repo" --workflow release.yml --branch "$v" --limit 1 --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)
+	id=$(gh run list --repo "$repo" --workflow release.yml --branch "$v" --commit "$sha" --limit 1 --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)
 	[ -z "$id" ] || break
 	if [ "$(date +%s)" -ge "$deadline" ]; then
 		echo "推了 tag 半小时还没看到 $v 的 release 工作流" >&2

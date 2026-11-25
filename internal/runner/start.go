@@ -546,7 +546,7 @@ func (a *Service) Start(st *state.State, j *state.Job, prompt, resume string) (*
 	self, err := JobExecutable()
 	var pid int
 	if err == nil {
-		pid, err = StartJob(self, dir, inv, a.LaunchdLogPath())
+		pid, err = StartJob(self, dir, inv, a.LaunchdLogPath(), a.takeTmp(j))
 	}
 	if errors.Is(err, ErrShellLost) {
 		// 外壳没了，claude 可能已经在跑：确认不在了才能算启动失败（见 joblost.go）。查不了就先记运行中、不知道 pid，reap 接着查。

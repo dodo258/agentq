@@ -1,7 +1,10 @@
 package proc
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
 	"slices"
 	"strconv"
@@ -68,4 +71,60 @@ func EnvMarkedPIDs(pids []string, mark string) ([]string, error) {
 		}
 	}
 	return marked, nil
+}
+
+// ScanTmp 看一遍本机的进程。查不了返回错误，调用方当都还在用。
+func ScanTmp(ctx context.Context) (TmpScan, error) {
+	ctx, cancel := context.WithTimeout(ctx, tmpScanWait)
+	defer cancel()
+	run := func(path string, args ...string) (string, error) {
+		cmd := exec.CommandContext(ctx, path, args...)
+		cmd.Env = append(os.Environ(), "LC_ALL="+PsLocale)
+		BoundCmd(cmd)
+		out, err := cmd.Output()
+		return string(out), err
+	}
+	var files string
+	var filesErr error
+	done := make(chan struct{})
+	go func() { // 两条一起跑，各要零点几秒
+		defer close(done)
+		files, filesErr = run("/usr/sbin/lsof", "-nP", "-w", "-u", strconv.Itoa(os.Getuid()), "-Fpn")
+	}()
+	out, err := run("/bin/ps", "-E", "-ww", "-A", "-o", "pid=", "-o", "command=")
+	<-done
+	switch {
+	case err != nil:
+		return TmpScan{}, fmt.Errorf("列进程：%w", err)
+	case ctx.Err() != nil || files == "": // lsof 碰到一个看不了的文件就退出 1，有输出就算数
+		return TmpScan{}, fmt.Errorf("查打开的文件：%w", errors.Join(filesErr, ctx.Err()))
+	}
+	self := strconv.Itoa(os.Getpid())
+	var s TmpScan
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 || f[0] == self {
+			continue
+		}
+		p := procText{pid: f[0], text: line}
+		for _, w := range f[1:] {
+			if m, ok := strings.CutPrefix(w, JobEnv+"="); ok {
+				p.marks = append(p.marks, m)
+			}
+		}
+		s.procs = append(s.procs, p)
+	}
+	var cur procText
+	for _, line := range strings.Split(files+"\np", "\n") {
+		switch {
+		case strings.HasPrefix(line, "p"):
+			if cur.pid != "" && cur.pid != self {
+				s.procs = append(s.procs, cur)
+			}
+			cur = procText{pid: line[1:]}
+		case strings.HasPrefix(line, "n"):
+			cur.files = append(cur.files, line[1:])
+		}
+	}
+	return s, nil
 }

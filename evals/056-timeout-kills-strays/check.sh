@@ -40,7 +40,7 @@ printf '.claude/\n' > "$p/.gitignore"
 printf '{"projects_root":"%s","claude_path":"%s","timeout":"1s","patrol_enabled":false,"notify_enabled":false}\n' "$root" "$fake" > "$HOME/.agentq/config.json"
 
 out=$("$AGENTQ_BIN" run demo 稳定性 2>&1) || { echo "run 失败：$out" | tail -3; exit 2; }
-i=0; while [ ! -s "$stray/pid" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+i=0; while [ ! -s "$stray/pid" ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
 [ -s "$stray/pid" ] || { echo "任务没起来长跑：$out" | tail -3; exit 2; }
 pid=$(cat "$stray/pid")
 sleep 2 # 过了 1s 的时限

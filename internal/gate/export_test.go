@@ -24,6 +24,9 @@ var CapApplies = capApplies
 // TestingTitle 给测试：条目标题是不是加测、压测。
 var TestingTitle = testingTitle
 
+// DropTmps 给测试：过门结束时删自己的临时目录。
+var DropTmps = dropTmps
+
 // PatchGate 给测试。
 func PatchGate(d Deps) Gate { return patchGate{d} }
 

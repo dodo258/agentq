@@ -567,3 +567,23 @@ func TestEvalJudgeGroupWorseEvenIfAverageUp(t *testing.T) {
 		t.Errorf("要写 --bin：%d %s", code, out)
 	}
 }
+
+// 题里起本地服务用 socketserver.TCPServer：HTTPServer 启动时反查本机域名（getfqdn），CI 的 macOS 机器上会卡很久，题就判不了（发 v0.4.0 时 046、033 先后因此失败）。
+func TestEvalServersSkipReverseDNS(t *testing.T) {
+	t.Parallel()
+	files, err := filepath.Glob("evals/*/*.sh")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("没找到题：%v", err)
+	}
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, bad := range []string{"http.server.HTTPServer(", "http.server.ThreadingHTTPServer(", "-m http.server"} {
+			if strings.Contains(string(raw), bad) {
+				t.Errorf("%s 用了 %s，换成 socketserver.TCPServer", f, bad)
+			}
+		}
+	}
+}

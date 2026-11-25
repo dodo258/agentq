@@ -53,8 +53,17 @@ printf '{"projects_root":"%s","claude_path":"%s","patrol_enabled":false,"notify_
 
 # 第一次 tick 接活，接上就暂停：门照常过，退回后不会自动续跑，现场不会在判完分后还有人往里写
 "$AGENTQ_BIN" tick >/dev/null 2>&1
-grep -q '（进行中' "$p/docs/BACKLOG.md" || { echo "第一次 tick 没接上活：$("$AGENTQ_BIN" status 2>&1 | tail -3)"; exit 2; }
+# 认领是后台任务写的，慢机器上（CI 的 macOS）要等：先暂停再等，等到「进行中」或已经合并
+claimed() {
+  i=0
+  while [ $i -lt 150 ]; do
+    grep -q '（进行中\|^- \[x\]' "$1/docs/BACKLOG.md" && return 0
+    sleep 0.2; i=$((i + 1))
+  done
+  return 1
+}
 "$AGENTQ_BIN" pause >/dev/null 2>&1 || { echo "pause 失败"; exit 2; }
+claimed "$p" || { echo "第一次 tick 没接上活：$("$AGENTQ_BIN" status 2>&1 | tail -20)"; exit 2; }
 i=0
 while [ $i -lt 40 ]; do
   "$AGENTQ_BIN" tick >/dev/null 2>&1

@@ -175,7 +175,15 @@ func runGit(ctx context.Context, home, dir string, stdin []byte, args ...string)
 }
 
 func (a *Service) deps() Deps {
-	return Deps{Env: a.Env, Git: a.git, Script: RunScript, CLI: RunCLI, Self: a.selfPath}
+	script := func(ctx context.Context, o ScriptOpts) ScriptResult {
+		o.Tmps = a.Tmps()
+		return RunScript(ctx, o)
+	}
+	cli := func(ctx context.Context, inv backend.Invocation, o CLIOpts) error {
+		o.Tmps = a.Tmps()
+		return RunCLI(ctx, inv, o)
+	}
+	return Deps{Env: a.Env, Git: a.git, Script: script, CLI: cli, Self: a.selfPath}
 }
 
 // RunShell 是后台进程本身：agentq _gate <任务id>。结果写完才退出；被 SIGTERM 时清干净 worktree 就走，不写结果，tick 按进程没了重跑。
@@ -239,6 +247,7 @@ func (a *Service) Process(ctx context.Context, dir string, p Plan, timeout time.
 		}
 		p.DefaultBranch = def
 	}
+	defer dropTmps(a.Tmps(), gateMark(p.JobID))
 	wt := Worktree(dir)
 	defer func() {
 		if err := RemoveWorktree(p.ProjectDir, wt); err != nil {

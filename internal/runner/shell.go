@@ -24,6 +24,9 @@ const shellEnvKeep = "AGENTQ_SHELL_ENV_KEEP"
 // shellStdin 是任务外壳的环境变量：喂给 CLI 标准输入的文件（Invocation.Stdin 落盘的），CLI 起来之后删掉。提示词不走外壳的参数，也就不进 ps。
 const shellStdin = "AGENTQ_SHELL_STDIN"
 
+// shellTmp 是任务外壳的环境变量：CLI 的 TMPDIR（这个任务自己的临时目录）。外壳自己和它最后变成的 tick 不用它，用完就从环境里去掉。
+const shellTmp = "AGENTQ_SHELL_TMPDIR"
+
 // StdinFile：Invocation.Stdin 落盘的文件名，在任务目录里。
 const StdinFile = "stdin.txt"
 
@@ -31,8 +34,8 @@ const StdinFile = "stdin.txt"
 var ErrShellLost = errors.New("任务外壳没有报回 CLI 的 pid")
 
 // StartCLI 在 dir 里启动 CLI，新进程组，环境里带 AGENTQ_JOB=<jobID>，stdout/stderr 写进给定文件，不等它结束。
-// stdinPath 非空时 CLI 的标准输入读这个文件，打不开算启动失败：丢了提示词的 CLI 会空跑或等输入。
-func StartCLI(cli, dir, jobID string, args, keep []string, stdinPath, stdoutPath, stderrPath string) (*exec.Cmd, error) {
+// stdinPath 非空时 CLI 的标准输入读这个文件，打不开算启动失败：丢了提示词的 CLI 会空跑或等输入。tmp 非空时是 CLI 的 TMPDIR。
+func StartCLI(cli, dir, jobID string, args, keep []string, tmp, stdinPath, stdoutPath, stderrPath string) (*exec.Cmd, error) {
 	var stdin *os.File
 	if stdinPath != "" {
 		f, err := os.Open(stdinPath)
@@ -54,7 +57,7 @@ func StartCLI(cli, dir, jobID string, args, keep []string, stdinPath, stdoutPath
 	defer stderr.Close()
 	cmd := exec.Command(cli, args...)
 	cmd.Dir = dir
-	cmd.Env = append(proc.BackendEnv(keep), proc.JobEnv+"="+jobID)
+	cmd.Env = append(proc.WithTMPDIR(proc.BackendEnv(keep), tmp), proc.JobEnv+"="+jobID)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if stdin != nil { // 不能把空的 *os.File 赋给接口：exec 会当成有输入
@@ -75,14 +78,17 @@ const ClaudePidFile = "claude.pid"
 
 // StartJob 经任务外壳（agentq _job）启动 inv，返回 CLI 的 pid。外壳在自己的进程组里等 CLI 结束，
 // 再换成 `agentq tick --after <任务id>`，让排队的待做马上接上；外壳和那次 tick 的输出追加到 logPath。
-// claude 仍在它自己的进程组里，收尾、超时、stop 都照旧只看 claude 的 pid 和进程组。
-func StartJob(self, jobDir string, inv backend.Invocation, logPath string) (int, error) {
+// claude 仍在它自己的进程组里，收尾、超时、stop 都照旧只看 claude 的 pid 和进程组。tmp 非空时是 CLI 的 TMPDIR。
+func StartJob(self, jobDir string, inv backend.Invocation, logPath, tmp string) (int, error) {
 	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return 0, err
 	}
 	defer logf.Close()
 	childEnv := append(proc.ChildEnv(), shellEnvKeep+"="+strings.Join(inv.EnvKeep, ","))
+	if tmp != "" {
+		childEnv = append(childEnv, shellTmp+"="+tmp)
+	}
 	if inv.Stdin != "" {
 		path := filepath.Join(jobDir, StdinFile)
 		if err := os.WriteFile(path, []byte(inv.Stdin), 0o600); err != nil {
@@ -145,10 +151,12 @@ func RunJobShell(args []string, stderr io.Writer) int {
 	os.Unsetenv(shellEnvKeep)
 	stdinPath := os.Getenv(shellStdin)
 	os.Unsetenv(shellStdin)
+	tmp := os.Getenv(shellTmp)
+	os.Unsetenv(shellTmp)
 	syscall.CloseOnExec(3) // 别让 claude 继承报 pid 的管道，否则启动方要等 claude 结束才读到 EOF
 	report := os.NewFile(3, "report")
 	id := filepath.Base(jobDir)
-	cmd, err := StartCLI(cli, projectDir, id, args[3:], keep, stdinPath, filepath.Join(jobDir, "result.json"), filepath.Join(jobDir, "stderr.log"))
+	cmd, err := StartCLI(cli, projectDir, id, args[3:], keep, tmp, stdinPath, filepath.Join(jobDir, "result.json"), filepath.Join(jobDir, "stderr.log"))
 	if err != nil {
 		fmt.Fprintf(report, "err %v\n", err)
 		report.Close()

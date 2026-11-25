@@ -592,3 +592,25 @@ func TestCleanStale(t *testing.T) {
 		t.Errorf("钥匙串被碰了：%v %q", err, got)
 	}
 }
+
+// 删现场时任务外壳还在收尾（边删边写）：等它走完再删干净，不留现场。
+func TestRemoveSandboxWaitsForShell(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "011-x")
+	data := filepath.Join(dir, "home", ".agentq")
+	if err := os.MkdirAll(data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for end := time.Now().Add(1200 * time.Millisecond); time.Now().Before(end); {
+			_ = os.MkdirAll(data, 0o700)
+			_ = os.WriteFile(filepath.Join(data, "launchd.log"), []byte("x"), 0o600)
+		}
+	}()
+	err := removeSandbox(dir)
+	<-done
+	if err != nil {
+		t.Fatalf("等外壳走完要删得掉：%v", err)
+	}
+}

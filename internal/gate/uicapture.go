@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"agentq/internal/proc"
 	"agentq/internal/textfmt"
 )
 
@@ -22,6 +23,8 @@ type CaptureOpts struct {
 	// Mark 是脚本环境里 AGENTQ_JOB 的值。
 	Mark    string
 	Timeout time.Duration
+	// Tmps 登记脚本的临时目录，同 ScriptOpts。
+	Tmps proc.TmpStore
 }
 
 // UICapture 是截图的结果。
@@ -65,7 +68,8 @@ func CaptureUI(ctx context.Context, o CaptureOpts) (res UICapture, ran bool) {
 			res.Problem = strings.TrimPrefix(res.Problem+"；", "；") + "一次性 worktree " + wt + " 没清掉：" + textfmt.OneLine(err.Error(), 200)
 		}
 	}()
-	r := RunScript(ctx, ScriptOpts{Script: filepath.Join(wt, UIScript), Dir: wt, Log: res.Log, Timeout: o.Timeout, WorkDir: o.WorkDir, Mark: o.Mark, Env: []string{ArtifactsEnv + "=" + o.Shots}})
+	defer dropTmps(o.Tmps, o.Mark)
+	r := RunScript(ctx, ScriptOpts{Script: filepath.Join(wt, UIScript), Dir: wt, Log: res.Log, Timeout: o.Timeout, WorkDir: o.WorkDir, Mark: o.Mark, Env: []string{ArtifactsEnv + "=" + o.Shots}, Tmps: o.Tmps})
 	switch r.Status {
 	case ScriptPassed:
 	case ScriptFailed:

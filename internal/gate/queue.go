@@ -145,6 +145,7 @@ func (a *Service) start(j *state.Job) error {
 		return err
 	}
 	defer logf.Close()
+	a.Tmps().Leave() // 在任务里执行的 tick：门进程比那个任务活得久，不能用它的临时目录
 	cmd := exec.Command(self, ProcToken, j.ID)
 	cmd.Dir = dir
 	cmd.Env = proc.ChildEnv()

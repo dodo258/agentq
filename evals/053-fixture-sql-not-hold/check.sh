@@ -63,10 +63,19 @@ printf '{"projects_root":"%s","claude_path":"%s","max_parallel":2,"per_project":
 
 # 第一次 tick 两个项目都接上活，接上就暂停：门照常过，现场不会在判完分后还有人往里写
 "$AGENTQ_BIN" tick >/dev/null 2>&1
-for s in 甲 乙; do
-  grep -q '（进行中' "$root/p$s/docs/BACKLOG.md" || { echo "第一次 tick 没接上 p$s 的活：$("$AGENTQ_BIN" status 2>&1 | tail -3)"; exit 2; }
-done
+# 认领是后台任务写的，慢机器上（CI 的 macOS）要等：先暂停再等，等到「进行中」或已经合并
+claimed() {
+  i=0
+  while [ $i -lt 150 ]; do
+    grep -q '（进行中\|^- \[x\]' "$1/docs/BACKLOG.md" && return 0
+    sleep 0.2; i=$((i + 1))
+  done
+  return 1
+}
 "$AGENTQ_BIN" pause >/dev/null 2>&1 || { echo "pause 失败"; exit 2; }
+for s in 甲 乙; do
+  claimed "$root/p$s" || { echo "第一次 tick 没接上 p$s 的活：$("$AGENTQ_BIN" status 2>&1 | tail -20)"; exit 2; }
+done
 
 # outcome <项目>：这个项目那次过门的结论（last.json），还没有是空
 outcome() {

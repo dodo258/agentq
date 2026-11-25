@@ -8,7 +8,11 @@ root="$EVAL_WORK/projects"; fake="$EVAL_WORK/claude"; calls="$EVAL_WORK/claude-c
 mkdir -p "$data" "$site"
 printf '[user]\n\tname = t\n\temail = t%sexample.invalid\n[commit]\n\tgpgsign = false\n' @ > "$HOME/.gitconfig"
 printf '<!doctype html><title>demo</title><p>demo v0.3.0 已发布</p>\n' > "$site/index.html"
-python3 -u -m http.server 0 --bind 127.0.0.1 --directory "$site" > "$EVAL_WORK/http.log" 2>&1 &
+# 用 TCPServer：HTTPServer 启动时反查本机域名（getfqdn），CI 的 macOS 机器上会卡很久
+python3 -I -u -c 'import functools, http.server, socketserver, sys
+s = socketserver.TCPServer(("127.0.0.1", 0), functools.partial(http.server.SimpleHTTPRequestHandler, directory=sys.argv[1]))
+print("port", s.server_address[1], "up", flush=True)
+s.serve_forever()' "$site" > "$EVAL_WORK/http.log" 2>&1 &
 srv=$!
 wait_shells() {
   for pid in $(sort -u "$HOME/fake-shells" 2>/dev/null); do
@@ -17,8 +21,8 @@ wait_shells() {
 }
 trap 'wait_shells; kill "$srv" 2>/dev/null' EXIT
 port=""; i=0
-while [ -z "$port" ] && [ $i -lt 50 ]; do
-  port=$(sed -n 's/.* port \([0-9][0-9]*\).*/\1/p' "$EVAL_WORK/http.log" | head -1)
+while [ -z "$port" ] && kill -0 "$srv" 2>/dev/null && [ $i -lt 150 ]; do
+  port=$(sed -n 's/^port \([0-9][0-9]*\) up$/\1/p' "$EVAL_WORK/http.log" | head -1)
   [ -n "$port" ] || { sleep 0.2; i=$((i + 1)); }
 done
 [ -n "$port" ] || { echo "本地假线上页面没起来：$(cat "$EVAL_WORK/http.log")"; exit 2; }
