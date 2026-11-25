@@ -12,8 +12,19 @@ import (
 	"agentq/internal/testkit"
 )
 
+// 假 gh：公开仓上次发布是很久以前的 v0.3.0，CI 绿，发完查 tag、Release 都有。
+const releaseFakeGH = `#!/bin/sh
+echo "$*" >> "$HOME/gh-calls"
+case "$1 $2" in
+  release*) echo '[{"tagName":"v0.3.0","publishedAt":"2026-01-01T00:00:00Z"}]' ;;
+  "api repos/o/demo/git/ref/tags/"*) printf '{"ref":"refs/tags/%s"}' "${2##*/}" ;;
+  "api repos/o/demo/releases/tags/"*) printf '{"tag_name":"%s"}' "${2##*/}" ;;
+  api*) echo '{"total_count":1,"check_runs":[{"name":"linux","status":"completed","conclusion":"success"}]}' ;;
+esac
+`
+
 // releaseDemo：projects_root 下的 demo 带着自动发版规则、CHANGELOG（「未发布」里是 unreleased，空的就是没条目）、记下参数的假 .agentq/release；
-// 假 gh 放进 PATH：公开仓上次发布是很久以前的 v0.3.0，CI 绿。
+// 假 gh 放进 PATH。
 func releaseDemo(t *testing.T, e *testEnv, unreleased string) string {
 	t.Helper()
 	dir := orphanRepo(t, e, "demo", "")
@@ -24,10 +35,7 @@ func releaseDemo(t *testing.T, e *testEnv, unreleased string) string {
 	testkit.GitT(t, e.home, dir, "add", "-A")
 	testkit.GitT(t, e.home, dir, "commit", "-q", "-m", "发版脚本")
 	bin := t.TempDir()
-	gh := "#!/bin/sh\necho \"$*\" >> \"$HOME/gh-calls\"\ncase \"$1\" in\n" +
-		"  release) echo '[{\"tagName\":\"v0.3.0\",\"publishedAt\":\"2026-01-01T00:00:00Z\"}]' ;;\n" +
-		"  api) echo '{\"total_count\":1,\"check_runs\":[{\"name\":\"linux\",\"status\":\"completed\",\"conclusion\":\"success\"}]}' ;;\nesac\n"
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(gh), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(releaseFakeGH), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	e.extra = append(e.extra, "PATH="+bin+":"+os.Getenv("PATH"))

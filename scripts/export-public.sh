@@ -88,7 +88,9 @@ EOF
 
 # 目标仓库名是你指定要公开的，可能本身就在词表里（账号名）。在副本里只遮掉完整的 owner/repo 再扫，别处单独出现账号名照样算命中。
 scan_dir=$(mktemp -d)
-trap 'rm -rf "$scan_dir"' EXIT
+# bash 3.2（macOS 的 sh）里 set -u 报错退出时，EXIT trap 看到的 $? 是 0：没跑到最后就不当成功。
+unfinished=1
+trap 'code=$?; rm -rf "$scan_dir"; [ "$code" -ne 0 ] || code=$unfinished; exit "$code"' EXIT
 cp -R "$out/." "$scan_dir/"
 python3 -I - "$scan_dir" "$repo" <<'EOF'
 import os
@@ -153,3 +155,4 @@ if found:
 EOF
 
 echo "公开候选：${out}"
+unfinished=0

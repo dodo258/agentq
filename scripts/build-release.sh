@@ -36,7 +36,9 @@ src=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 mkdir -p "$out"
 out=$(CDPATH='' cd -- "$out" && pwd)
 stage=$(mktemp -d "${TMPDIR:-/tmp}/agentq-release.XXXXXX")
-trap 'rm -rf "$stage"' EXIT
+# bash 3.2（macOS 的 sh）里 set -u 报错退出时，EXIT trap 看到的 $? 是 0：没跑到最后就不当成功。
+unfinished=1
+trap 'code=$?; rm -rf "$stage"; [ "$code" -ne 0 ] || code=$unfinished; exit "$code"' EXIT
 trap 'exit 130' HUP INT
 trap 'exit 143' TERM
 
@@ -82,3 +84,4 @@ fi
 (cd "$out" && sha $files >SHA256SUMS)
 echo "已产出 ${out}："
 (cd "$out" && cat SHA256SUMS)
+unfinished=0

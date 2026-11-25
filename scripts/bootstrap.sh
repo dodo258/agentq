@@ -14,7 +14,9 @@ command -v git >/dev/null || { echo "$git_hint" >&2; exit 1; }
 command -v go >/dev/null || { echo 'Source install requires Go (see go.mod). Install from https://go.dev/dl/ then repeat this same command.' >&2; exit 1; }
 command -v python3 >/dev/null || echo "$python_hint" >&2
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/agentq-bootstrap.XXXXXX")
-trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+# bash 3.2（macOS 的 sh）里 set -u 报错退出时，EXIT trap 看到的 $? 是 0：没跑到最后就不当成功。
+unfinished=1
+trap 'code=$?; rm -rf "$tmp"; [ "$code" -ne 0 ] || code=$unfinished; exit "$code"' EXIT HUP INT TERM
 (cd "$src" && go build -o "$tmp/agentq" .)
 cmd=setup
 case ${1:-} in setup|doctor|rollback|remove|restore) cmd=$1; shift;; esac
@@ -32,7 +34,7 @@ while [ "$n" -gt 0 ]; do
  set -- "$@" "$a"
 done
 "$tmp/agentq" "$cmd" "$@"
-[ "$cmd" = setup ] && [ "$fresh" = 1 ] && [ "$welcome" = 1 ] || exit 0
+[ "$cmd" = setup ] && [ "$fresh" = 1 ] && [ "$welcome" = 1 ] || { unfinished=0; exit 0; }
 set --
 [ "$paused" = 0 ] || set -- --paused
 if [ -z "${CI:-}${NONINTERACTIVE:-}" ] && (: </dev/tty) 2>/dev/null; then

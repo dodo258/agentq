@@ -42,9 +42,11 @@ RELEASE_SYNC=
 }
 step() { echo "== $(date '+%F %T') $*"; }
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+# bash 3.2（macOS 的 sh）里 set -u 报错退出时，EXIT trap 看到的 $? 是 0：没跑到最后就不当成功。
+unfinished=1
+trap 'code=$?; rm -rf "$tmp"; [ "$code" -ne 0 ] || code=$unfinished; exit "$code"' EXIT
 
-step "同步公开仓（$RELEASE_SYNC）"
+step "同步公开仓（${RELEASE_SYNC}）"
 sh "$RELEASE_SYNC"
 
 step "核对公开仓 main 就是这次导出的内容"
@@ -85,3 +87,4 @@ step "下载附件、对校验值、临时 HOME 试装"
 gh release download "$v" --repo "$repo" --dir "$tmp/dl"
 sh scripts/try-release.sh "$tmp/dl" "$v"
 step "发了 https://github.com/$repo/releases/tag/$v"
+unfinished=0

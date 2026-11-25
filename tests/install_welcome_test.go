@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -850,11 +852,13 @@ func TestInstallShRefusesWithoutHome(t *testing.T) {
 func TestShellScriptsBraceVarsBeforeMultibyte(t *testing.T) {
 	t.Parallel() // 每个用例都真装一遍要几秒，并行才不把根包的时限吃光
 	re := regexp.MustCompile(`\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7f]`)
-	scripts, err := filepath.Glob(filepath.Join("scripts", "*.sh"))
-	if err != nil || len(scripts) == 0 {
-		t.Fatalf("%v %v", scripts, err)
+	scripts := shellScripts(t)
+	for _, want := range []string{".agentq/release", "scripts/try-release.sh", "install.sh", "templates/gates/ui-simctl.sh", "tests/testdata/golden/guard.sh"} {
+		if !slices.Contains(scripts, want) {
+			t.Errorf("没扫到 %s：%v", want, scripts)
+		}
 	}
-	for _, p := range append(scripts, "install.sh") {
+	for _, p := range scripts {
 		for n, line := range strings.Split(testkit.ReadFile(t, p), "\n") {
 			if strings.HasPrefix(strings.TrimSpace(line), "#") {
 				continue
@@ -864,4 +868,40 @@ func TestShellScriptsBraceVarsBeforeMultibyte(t *testing.T) {
 			}
 		}
 	}
+}
+
+// shellScripts：仓库里的 shell 脚本（#! 行是 sh 或 bash）。evals/ 的题只加不改，不在里面；本机的 .claude/worktrees 也不算。
+func shellScripts(t *testing.T) []string {
+	t.Helper()
+	shebang := regexp.MustCompile(`^#!.*\b(ba|da|z)?sh\b`)
+	var out []string
+	err := filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if slices.Contains([]string{".git", ".claude", "evals"}, p) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		f, err := os.Open(p)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		head := make([]byte, 64)
+		n, _ := io.ReadFull(f, head)
+		if shebang.Match(head[:n]) {
+			out = append(out, filepath.ToSlash(p))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

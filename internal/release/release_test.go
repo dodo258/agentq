@@ -19,18 +19,34 @@ import (
 
 // 全部用临时 HOME、临时 projects_root、真 git、假 gh、假 .agentq/release。
 
-// 假 gh：记下参数；release list 回 $HOME/gh-release.json，api 回 $HOME/gh-checks.json，issue 回 $HOME/gh-issue.json；有 $HOME/gh-fail 就报错。
+// 假 gh：记下参数；release list 回 $HOME/gh-release.json，api 查检查回 $HOME/gh-checks.json、查 tag 和 Release 看 $HOME/gh-tags、$HOME/gh-releases
+// 里有没有那一行（没有像真 gh 那样回 404），issue 回 $HOME/gh-issue.json；有 $HOME/gh-fail 就报错，$HOME/gh-verify-fail 里有几行就让查 tag 先错几次。
 const fakeGH = `#!/bin/sh
 echo "$*" >> "$HOME/gh-calls"
 [ ! -f "$HOME/gh-fail" ] || { echo 'HTTP 502' >&2; exit 1; }
 case "$1" in
   release) cat "$HOME/gh-release.json" 2>/dev/null || echo '[]' ;;
-  api) cat "$HOME/gh-checks.json" ;;
+  api)
+    v=${2##*/}
+    case "$2" in
+      */git/ref/tags/*)
+        if [ -s "$HOME/gh-verify-fail" ]; then
+          tail -n +2 "$HOME/gh-verify-fail" > "$HOME/gh-verify-fail.new"; mv "$HOME/gh-verify-fail.new" "$HOME/gh-verify-fail"
+          echo 'gh: Bad Gateway (HTTP 502)' >&2; exit 1
+        fi
+        grep -qx "$v" "$HOME/gh-tags" 2>/dev/null && { printf '{"ref":"refs/tags/%s"}' "$v"; exit 0; } ;;
+      */releases/tags/*) grep -qx "$v" "$HOME/gh-releases" 2>/dev/null && { printf '{"tag_name":"%s","draft":false}' "$v"; exit 0; } ;;
+      *) cat "$HOME/gh-checks.json"; exit ;;
+    esac
+    echo '{"message":"Not Found","status":"404"}'
+    echo 'gh: Not Found (HTTP 404)' >&2
+    exit 1 ;;
   issue) cat "$HOME/gh-issue.json" ;;
 esac
 `
 
-// 假发版脚本：记下参数；--check 时有 $HOME/check-fail 就报说明书的问题，真发时有 $HOME/release-fail 就失败。
+// 假发版脚本：记下参数；--check 时有 $HOME/check-fail 就报说明书的问题，真发时有 $HOME/release-fail 就失败，否则公开仓有了 tag 和 Release
+// （有 $HOME/no-tag、$HOME/no-release 就少一样，照样退出 0）。
 const fakeScript = `#!/bin/sh
 echo "$* repo=$AGENTQ_RELEASE_REPO" >> "$HOME/release-calls"
 if [ "$1" = --check ]; then
@@ -38,6 +54,8 @@ if [ "$1" = --check ]; then
   exit 0
 fi
 [ ! -f "$HOME/release-fail" ] || { echo 'gh release download：没有 SHA256SUMS'; exit 1; }
+[ -f "$HOME/no-tag" ] || echo "$1" >> "$HOME/gh-tags"
+[ -f "$HOME/no-release" ] || echo "$1" >> "$HOME/gh-releases"
 echo "发了 $1"
 `
 
@@ -50,6 +68,7 @@ type rig struct {
 	home    string
 	dir     string
 	spawned []string
+	paused  int
 }
 
 func newRig(t *testing.T, edit func(c *config.Config)) *rig {
@@ -72,6 +91,7 @@ func newRig(t *testing.T, edit func(c *config.Config)) *rig {
 	k := stack.New(e)
 	r.s = &Service{Env: e, Backlog: k.Backlog, Gitx: k.Gitx, Notify: k.Notify, Evolve: &evolve.Service{Env: e, Backlog: k.Backlog, Notify: k.Notify}}
 	r.s.spawn = func(name, version string) error { r.spawned = append(r.spawned, name+" "+version); return nil }
+	r.s.pause = func(time.Duration) { r.paused++ }
 	r.dir = r.project("demo", "- 自动发版：条件满足时由 agentq 调 `.agentq/release` 发新版本\n")
 	r.file("gh-release.json", `[{"tagName":"v0.3.0","publishedAt":"2026-11-13T11:45:34Z"}]`)
 	r.file("gh-checks.json", green)
@@ -328,6 +348,51 @@ func TestRunFailsNoRetry(t *testing.T) {
 	}
 	if n := strings.Count(r.read(filepath.Join(r.home, "release-calls")), "\n"); n != 2 {
 		t.Errorf("脚本只跑过那一次（检查加真发）：%d", n)
+	}
+}
+
+// 脚本退出码 0，公开仓却没有 tag、没有 Release 或查不了：不算发成——不记 done、不推发布通知、不给官网写待做，按失败停在原地。
+// 查不了会再查几次，中途好了照常算发成；明确回没有就不再查。
+func TestRunVerifiesPublished(t *testing.T) {
+	cases := []struct {
+		name   string
+		setup  func(r *rig)
+		why    string // 空的是该发成
+		paused int
+	}{
+		{"没有 tag", func(r *rig) { r.file("no-tag", ""); r.file("no-release", "") }, "公开仓 o/demo 没有 tag v0.4.0", 0},
+		{"有 tag 没有 Release", func(r *rig) { r.file("no-release", "") }, "公开仓 o/demo 没有 v0.4.0 的 Release", 0},
+		{"一直查不了", func(r *rig) { r.file("gh-verify-fail", strings.Repeat("x\n", verifyTries)) }, "查不了公开仓 o/demo 有没有 v0.4.0：gh api：gh: Bad Gateway (HTTP 502)", verifyTries - 1},
+		{"查到一半好了", func(r *rig) { r.file("gh-verify-fail", strings.Repeat("x\n", verifyTries-1)) }, "", verifyTries - 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRig(t, func(c *config.Config) { c.SelfProject, c.SiteProject = "demo", "site" })
+			site := r.project("site", "")
+			c.setup(r)
+			err := r.s.Run([]string{"demo", "v0.4.0"})
+			rec, notices := r.record(), r.notices()
+			siteTodo := strings.Contains(r.read(filepath.Join(site, "docs", "BACKLOG.md")), "对齐 demo 新版本")
+			if r.paused != c.paused {
+				t.Errorf("等了 %d 次再查，要 %d 次", r.paused, c.paused)
+			}
+			if c.why == "" {
+				if err != nil || rec.State != stDone || !siteTodo || !strings.Contains(notices, "发布了 demo v0.4.0") {
+					t.Fatalf("要算发成：%v %+v 官网待做 %v\n%s", err, rec, siteTodo, notices)
+				}
+				return
+			}
+			if err == nil || rec.State != stFailed || !rec.Released.IsZero() || !slices.Equal(rec.Failed, []string{"v0.4.0"}) || !strings.Contains(rec.Why, c.why) {
+				t.Fatalf("不能算发成，原因要有 %q：%v %+v", c.why, err, rec)
+			}
+			testkit.AssertContains(t, notices, `"cat": "alert"`, "自动发版 demo v0.4.0 没成", c.why)
+			if strings.Contains(notices, "发布了 demo") || siteTodo {
+				t.Errorf("没发成不推发布通知、不给官网写待做（写了 %v）：\n%s", siteTodo, notices)
+			}
+			if logs := r.s.Out.(*bytes.Buffer).String(); strings.Contains(logs, "自动发版 demo：发了") {
+				t.Errorf("日志不能说发了：\n%s", logs)
+			}
+		})
 	}
 }
 

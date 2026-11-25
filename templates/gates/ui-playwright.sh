@@ -22,7 +22,9 @@ sh -c "$BUILD" || exit 1
 
 sh -c "$SERVE" &
 server=$!
-trap 'kill "$server" 2>/dev/null' EXIT
+# bash 3.2（macOS 的 sh）里 set -u 报错退出时，EXIT trap 看到的 $? 是 0：没跑到最后就不当成功。
+unfinished=1
+trap 'code=$?; kill "$server" 2>/dev/null; [ "$code" -ne 0 ] || code=$unfinished; exit "$code"' EXIT
 
 i=0
 until curl -fsS "$URL/" >/dev/null 2>&1; do
@@ -60,4 +62,5 @@ const { chromium } = require("playwright");
   console.error(e);
   process.exit(1);
 });
-'
+' || exit $?
+unfinished=0

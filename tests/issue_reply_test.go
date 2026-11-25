@@ -11,12 +11,14 @@ import (
 	"agentq/internal/testkit"
 )
 
-// 假 gh：记下参数（一行一次）；issue view 回 $HOME/gh-issue.json；有 $HOME/gh-fail 就报错。
+// 假 gh：记下参数（一行一次）；issue view 回 $HOME/gh-issue.json，查 tag、Release 都有；有 $HOME/gh-fail 就报错。
 const issueFakeGH = `#!/bin/sh
 printf '%s\n' "$*" | tr '\n' ' ' >> "$HOME/gh-calls"; echo >> "$HOME/gh-calls"
 [ ! -f "$HOME/gh-fail" ] || { echo 'HTTP 502' >&2; exit 1; }
 case "$1 $2" in
   "issue view") cat "$HOME/gh-issue.json" ;;
+  "api repos/o/demo/git/ref/tags/"*) printf '{"ref":"refs/tags/%s"}' "${2##*/}" ;;
+  "api repos/o/demo/releases/tags/"*) printf '{"tag_name":"%s"}' "${2##*/}" ;;
 esac
 `
 

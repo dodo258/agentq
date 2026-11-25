@@ -14,7 +14,9 @@ DEVICE='iPhone 17'                # 机型，xcrun simctl list devicetypes 里�
 
 command -v xcrun >/dev/null 2>&1 || { echo "没有 xcrun"; exit 125; }
 udid=$(xcrun simctl create "agentq-ui-$$" "$DEVICE") || { echo "模拟器建不了：$DEVICE"; exit 125; }
-trap 'xcrun simctl shutdown "$udid" >/dev/null 2>&1; xcrun simctl delete "$udid" >/dev/null 2>&1' EXIT
+# bash 3.2（macOS 的 sh）里 set -u 报错退出时，EXIT trap 看到的 $? 是 0：没跑到最后就不当成功。
+unfinished=1
+trap 'code=$?; xcrun simctl shutdown "$udid" >/dev/null 2>&1; xcrun simctl delete "$udid" >/dev/null 2>&1; [ "$code" -ne 0 ] || code=$unfinished; exit "$code"' EXIT
 xcrun simctl bootstatus "$udid" -b >/dev/null || { echo "模拟器起不来"; exit 125; }
 
 derived=$(mktemp -d)
@@ -26,3 +28,4 @@ xcrun simctl install "$udid" "$app" || exit 1
 xcrun simctl launch "$udid" "$BUNDLE_ID" || exit 1
 sleep 3 # 等首屏出来；要截别的页面用项目的 UI 测试或深链接跳过去，再截一张
 xcrun simctl io "$udid" screenshot "$AGENTQ_ARTIFACTS/launch.png" || exit 1
+unfinished=0

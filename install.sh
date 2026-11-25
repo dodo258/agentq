@@ -85,6 +85,7 @@ parse_args() {
 		case $1 in
 			-h | --help)
 				usage
+				unfinished=0
 				exit 0
 				;;
 			--plan | -plan) plan_only=1 ;;
@@ -450,7 +451,9 @@ main() {
 	# 占位：scripts/build-release.sh 在 Release 附件的副本里把这一行填成 <owner>/<repo>。仓库里的原文件不写账号，只能配合 checkout 或 AGENTQ_RELEASE_BASE 用。
 	github_repo=__AGENTQ_REPO__
 	init_style
-	trap 'spin_stop' EXIT
+	# bash 3.2（macOS 的 sh）里 set -u 报错退出时，EXIT trap 看到的 $? 是 0：没跑到最后就不当成功。
+	unfinished=1
+	trap 'code=$?; spin_stop; [ "$code" -ne 0 ] || code=$unfinished; exit "$code"' EXIT
 
 	# 脚本自己的参数在这里吃掉，其余的留在 "$@" 里交给 setup。
 	paused=0
@@ -490,6 +493,7 @@ main() {
 	refuse_root
 	if [ "$uninstall" = 1 ]; then
 		do_uninstall
+		unfinished=0
 		return 0
 	fi
 	check_options
@@ -499,7 +503,7 @@ main() {
 	ok "环境检查：$os/${arch}，$(git --version)"
 
 	tmp=$(mktemp -d "${TMPDIR:-/tmp}/agentq-install.XXXXXX")
-	trap 'spin_stop; rm -rf "$tmp"' EXIT
+	trap 'code=$?; spin_stop; rm -rf "$tmp"; [ "$code" -ne 0 ] || code=$unfinished; exit "$code"' EXIT
 	trap 'exit 130' HUP INT
 	trap 'exit 143' TERM
 
@@ -514,6 +518,7 @@ main() {
 	fi
 	run_setup "$@"
 	finish
+	unfinished=0
 }
 
 # 花括号让这一行要读完整才算一条命令：截断成 `main` 或 `{ main "$@"` 都不会带着残缺参数跑起来。

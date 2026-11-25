@@ -30,7 +30,9 @@ fi
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/agentq-try.XXXXXX")
 tmp=$(CDPATH='' cd -- "$tmp" && pwd -P) # 安装拒绝走软链接（macOS 的 /var 就是）
-trap 'chmod -R u+w "$tmp" 2>/dev/null; rm -rf "$tmp"' EXIT
+# bash 3.2（macOS 的 sh）里 set -u 报错退出时，EXIT trap 看到的 $? 是 0：没跑到最后就不当成功。
+unfinished=1
+trap 'code=$?; chmod -R u+w "$tmp" 2>/dev/null; rm -rf "$tmp"; [ "$code" -ne 0 ] || code=$unfinished; exit "$code"' EXIT
 mkdir -p "$tmp/home" "$tmp/bin"
 cat >"$tmp/bin/claude" <<'FAKE'
 #!/bin/sh
@@ -51,3 +53,4 @@ if [ "$got" != "agentq $v" ]; then
 	exit 1
 fi
 echo "临时 HOME 试装通过：$got"
+unfinished=0

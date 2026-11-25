@@ -1,7 +1,8 @@
 // Package release 是公开项目的自动发版：tick 判什么时候发，起脱离 tick 的后台进程跑项目自己的 .agentq/release，发完推送、写后续待做。
 //
 // 怎么发归项目：.agentq/release --check <版本> 只做说明书检查，不对外写；.agentq/release <版本> 真发（导出、同步公开仓、打 tag、等发布工作流、
-// 对校验值、临时 HOME 试装），退出码 0 算发成。公开仓名由环境变量 AGENTQ_RELEASE_REPO 给（来自 config.json 的 release_repos）。
+// 对校验值、临时 HOME 试装），退出码 0 之后 agentq 再核对公开仓真有这个 tag 和已发布的 Release，都有才算发成。
+// 公开仓名由环境变量 AGENTQ_RELEASE_REPO 给（来自 config.json 的 release_repos）。
 //
 // 什么时候发归 agentq，全满足才发：release_repos 登记了这个项目；项目 AGENTS.md 或 CLAUDE.md 里有「- 自动发版：」开头的规则；
 // 主目录在默认分支、.agentq/release 能执行；CHANGELOG.md「## 未发布」有条目；self_project 另要本机这一代观察期过了没变差、
@@ -10,7 +11,7 @@
 // 版本号按「未发布」的条目定：全是「修复：」升补丁号，否则升小版本号。
 //
 // 后台进程先跑说明书检查：不过就往项目「待做」写一条先修、推一条，这次不发（主目录有新提交后再试）。过了把 CHANGELOG 的「未发布」记成这个版本并提交，
-// 再跑 .agentq/release。失败停在原地：推一条、记下这个版本，以后不再试它（同一个版本不重试）；发成推一条（版本、Release 链接、主要变化），
+// 再跑 .agentq/release。失败（包括退出码 0 但公开仓没有 tag 或 Release）停在原地：推一条、记下这个版本，以后不再试它（同一个版本不重试）；发成推一条（版本、Release 链接、主要变化），
 // self_project 发成后往 site_project 的「待做」写一条「对齐新版本」。这一版带出去的条目写了公开仓 issue 链接的，起草回复推给用户点「发」（issues.go）。
 // 发版进行中、等发版时 tick 不接新活、不升级。
 package release
@@ -95,8 +96,9 @@ type Service struct {
 	Evolve  *evolve.Service
 	Gitx    *gitx.Service
 	Notify  *notify.Service
-	// spawn 起后台进程；测试换掉它。
+	// spawn 起后台进程，pause 是两次核对之间的等；测试换掉它们。
 	spawn func(name, version string) error
+	pause func(time.Duration)
 }
 
 func (s *Service) dir() string                   { return filepath.Join(s.DataDir(), "release") }
@@ -465,6 +467,11 @@ func (s *Service) Run(args []string) error {
 	}
 	if out, err := s.script(ctx, p, repo, releaseWait, version); err != nil {
 		s.failed(name, r, fmt.Sprintf(".agentq/release %s：%v；%s", version, err, out))
+		return env.ErrLogged
+	}
+	// 退出码 0 只是脚本自己说的：公开仓真有 tag 和 Release 才算发成，才推通知、写后续待做
+	if why := s.unpublished(ctx, repo, version); why != "" {
+		s.failed(name, r, fmt.Sprintf(".agentq/release %s 退出码是 0，但%s", version, why))
 		return env.ErrLogged
 	}
 	r.State, r.Why, r.Released = stDone, "", s.Now()

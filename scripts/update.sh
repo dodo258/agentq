@@ -15,7 +15,9 @@ bin=$bindir/agentq
 fails=$HOME/.agentq/guard-fails
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/agentq-update.XXXXXX")
-trap 'rm -rf "$tmp" "$bin.prev.tmp" "$bin.new.tmp"' EXIT
+# bash 3.2（macOS 的 sh）里 set -u 报错退出时，EXIT trap 看到的 $? 是 0：没跑到最后就不当成功。
+unfinished=1
+trap 'code=$?; rm -rf "$tmp" "$bin.prev.tmp" "$bin.new.tmp"; [ "$code" -ne 0 ] || code=$unfinished; exit "$code"' EXIT
 
 echo "构建：$src → $tmp/agentq"
 if ! (cd "$src" && go build -o "$tmp/agentq" .); then
@@ -48,3 +50,4 @@ cp "$tmp/agentq" "$bin.new.tmp"
 mv -f "$bin.new.tmp" "$bin"
 rm -f "$fails"
 echo "已安装 ${bin}（旧版本留在 $bin.prev，launchd 保护脚本连续失败 2 次会自动换回它）"
+unfinished=0
