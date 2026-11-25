@@ -1,5 +1,3 @@
 module agentq
 
-go 1.26.3
-
-toolchain go1.27.4
+go 1.27.4

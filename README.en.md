@@ -1,269 +1,343 @@
-<div align="center">
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/logo-dark.svg">
-  <img src="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/logo-light.svg" width="96" alt="agentq">
-</picture>
-
 # agentq
 
-agentq is a background task scheduler for Claude Code. It hands the to-do items in each project's `docs/BACKLOG.md` to separate Claude Code processes, then merges the work to the local default branch once tests and a review pass.
+[中文](README.md)
 
-[![License](https://img.shields.io/badge/license-MIT-16181D)](LICENSE) ![Go](https://img.shields.io/badge/Go-16181D?logo=go&logoColor=white) ![macOS](https://img.shields.io/badge/macOS-16181D?logo=apple&logoColor=white) ![Linux](https://img.shields.io/badge/Linux-16181D?logo=linux&logoColor=white) ![Claude Code](https://img.shields.io/badge/Claude_Code-16181D?logo=claude&logoColor=white)
-[![Release](https://img.shields.io/github/v/release/dodo258/agentq?label=release&color=16181D)](https://github.com/dodo258/agentq/releases/latest) [![Stars](https://img.shields.io/github/stars/dodo258/agentq?style=flat&color=16181D)](https://github.com/dodo258/agentq/stargazers)
+Say what you want in one sentence. agentq runs a few Claude Code sessions that take it from a plan to passing tests to a merge into your local main branch, then tells you what was done and how to look at it. macOS only.
 
-**[Install](#install)** &nbsp;·&nbsp; **[Install guide](docs/install.en.md)** &nbsp;·&nbsp; **[Support matrix](docs/reference/support-matrix.en.md)** &nbsp;·&nbsp; **[Security](SECURITY.md)** &nbsp;·&nbsp; [简体中文](README.md) · **English**
+**The CLI output, the prompts, the Telegram messages and the backlog section names are in Chinese.** This page translates them where needed. Writing requests in another language has not been tried.
 
-<br>
+## Examples
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/hero-dark.png">
-  <img src="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/hero-light.png" width="900" alt="Install with one command and it is running; agentq add queues a task; agentq status shows the scheduler, quota and running tasks; the task passes the gates and merges. Output is in Chinese for now.">
-</picture>
+Both runs are real. They happened on 2026-11-26 in throwaway projects. Times and text are copied from the run logs unchanged. The messages are what the program emitted (the 「消息」 lines of the log); with Telegram set up, that is what arrives on your phone.
 
-<sub>Command output is in Chinese for now. Items can be written in any language.</sub>
+**A small change, 1 minute.** Started 03:02:07, merged into main 03:03:11. The request: "add a --version option that prints wc2 0.1.0".
 
-</div>
+```
+$ agentq do "加一个 --version 选项，打印 wc2 0.1.0"
+1126-030207 开工：wordle-cli「加一个 --version 选项，打印 wc2 0.1.0」
+```
 
-<br>
+```
+🟢 wordle-cli 做好了：wc2 加 --version 选项
+做了什么：给 wc2 加了 `--version` 选项，并补上测试、`.agentq/verify` 检查脚本和 README 用法说明。
+用户怎么看：在项目目录运行 `go run . --version`，会看到 `wc2 0.1.0`。
+用了 1m0s，合并提交 39854fe
+```
 
-## Install
+(Done. Added `--version` to wc2, plus tests, an `.agentq/verify` script and README usage. To see it, run `go run . --version`. Took 1m0s, merge commit 39854fe.)
+
+**A tool from scratch, 53 minutes.** The request, translated: "Write a command-line tool mdsite in Go that turns a folder of Markdown into a good-looking static site, with full-text search, light and dark themes, local preview and auto-reload. Standard library only."
+
+| Time | What happened |
+|---|---|
+| 03:02 | Started. The product manager reads the project, looks at similar tools, writes a plan |
+| 03:06 | Plan ready, 6 modules; the first one, base, starts. One session failed to launch and was retried automatically |
+| 03:14 | base merged; markdown, search, theme and site start at the same time |
+| 03:36 | All four merged; the last one, app, starts |
+| 03:52 | Everything merged, tests pass first time, audit starts |
+| 03:55 | Audit finds 0 major bugs, merged into main |
+
+```
+📋 mdsite 开工：mdsite：一个文件夹变成好看的网站
+用 Go 标准库做一个单文件命令行工具：指给它一个 Markdown 文件夹，不写配置就出一个能双击打开、中文搜得到、深浅两色的静态网站，mdsite serve 边写边自动刷新。分 6 块：先打公共骨架，再由 Markdown 解析、网站生成、搜索、主题四块同时做，最后一块做预览服务和命令行并接到一起。做好的标准：一条检查命令全过，拿示例文档生成的站点不起服务器也能看能搜，改一个字一秒左右浏览器就变。
+```
+
+```
+🟢 mdsite 做好了：mdsite：一个文件夹变成好看的网站
+用 Go 标准库做一个单文件命令行工具：指给它一个 Markdown 文件夹，不写配置就出一个能双击打开、中文搜得到、深浅两色的静态网站，mdsite serve 边写边自动刷新。分 6 块：先打公共骨架，再由 Markdown 解析、网站生成、搜索、主题四块同时做，最后一块做预览服务和命令行并接到一起。做好的标准：一条检查命令全过，拿示例文档生成的站点不起服务器也能看能搜，改一个字一秒左右浏览器就变。
+用了 53m0s，合并提交 59275c2
+```
+
+(Started / done: a single-binary tool on the Go standard library; point it at a Markdown folder and it produces a searchable two-theme static site without configuration, and `mdsite serve` reloads as you write. 6 modules: a shared skeleton, then Markdown parsing, site generation, search and themes in parallel, then the preview server and CLI that tie them together. Accepted when one check command passes, the site built from the sample docs works and searches without a server, and an edit shows up in the browser in about a second. Took 53m0s, merge commit 59275c2.)
+
+Codex was not connected yet when these two ran; the mdsite audit was done by Claude. The Codex audit was added later.
+
+## Why it is not a scheduler
+
+The old agentq (v0.1–v0.3) was a scheduler: queues, slots, five gates, patrols, and work on itself. Data from its last 7 days before the rewrite:
+
+- Product code had grown from 1,700 lines to 48,110 lines in 28 modules.
+- 183 merged items took 76 minutes on average from start to the last gate. 38 of those were work; the rest was gates, rejections and waiting to be resumed.
+- 293 trips through a gate, 106 sent back. Of 45 rejection reasons sampled, most were edge cases needing several rare conditions at once.
+- 286 of 324 tasks were started by the scheduler itself.
+- 13% of the usage quota went into agentq changing itself.
+
+This version is written from scratch and does one thing: carry one request from start to finish. No queue, no slots, no chain of gates, no evaluation, no self-evolution. Product code is capped at 2,600 lines, enforced by a test. The reasoning is in [docs/DESIGN.md](docs/DESIGN.md) (Chinese).
+
+## One straight line
+
+```
+request ─→ product manager ─→ modules in parallel ─→ merge, run tests ─→ audit once ─→ fix once ─→ merge into main ─→ tell you
+small   ─→ product manager ─→ one session ─→ run tests ─→ merge into main ─→ tell you
+```
+
+1. **Product manager**: reads the project. For larger work it also looks at similar tools and their complaints on the web, writes a plan, splits it into modules, fixes interfaces and acceptance. Small changes (one session, an hour or two) skip the research. It does not ask you questions. Plans for larger work are committed to `docs/specs/` in the project.
+2. **Build**: one session and one git worktree per module. Modules without dependencies start together, with no limit on how many.
+3. **Merge**: each finished module goes into the request's own branch. The session that wrote it resolves its conflicts.
+4. **Test**: the program runs the project's `.agentq/verify` and looks only at the exit code. If it fails, Opus fixes it, at most 3 times; then Fable gets one try.
+5. **Audit**: once per request, major bugs only. Small changes are not audited.
+6. **Fix**: each finding is checked, the real ones are fixed in one go, tests run again, no second audit. Lessons go into the project's `LESSONS.md`.
+7. **Deliver**: merged into your local main branch, one message sent. The program does not push.
+
+It stops for you when: failing tests or audit bugs cannot be fixed; a conflict cannot be resolved; sessions are not logged in, will not run or produce nothing; or the product manager decides you are needed (spending money, publishing, deleting data, accounts). If uncommitted changes in the directory where main is checked out are in the way, it sends one message, waits until you commit or move them, then merges by itself.
+
+Every step is on the handoff sheet: `agentq log <id>`. If you look at the result and want something changed, say so; that is a new request.
+
+## Who does what
+
+| Work | Model | Effort |
+|---|---|---|
+| Product manager, hard modules, fixing tests and audit bugs, conflicts with main | Opus | high |
+| Ordinary modules | Sonnet | high |
+| One try after Opus has failed 3 times | Fable | xhigh |
+| The single audit | Codex `gpt-6.2-astra`; Opus if Codex is missing, logged out or out of quota | xhigh |
+| Cleaning up uncommitted changes | the model that wrote that part | medium |
+| Reading Telegram messages, finding the project | Sonnet | medium |
+| Ticking off, morning brief, merging, running tests | the program, no model | |
+
+The product manager decides which modules are hard. All models can be changed, see [environment variables](#data-and-environment-variables).
+
+## Requirements and installation
+
+Requirements:
+
+- macOS 13 or later (what Go 1.27 binaries need; it has only been run on macOS 27 on Apple silicon).
+- git with `user.name` and `user.email` set.
+- [Claude Code](https://code.claude.com/docs/en/setup), installed and logged in. The author uses 2.1.332; nothing older was tried.
+- Codex is optional and only used for the audit. The author uses codex-cli 0.172.0.
+
+One command, installs to `~/.local/bin/agentq`. The download is checked against its SHA-256; on a mismatch nothing is installed:
 
 ```sh
 curl -fsSL https://github.com/dodo258/agentq/releases/latest/download/install.sh | sh
+agentq install
 ```
 
-The script downloads a prebuilt binary and checks its SHA256. It needs Git, but not sudo or Go. Running the same command on an existing install upgrades it and keeps your configuration and task data.
+The script only places the program. No sudo, no changes to your shell config; if `~/.local/bin` is not on your PATH it prints the line to add. To pick a version: `curl … | AGENTQ_VERSION=v1.2.3 sh`. If the machine has the old version, or the download turns out to be one, it changes nothing, see [Moving from the old version](#moving-from-the-old-version).
 
+Afterwards the first line of `agentq --help` should be 「agentq：说一句需求，做到合进主分支」. Until the first release of this version is published, the address above still serves the old v0.3.0.
 
-Once installed, it is running. There is no extra prompt: installing is the consent. At the end the program tells you three things, plus how to pause and remove it:
+`agentq install` does three things and lists each of them:
 
-- Background tasks can read and write every file your OS user can, and run commands.
-- Task content goes to the model service you use, on your own quota.
-- With nothing to do, no quota is used.
+- Two launchd services: resume interrupted work every 5 minutes, write the morning brief at 8:00. A third one receives messages if Telegram is set up.
+- The [dispatch skill](#the-dispatch-skill).
+- The current `PATH` and `AGENTQ_*` variables are written into the services.
 
-To install without running it yet, add `--paused` (`curl ... | sh -s -- --paused`). Rerunning the command on an existing install is an upgrade: your switches are kept, and a paused install stays paused.
+`agentq do` works without `agentq install`; you then have to run `agentq resume` yourself after an interruption.
 
-If the Claude Code CLI is missing or signed out, the script runs the official installer and `claude auth login` when it has a terminal. Without a terminal it prints the commands; once the CLI works, say what you want in a chat and the background starts by itself. The desktop app can't run background tasks, so the CLI is needed even if the app is installed.
-
-The install includes the program, the skills for the task workflow and review, project templates and a set of general engineering rules. Existing configuration is not changed. Behind a firewall, add `--proxy <url>` or `--mirror <prefix>`; with a mirror, the checksum file and source still come from the original address. Remove it with `agentq remove --yes`, which keeps your data. For other install routes and options, see the [install guide](docs/install.en.md).
-
-To have an agent install it, send it this line:
-
-> Read `https://github.com/dodo258/agentq/blob/main/llms.txt` and install agentq for me
-
-## Usage
-
-Install, then just say it. Open Claude Code or Codex (CLI or desktop app) in your project and say what you want done:
-
-```text
-Retry an export 3 times when it fails, and show the retries in a log when offline
-```
-
-No trigger word and no agentq commands. The `dispatch` skill decides: a new feature, a bug fix or a UI change, however small, becomes an item with acceptance criteria in `docs/BACKLOG.md`, goes to the background, and you are notified when it is done. A question, a trivial edit such as a typo or a wording change, or "just change it" / "I'm watching" is done right there in the chat.
-
-- The folder doesn't have to be under `~/projects`, be a Git repository or have a BACKLOG: the skill runs `git init` (committing the existing files, with a `.gitignore` that keeps out secrets and dependencies), adds the files and registers it in `extra_projects`. In places that don't look like a project, such as your home folder or Desktop, it asks once for a name and location, with a default.
-- If the background isn't running (removed, or not loaded after a reboot), the skill starts it. A pause you set yourself is left alone.
-- Progress, review and stopping are chat too: "how is it going", "how do I check what's done", "stop for now".
-
-You can also work from the terminal:
+From source (Go 1.27.4 or later):
 
 ```sh
-agentq add "..."                  # add an item to this project's queue; the first one brings the project in
-agentq run my-app                 # start one of the project's items now
-agentq new "..."                  # create a new project and build its first version from one line
-agentq discuss                    # list the direction questions waiting for your answer
-
-agentq status                     # quota, running tasks, each project's queue, recently finished tasks
-agentq logs 1105-211629-shop-api  # one task's full result
-agentq stop 1105-211629-shop-api  # stop a task and keep its changes
-agentq pause                      # stop starting new tasks; agentq resume undoes it
-agentq doctor                     # read-only check of install, CLI and config
-agentq update                     # upgrade to the latest release
+git clone https://github.com/dodo258/agentq && cd agentq
+mkdir -p ~/.local/bin
+go build -o ~/.local/bin/agentq .
+agentq install
 ```
 
-Every command is listed in the [command reference](docs/reference/commands.md) (in Chinese).
+To upgrade, run the install command again, then `agentq install` again. There is no automatic upgrade.
 
-## How it works
+## All commands
 
-agentq picks items, starts and monitors processes, runs the quality gates, merges and keeps records. It writes no product code. Claude Code does the implementation and self-testing, following the bundled `agent-task` skill, and a separate Claude Code process does the review.
+| Command | What it does |
+|---|---|
+| `agentq do "<request>"` | Start work in the current project. `-C <dir>` picks another project and goes before the request; `-` reads the request from standard input |
+| `agentq todo` | Show the project's backlog (also takes `-C <dir>`). Add a keyword to do that item, or `all` to do everything that can start and keep going |
+| `agentq ls` | Show progress. `-a` includes finished ones |
+| `agentq log <id>` | Show the handoff sheet |
+| `agentq stop <id>` | Stop it; branches and worktrees stay |
+| `agentq retry <id>` | Continue a stuck or stopped one from that step |
+| `agentq resume` | Continue interrupted ones (runs every 5 minutes once the services are installed) |
+| `agentq brief` | Send the morning brief: done yesterday, stuck, tokens used |
+| `agentq install` | Install the dispatch skill, auto-resume, the 8:00 brief, and message receiving if Telegram is set up |
+| `agentq uninstall` | Remove what `install` installed |
+| `agentq version` | Version; `dev` if you built it yourself |
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/flow-en-dark.svg">
-  <img src="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/flow-en-light.svg" width="900" alt="You say it, and it goes into docs/BACKLOG.md. agentq tick checks conditions and starts a separate claude -p process in its own worktree, which builds, self-tests and writes ready.json. agentq runs the gates (tests, review); when they pass, the engine merges and wraps up. A failed gate sends the work back to the task, and if it still fails it waits for you. Interrupted or limited work resumes in the same session. Results go to the daily digest and morning report.">
-</picture>
+A project must be a git repository with at least one commit. The main branch is what `origin/HEAD` points to, otherwise `main`, `master`, otherwise the current branch.
 
-The scheduler runs every 5 minutes and again whenever a task ends, so a queued item starts within seconds. By default 2 tasks run at once. Within one project, items that declare `（范围：…）` (scope) with no overlap and no dependency on each other can also run 2 at a time; items without a scope run one at a time. Tasks don't depend on a terminal or client, but the machine has to stay on.
+## The backlog
 
-The scheduler never runs `git push`. Merges happen on the local default branch, and pushing to a remote needs separate authorization. Full rules: [scheduling](docs/reference/scheduling.md) (in Chinese).
+It lives in `docs/BACKLOG.md` and counts only once committed to main. The section names and markers have to be in Chinese:
 
-## Quality gates
+```markdown
+## 待做
 
-A task can only get its branch ready to merge and write `.agentq/ready.json`. agentq decides whether to merge using the five gates below, which run on the branch merged with the latest default branch.
+- [ ] 统计页 —— 按月看合计，能切换年份
+- [ ] 导出 CSV —— 设置页加导出按钮（依赖：统计页）
+- [ ] 登录 —— 接 OAuth（卡住：等账号）
 
-| Gate | When it runs | What it checks | Default level |
-| :-- | :-- | :-- | :-- |
-| **Test** | Every time | Runs the project's `.agentq/verify` | Blocks the merge |
-| **Review** | Skipped for markdown-only changes | A separate process reviews the change. A blocking finding needs a file, line, evidence and reproduction steps | Blocks the merge |
-| **Patch** | When the change is a fix and the item isn't a test or stress-test pass | A fifth fix to the same module within 30 days. Set to `error`, it sends the task back to rewrite that module | Records only |
-| **UI** | When UI files change | A project script takes screenshots, agentq checks they aren't blank, and a review process blocks only on broken rendering, overflow, unreadable text or placeholder content | Records only |
-| **Product** | On the first version from `agentq new` and items marked `（成品）` | Runs the project's smoke test `.agentq/smoke` and produces a handoff sheet if it passes | Records only |
+## 已完成
+```
 
-A project can change the levels in `.agentq/gates.json`. On the first `agentq init` or `agentq add`, the program generates `.agentq/verify` from the project's files. If it can't tell what to run, the task has to add the script while implementing.
+```
+$ agentq todo
+统计页  
+导出 CSV  等「统计页」
+登录  卡住
+```
 
-When a gate fails, the reason goes back to the task and the same session continues, for at most 2 rounds. If it still fails or the result can't be determined (for example, the script reports it can't run this time), the item is marked stuck and waits for you:
+(Three items: a statistics page; CSV export, which depends on the statistics page; login, stuck waiting for an account.)
+
+- Only unindented `- [ ] ` lines under `## 待做` (to do) are read, one item per line. The part before `——` is the title; the whole line is the request.
+- `（依赖：…）` (depends on) takes a few characters of another item's title, several separated by commas. It waits as long as a matching item is still under `## 待做`.
+- Items containing `（卡住` (stuck) are skipped by `all`; naming one does it anyway.
+- `agentq todo <keyword>` does the first item whose title contains the keyword and that can start now. Items in progress, waiting or stuck last time are not started again (use `agentq retry` for stuck ones).
+- `agentq todo all` starts everything that can start. Each finished item is ticked and moved to `## 已完成` (done), then whatever it blocked starts. Items of the same title already done or stopped are not redone by themselves.
+- It never picks work from the backlog unless you say so. For projects done in phases, the product manager adds the later phases to the backlog.
+
+## The project check: .agentq/verify
+
+An executable script that runs all of the project's checks (tests, static checks, build) in one command. Exit code 0 means pass. For example:
 
 ```sh
-agentq gate report <job id>                # see why
-agentq gate pass <job id> --reason "..."   # let this one through
-agentq gate rerun <job id>                 # run the gates again without code changes
-agentq gate abandon <job id>               # give up and keep the branch
+#!/bin/sh
+set -e
+npm ci
+npm run lint
+npm test
 ```
 
-A task that merges by itself around the gates doesn't count as passed. agentq flags it and notifies you. The gates guard against a model cutting corners or making mistakes. They are not a security boundary, because tasks have full access to your machine.
-
-Direction questions (design, UI, technology choices) get asked once before work starts: at most 3 questions, each with a default answer. When you assign work in a Claude Code session, it asks right there. For items marked `（大方向）` and for `agentq new`, the background sends a Telegram card and goes with the defaults after 2 hours without an answer, and other items don't wait. Without Telegram it uses the defaults immediately.
-
-`agentq health` shows each module's recent changes, fix count and two-week rework rate. `agentq stats` shows how often each gate blocked or passed work, plus first-time satisfaction and rework rates worked out from commit history. Details: [quality gates and engine merge](docs/reference/features.md#质量门和引擎合并) (in Chinese).
-
-## A real handoff
-
-This is one task agentq did on itself, laid out from the task records, gate reports and scheduler log. The round that got sent back is included.
-
-1. **11-16 13:03, written as an item.** The request: after a held task was decided on the command line with `agentq gate pass`, the gate card on Telegram still showed its buttons, and tapping one replied "not recorded, try again in a bit", which looked broken. `agentq add` wrote it into `docs/BACKLOG.md` as a to-do item, with acceptance criteria (unit tests for tapping the card after a command-line decision and for tapping a still-valid card) and a scope (`internal/chat/`, `internal/notify/`, `tests/`).
-2. **11-17 05:56, picked up in the background.** The tick started a Claude Code process, which worked in its own worktree on branch `agent/1117-gate-card-settled`, following the `agent-task` skill. At 06:31 it handed back changes to `internal/chat/` and `internal/notify/`, a new test `tests/gate_card_settle_test.go`, a new eval case `evals/046-gate-card-settled-elsewhere/`, and a `.agentq/ready.json` (type feature, with how to accept it). Outside the scope it added one read-only function to `internal/gate/queue.go` and recorded why in `DECISIONS.md`.
-3. **06:31–07:07, sent back by the test gate.** The gate merged the branch with the latest main and ran `.agentq/verify`, which exited 1: `TestEvalFakeFullFlow` reported "test site not cleaned up", and two more runs failed the same way. The engine sent it back for round 1 (of at most 2) and listed which files and directories this round was allowed to change.
-4. **07:07–07:23, fixed in the same session.** The cause was the new eval case: it approved with `agentq gate pass`, which starts a gate process in the background, and that process was still writing into the temporary directory when the grader deleted it. The case now uses `agentq gate abandon` (no background process) and then taps approve on the card, which checks the same behavior. Only the case's `check.sh` changed, inside the returned scope, and `ready.json` was submitted again.
-5. **07:58–08:22, second gate run.** The scope, test, eval (48 cases, nothing worse than the baseline), review and capability gates all passed. But the change touched gate decision code in `internal/gate/queue.go`. A task isn't allowed to change the ruler it is judged by, so even with every gate passed it doesn't merge by itself: the item was marked stuck and waited for a person.
-6. **08:32–08:37, a person decides on the gate card.** Telegram delivered the gate card with four options, "approve, send back, abandon, review again", recommending approve. The user tapped approve at 08:37. This was the only step in the whole record that needed a person.
-7. **08:37, merged.** The engine merged into main (the only conflict was in the append-only `DECISIONS.md`, resolved automatically), sent a "done" message and upgraded the local install to this version. When the watch period ended on 11-18 the new version had not gotten worse, so it was kept.
-
-The resulting change is the entry in [CHANGELOG](CHANGELOG.md) under 未发布 (Unreleased) that starts with "门停住的任务在命令行或会话里用 `agentq gate pass|return|rerun|abandon` 定过以后" (in Chinese). The eval case is in [evals/046-gate-card-settled-elsewhere](evals/046-gate-card-settled-elsewhere/).
-
-## Failure handling
-
-| Situation | Response |
-| :-- | :-- |
-| **A process exits midway, or the machine reboots** | Checks the BACKLOG and resumes the same session. Merged work isn't redone |
-| **A usage limit is hit** | Cools down until the reset time, then resumes the same session |
-| **Quota is nearly gone** | Starts no new tasks once the 5-hour window reaches 70% or the weekly quota reaches 90%, leaving the rest for you. `agentq run` is refused at 98% |
-| **Tasks fail right after starting** | Three tasks exiting within 3 minutes trip a breaker that stops new starts for 30 minutes. Another failure doubles that, up to 4 hours |
-| **A task gets stuck on its own** | Picks it up once more in a new session from the same branch, with instructions to research first and try another approach; only a second stall notifies you. Anything that needs your call (authorization, payment, accounts, product direction) comes straight to you |
-| **A task runs away** | Each run has a budget cap, subagent runaway stops it automatically, and the default timeout is 4 hours. Its changes are kept |
-| **The state file breaks** | Unreadable: nothing is wrapped up or started. Corrupt: the bad file is backed up, state is rebuilt from task records, and no new task starts that round |
-| **Run data grows** | Task records are kept 90 days, and logs are trimmed |
-
-These paths are covered by a fake CLI and a stress test. A real usage limit has not been run yet. The stress test kills processes, corrupts state files, forces concurrency, fills the disk and jumps the clock, all with fake dependencies, and has only run on macOS so far. Method: [CONTRIBUTING](CONTRIBUTING.md#暴力测试). Rules: [scheduling](docs/reference/scheduling.md) (in Chinese).
+- No script counts as a failure; the product manager will have the first module add one.
+- It runs in a worktree with its own TMPDIR, for at most 30 minutes.
+- The environment is a whitelist (`HOME`, `PATH`, locale, proxies, `GOTOOLCHAIN`, `GOROOT`, `CODEX_HOME`, `AGENTQ_*` and the like). Set anything else inside the script.
+- It is the floor for quality: the program knows only what this script tests.
 
 ## Telegram
 
-<table>
-<tr>
-<td width="55%">
+Optional. Without it, use `agentq ls`; the morning brief is in `~/.agentq2/brief.md`.
 
-Telegram is optional. Once it's set up, you can message the bot with requests and screenshots.
+1. In Telegram, find @BotFather, send `/newbot`, note the token.
+2. Send your bot a message, open `https://api.telegram.org/bot<token>/getUpdates` in a browser and find the number in `"chat":{"id":…}`.
+3. Write `~/.agentq2/telegram.env`:
 
-- Reply to a "decide" message or tap a button. The decision is written back to the item and the task continues.
-- Reply to a task alert to pick that task back up.
-- `状态`, `额度`, `暂停` and `恢复` (status, quota, pause, resume) are answered by code and use no quota.
+   ```
+   TELEGRAM_BOT_TOKEN=<token>
+   TELEGRAM_CHAT_ID=<number>
+   ```
 
-At most 10 notifications go out a day; anything waiting for your decision (new "waiting for you" items, gates that need you, direction questions before work starts, stuck items handed to you) is not held by that limit. Messages between 23:00 and 08:00 wait for the morning, and messages of one kind within 30 minutes are combined. A merged task sends its merge commit, and failures, interruptions and stuck items are reported too. Without Telegram, agentq uses local desktop notifications.
+4. `chmod 600 ~/.agentq2/telegram.env`
+5. Run `agentq install` again to install the receiving service. `agentq brief` sends a message right away, which is a quick test.
 
-Completion notices and decision card buttons work on real Telegram. Reply threads and full conversation round trips have only been tested against a fake service. [Setup](docs/guide/telegram.md) (in Chinese).
+Only private messages from that chat id are accepted; groups are ignored. The message from step 2 may be received and answered too. Each message is handled by a session: if it is work, it finds the project and starts; if it is a question, it answers. Projects are looked up in `~/projects` (created empty if missing); change that with `AGENTQ_PROJECTS`.
 
-</td>
-<td width="45%">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/telegram-dark.png">
-  <img src="https://raw.githubusercontent.com/dodo258/agentq/main/docs/brand/readme/telegram-light.png" alt="A Telegram conversation: the bot asks what feel the page should have and offers directions A, B and C; B is picked; when done it reports the merge and the merge commit. Messages are in Chinese for now.">
-</picture>
-</td>
-</tr>
-</table>
+Messages you get: 📋 larger work started, 🟢 done, 🔴 stuck, 🟠 waiting to merge, ☀️ morning brief, and answers to you. Unsent messages are sent later. Messages Telegram refuses (a wrong chat id, for example) are kept, the reason is reported, and they go out once it is fixed.
 
-## Configuration
+If `~/.agentq2/telegram.env` does not exist, the data directory is the default one and the old version's `~/.agentq/secrets/telegram.env` exists, that file is used.
 
-The configuration file is `~/.agentq/config.json`. Changes take effect at the next tick with no restart. Common settings are in the [configuration guide](docs/guide/configuration.md), and every key is in the [config reference](docs/reference/config.md) (both in Chinese).
+## Data and environment variables
 
-On a new install these features are off and only run once you turn on their switch:
+Everything is in `~/.agentq2`:
 
-| Feature | Switch | What it does |
-| :-- | :-- | :-- |
-| **Night shift** | `night_enabled` | Moves the backlog along, triages issues and writes a report at 01:00 every day |
-| **Review** | `review_enabled` | Reviews recent commits and failed tasks and writes the morning report at 06:30 every day |
-| **Patrol** | `patrol_enabled` | Checks services, backups, stuck tasks, quota and disk every hour, and starts one read-only analysis when something new goes wrong |
-| **Auto update** | `auto_update` | A release installed with the one-line script checks for a new version at most once a day and installs it when no task is running; if things get worse afterwards it rolls back to the previous generation and won't auto-install that version again. See the [command reference](docs/reference/commands.md#自动更新) (in Chinese) |
-| **Auto release** | `release_repos` | For public projects you maintain: when `CHANGELOG.md` has unreleased entries, the public repo's CI is green, the last release is at least 7 days old and no task is running, it runs the project's own `.agentq/release` to publish a new version, checks the docs first and sends one message when done. See the [feature reference](docs/reference/features.md#自动发版) (in Chinese) |
+| Location | Contents |
+|---|---|
+| `orders/<id>/order.json` | state of the request |
+| `orders/<id>/HANDOFF.md`, `run.log` | handoff sheet, run log |
+| other files in `orders/<id>/` | session output, test and audit logs |
+| `orders/<id>/trees/` | worktrees, removed after the merge into main |
+| `brief.md`, `resume.log`, `listen.log`, `brief.log` | morning brief, service logs |
+| `inbox/`, `outbox/`, `chat-*` | received but unhandled, not yet sent, chat session output |
+| `telegram.env` | Telegram credentials |
+| `skill-dispatch.md` | the skill text as installed, compared on uninstall |
+| `todo.lock`, `locks/` | file locks |
 
-## Support
+Inside a project you will find `agentq/<id>/…` branches (removed once merged), `.git/agentq.lock`, and committed `docs/specs/`, `LESSONS.md` and backlog ticks. Records are not cleaned up automatically.
 
-| Item | Status |
-| :-- | :-- |
-| **Claude Code CLI** | Default backend. 2.1.316 has reached a merge for real on macOS, including the review gate, the UI gate, `agentq new`, the launchd background and assigning work from the desktop app |
-| **Codex CLI** | Choose it by hand. codex-cli 0.166.0 has reached a merge and resumed after SIGTERM for real on macOS. Direction questions and patrol analysis do not start on it, and it has no dollar cap |
-| **pi** | Choose it by hand. pi 1.5.1 has reached a merge and resumed after SIGTERM for real on macOS; the model follows pi's own settings. pi has no permission prompts and no sandbox, so its tools run as you; direction questions, follow-ups and patrol analysis do not start on it, and it has no dollar cap (the tick stops a task by its usage) |
-| **macOS** | arm64 is the main platform. amd64 cross-compiles and has not run on an Intel Mac |
-| **Linux** | Needs `systemd --user`. amd64 runs the tests and a real systemd acceptance in CI, with no real task run. arm64 cross-compiles |
-| **WSL, Windows** | WSL is unverified. Windows is not supported |
+There is no config file, only environment variables:
 
-Not yet verified for real: a usage limit and an expired token, and real tasks and stress tests on Linux. The gates have not been compared with a bare CLI on real projects either. Details for each item are in the [support matrix](docs/reference/support-matrix.en.md).
+| Variable | Default | Purpose |
+|---|---|---|
+| `AGENTQ_HOME` | `~/.agentq2` | data directory |
+| `AGENTQ_PROJECTS` | `~/projects` | where projects named in Telegram messages are looked up and where the dispatch skill creates new ones |
+| `AGENTQ_TELEGRAM` | see above | Telegram credentials file; point it at a missing file to neither send nor receive |
+| `AGENTQ_TELEGRAM_API` | `https://api.telegram.org` | Telegram API address |
+| `AGENTQ_CLAUDE` | searched for | the claude program. Looks in PATH, `~/.npm-global/bin`, `~/.local/bin`, `~/.claude/local` |
+| `AGENTQ_CODEX` | searched for | the codex program, same search |
+| `AGENTQ_LEAD` | `opus` | product manager, hard modules, fixes |
+| `AGENTQ_CODE` | `sonnet` | ordinary modules, chat |
+| `AGENTQ_LAST` | `fable` | the one last try |
+| `AGENTQ_AUDIT` | `gpt-6.2-astra` | model for the Codex audit |
 
-Claude Code, Codex and pi are supported as backends for now; other CLIs will come later. Pick one at install time with `--backend codex` or `--backend pi` (`... | sh -s -- --backend pi`); without it you get Claude Code. The interface for new tools is described in [docs/backends.md](docs/backends.md) (in Chinese). The prebuilt binary needs only Git, and building from source uses only the Go standard library.
+The services use `AGENTQ_*` and `PATH` as they were when you ran `agentq install`; `agentq do` uses those of its terminal. To change one, put it in your shell config and run `agentq install` again so both agree.
 
-The desktop app's Code tab and the CLI read the same rules and skills. Background tasks don't appear in the client's session list, so check results with `agentq status` or notifications.
+The install script also reads `AGENTQ_VERSION` (which version) and `AGENTQ_RELEASE_BASE` (another download address, for testing).
 
-## Permissions and limits
+## After an interruption
 
-Unattended coding needs `bypassPermissions`. A task runs as your OS user with all your file permissions, can read local secrets (including App Store Connect private keys and SSH keys), and can run any command. Prompts and deny rules are not a security boundary. agentq guards against a model cutting corners or making mistakes, not against deliberate damage.
+- Each request is its own process; closing the terminal does not matter. Every step is saved when done.
+- Process killed or machine restarted: with the services installed it continues within 5 minutes, otherwise run `agentq resume`. `agentq ls` marks these 「断了，等接着做」 (interrupted, waiting to continue).
+- Usage limit hit: the session sleeps until the reset and continues; `agentq ls` shows until when.
+- Session errors: retried with back-off; stuck after 4 failed runs. A session may run 4 hours, the Codex audit 3 hours.
+- Stuck (🔴): see why with `agentq log <id>`, deal with it, then `agentq retry <id>`. You may edit directly in `~/.agentq2/orders/<id>/trees/all`; your changes are committed when it continues.
+- Not wanted any more: `agentq stop <id>`. Branches and worktrees stay, `retry` picks it up again.
 
-On a sensitive machine, run it under a separate OS user or in a container, and keep production credentials off it. Details: [SECURITY](SECURITY.md).
+## Uninstalling
 
-Other limits:
+```sh
+agentq ls                  # stop what is still running: agentq stop <id>
+agentq uninstall           # removes the services; the skill too, unless you changed it
+```
 
-- The machine has to be on. Tasks continue after sleep or a reboot, but nothing runs while it's off.
-- Tasks spend your own model quota.
-- Command output, notifications and BACKLOG section headings are in Chinese for now (`## 待做` means "to do"). Item text can be in any language. Most guides are in Chinese.
+`uninstall` leaves the program and the data, and running requests finish. To remove everything:
 
-## Privacy
+```sh
+rm ~/.local/bin/agentq
+rm -r ~/.agentq2           # records, unmerged worktrees and Telegram credentials go with it
+```
 
-agentq has no telemetry and collects nothing. Task content goes only to the model service you use. Apart from installing and upgrading, agentq itself connects out only for features you turned on: Telegram and GitHub.
+Unmerged requests leave a worktree entry and branches in their project. Clean up there with `git worktree prune`, list with `git branch --list 'agentq/*'`, delete with `git branch -D`.
 
-## FAQ
+## Moving from the old version
 
-- **What work doesn't suit agentq?** Tasks you want to watch and steer as they go. Use Claude Code directly for those.
-- **Does it use quota with nothing to do?** No. With an empty queue no model starts. The night shift and patrol analysis only run if you turn them on.
-- **My project has its own rules.** Its `CLAUDE.md` and `AGENTS.md` apply as usual. The first time it runs after install, agentq puts a set of general engineering rules in `~/.claude/rules/agentq/`, unless you already have global rules. `agentq env on` adds them and `agentq env off` removes them. Their first line says project rules come first, but that is only a hint, so they hold general engineering habits and nothing project-specific.
-- **Which model does it use?** New installs follow the model and effort you picked in the CLI and pass no flags. A model written in an existing config is used as is.
-- **Does it push to my remote?** The scheduler doesn't push, and the `agent-task` skill has tasks merge locally only. Pushing needs separate authorization. For tasks this is a skill convention, not a technical limit, because they can use your signed-in `git`. The optional `--backup` service pushes only to private targets listed in `~/.agentq/backup.json`.
-- **How do I stop it right now?** `agentq pause` starts no new tasks, and `agentq stop <job id>` stops a running task.
-- **How do I remove it?** `agentq remove --yes` takes off the program and services and keeps your data and recovery material. To undo that, see the [install guide](docs/install.en.md).
-- **Can an upgrade lose data?** Upgrades are transactional and keep your configuration and task data. `agentq rollback --yes` returns to the previous version.
+The old version means the published v0.1–v0.3. The two are entirely different programs sharing the command name `agentq`, so the old one has to go first. **This path has not been tested on a real old installation**; the old commands below are taken from its documentation.
 
-## Documentation
+1. `agentq pause`, so nothing new starts. Wait for running tasks, or `agentq stop <task id>`.
+2. `agentq remove --yes`. Removes the old program, services and skills; configuration, tasks and credentials stay in `~/.agentq`.
+3. Run the [install command](#requirements-and-installation), then `agentq install`.
 
-| Document | What's in it |
-| :-- | :-- |
-| **[Install guide](docs/install.en.md)** | Candidate self-check, conflicts, transactional backup and rollback |
-| **[Support matrix](docs/reference/support-matrix.en.md)** | Verification state of each capability |
-| **[Getting started](docs/guide/getting-started.md)** | Install, first task, other routes (in Chinese) |
-| **[Configuration guide](docs/guide/configuration.md)** | Project directory, concurrency, models, night shift, optional features (in Chinese) |
-| **[Telegram guide](docs/guide/telegram.md)** | Setting up the bot, adding tasks, replying with decisions (in Chinese) |
-| **[Daily use](docs/guide/daily-ops.md)** | Status, stop, resume, decisions, morning report (in Chinese) |
-| **[Troubleshooting](docs/guide/troubleshooting.md)** | Causes and fixes by symptom (in Chinese) |
-| **[Commands](docs/reference/commands.md)** | Every command (in Chinese) |
-| **[Config reference](docs/reference/config.md)** | Type, default and effect of each key (in Chinese) |
-| **[Scheduling](docs/reference/scheduling.md)** | Picking items, concurrency, quota, breaker, resume, state corruption (in Chinese) |
-| **[Features](docs/reference/features.md)** | New projects, quality gates, suggestions, night shift, patrol, notifications (in Chinese) |
-| **[Files](docs/reference/files.md)** | Every file under `~/.agentq/` (in Chinese) |
+- The order matters: the install script refuses and changes nothing when it finds the old version. Two versions receiving from the same bot take messages from each other.
+- `agentq update` in the old version fetches the new install script and shows the same refusal. The old automatic update will not switch to this version (the release has no `VERSION` file, which it looks for).
+- Data is separate: the new version uses `~/.agentq2` and does not read old configuration or task records. The one exception is the Telegram credentials, used if there are no new ones.
+- `docs/BACKLOG.md` in your projects keeps working; only `## 待做` is read. If an item names a half-finished branch, the product manager looks at that branch first.
+- Skills of the old version that you modified may remain in `~/.claude/skills`. If `dispatch` is still there, `agentq install` will say it was left alone; see the next section.
+- Going back: `agentq uninstall`, delete `~/.local/bin/agentq`, then use the restore command the old version printed when it was removed. Not tested either.
 
-Also: [privacy gate](docs/privacy.md), [legacy install](docs/legacy-install.md), [entry point for agents](llms.txt).
+## The dispatch skill
 
-## Contributing
+`agentq install` puts the `dispatch` skill at `~/.claude/skills/dispatch/SKILL.md`. After that, tell Claude Code about a piece of development work and it hands it off with `agentq do`. You can also ask it for progress, the backlog, to stop or to continue. The skill text is in Chinese.
 
-Issues, PRs and usage feedback are welcome. Start with [CONTRIBUTING](CONTRIBUTING.md). Report vulnerabilities as described in [SECURITY](SECURITY.md).
+If you already have one by that name, or changed ours, it is not overwritten and `agentq install` prints the path. To use ours, move that directory out of `~/.claude/skills` and run `agentq install` again. To keep both, merge [ours](skills/dispatch/SKILL.md) into yours.
+
+Two more skills in the repository are not installed automatically: `new-project` (create a project from one sentence) and `project-status` (progress across projects). Copy them if you want; `-n` does not overwrite:
+
+```sh
+mkdir -p ~/.claude/skills
+cp -Rn skills/new-project skills/project-status ~/.claude/skills/
+```
+
+## Security
+
+- **Sessions run with `--permission-mode bypassPermissions`**: they can execute any command with your user's rights without asking. Use it only on repositories you trust.
+- "Do not pay, publish, push or delete data" is an instruction to the model, not a sandbox. What the program guarantees is: each module is built in its own worktree, main only receives work that passed `.agentq/verify`, and it only fast-forwards and never overwrites your uncommitted changes.
+- Sessions browse the web and read files in the repository; a model may follow instructions planted there.
+- The Codex audit runs in its `workspace-write` sandbox with network access and can write only to the audit worktree and temporary directories.
+- Telegram accepts only private messages from your chat id, but anyone who can use your Telegram account can have it work on your machine. Anyone with the bot token can message you as the bot and read what you send it. Keep the credentials file at mode 600.
+- The environment passed to sessions is a whitelist. Claude Code's own login and `CLAUDE_CODE_OAUTH_TOKEN` work; `ANTHROPIC_API_KEY`, Bedrock, Vertex and `CLAUDE_CONFIG_DIR` are not passed. Work started by launchd does not get `CLAUDE_CODE_OAUTH_TOKEN` or proxy variables either.
+- agentq itself connects only to Telegram and has no telemetry. Requests and code are sent to Claude and Codex.
+
+## Known limitations
+
+- macOS only; no Linux, no Windows.
+- CLI output, prompts and the backlog section names (`## 待做`) are in Chinese. Requests in other languages have not been tried.
+- No limit on sessions running at once, so quota goes fast. On hitting the limit it waits by itself.
+- Only ever installed on one machine, the author's, with Apple silicon. Not verified on anyone else's.
+- The Intel package is cross-compiled and has not been run on an Intel machine.
+- The release workflow has never been triggered. `install.sh` has only been tested against a local fake release, never a real one from GitHub.
+- Going from the old version via `agentq remove --yes` to this one has not been tested.
+- Not notarized by Apple; integrity rests on `SHA256SUMS`.
+- `opus`, `sonnet` and `fable` are Claude Code aliases, and it decides which version they mean. If your account has no `gpt-6.2-astra`, set `AGENTQ_AUDIT`; otherwise the audit falls back to Claude by itself.
+- `go install` does not work (the module is named `agentq`); clone to build from source.
+
+Everything described as not verified is as of 2026-11-26.
 
 ## License
 
-[MIT](LICENSE). Sources, versions and licenses of third-party skills are recorded in [`dependencies/claude.lock.json`](dependencies/claude.lock.json).
-
-agentq is an independent project and is not affiliated with Anthropic.
+[MIT](LICENSE)

@@ -1,15 +1,15 @@
 ---
 name: project-status
-description: 汇总项目进度、待办、待决定项、最近报告和 agentq 运行状态，或查找历史会话、项目目录、文件与方案。用户问“项目进度怎样”“有哪些待办/要我决定的”“以前聊的内容在哪”“某项目或方案在哪”时使用；不修改项目或调度状态。
+description: 汇总项目进度、待办、待决定项、最近报告和 agentq 运行状态，或查找历史会话、项目目录、文件与方案。用户问“项目进度怎样”“有哪些待办/要我决定的”“以前聊的内容在哪”“某项目或方案在哪”时使用；不修改项目。
 ---
 
 # 项目全貌与查找
 
-这是只读技能。项目别名、报告位置和展示偏好来自用户层或 agentq 配置，不写死个人映射。
+这是只读技能。项目别名、报告位置和展示偏好来自用户层，不写死个人映射。
 
 ## 看全貌
 
-运行 `agentq projects` 列出所有项目（每行目录名和路径，包括 `projects_root` 下的和登记在 `extra_projects` 的；找不到 `agentq` 时用 `$HOME/.local/bin/agentq`；只装了技能、没有程序时扫描 `${AGENTQ_PROJECTS_ROOT:-$HOME/projects}` 下主目录为 Git 仓库的目录）。每个项目列：
+扫描 `${AGENTQ_PROJECTS:-$HOME/projects}` 下的 Git 仓库。每个项目列：
 
 ```text
 项目名（目录）— 最近提交日期和摘要 · 待做 N · 待决定 N · 远程地址（如有）
@@ -20,8 +20,8 @@ description: 汇总项目进度、待办、待决定项、最近报告和 agentq
 - `git log -1`
 - `docs/BACKLOG.md` 各节未完成条目
 - `git remote -v`（只读，不据此推断写权限）
-- `agentq status`（找不到 `agentq` 时用 `$HOME/.local/bin/agentq`：桌面会话不一定读到新的 PATH）
-- agentq 配置的本地日报/任务汇总
+- `agentq ls -a`（找不到 `agentq` 时用 `$HOME/.local/bin/agentq`），细的 `agentq log <编号>`
+- 最近的早报 `${AGENTQ_HOME:-$HOME/.agentq2}/brief.md`
 
 逐条列出真正等待用户决定的条目；带前置条件且尚未满足的单列为“等待条件”，不算当前要用户决定。标出长时间无提交的项目，但不擅自归档。
 
