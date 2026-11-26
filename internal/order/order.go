@@ -81,10 +81,12 @@ type Order struct {
 	Dir     string `json:"dir"`
 	Text    string `json:"text"`
 	// Todo 是它出自哪条待办（标题）。Chain：做完接着做待办里能做的。
-	Todo  string           `json:"todo,omitempty"`
-	Chain bool             `json:"chain,omitempty"`
-	State string           `json:"state"`
-	Why   string           `json:"why,omitempty"`
+	Todo  string `json:"todo,omitempty"`
+	Chain bool   `json:"chain,omitempty"`
+	State string `json:"state"`
+	Why   string `json:"why,omitempty"`
+	// Self 是这条需求里看到的 agentq 自己的毛病（不是项目的），早报报、agentq self 修。
+	Self  []string         `json:"self,omitempty"`
 	PID   int              `json:"pid,omitempty"`
 	Main  string           `json:"main"`
 	Base  string           `json:"base,omitempty"`

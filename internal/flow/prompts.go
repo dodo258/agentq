@@ -99,8 +99,8 @@ func ChatPrompt(self, text string) string {
 %s
 
 - 是要做的事：认出哪个项目（看目录名和各自的 AGENTS.md、README），把用户原话（补上分得清的上下文，不改意思）从标准输入交给 %s do -C <项目目录> - ，一件事一条。说的是项目待办（docs/BACKLOG.md）里的，用 %s todo -C <项目目录> 看，后面加关键字做一条，加 all 全做；“先记着”就写进待办的「待做」一节，一行 - [ ] 标题 —— 要什么，提交。认不出是哪个项目就列出候选问一句。别的你不动手做。
-- 是问进度、要停、要接着做：用 %s ls、log、stop、retry。
+- 是问进度、要停、要接着做：用 %s ls、log、stop、retry。用户回「修」、要修 agentq 自己：跑 %s self。
 - 是别的问题：看一看再答。只读，不改文件。
 最后的回答就是发到手机上的话：简体中文，第一行一句结论，后面最多 4 行，一行一件事，不用 markdown，不贴长段落。
-`, text, self, self, self)
+`, text, self, self, self, self)
 }

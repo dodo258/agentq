@@ -37,6 +37,7 @@ const usage = `agentq：说一句需求，做到合进主分支
   agentq stop <编号>      停掉
   agentq retry <编号>     卡住、停了的从那一步接着做
   agentq resume           把被打断的接着做（每 5 分钟自动跑一次）
+  agentq self             把早报里 agentq 自己的毛病交给 agentq 修，修好自己换上新程序
   agentq brief            发早报：昨天做好的、卡住的、用了多少
   agentq install          装上：派活技能、自动接着做、早上 8 点早报，配了 Telegram 就收消息（uninstall 卸掉）
   agentq version          版本号
@@ -115,6 +116,8 @@ func run(args []string, out io.Writer) error {
 		return nil
 	case "listen":
 		return listen(s)
+	case "self":
+		return fixSelf(s, out)
 	case "brief":
 		text := brief(s, time.Now())
 		fmt.Fprintln(out, text)
@@ -302,14 +305,22 @@ func work(s *order.Store, o *order.Order, _ io.Writer) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 	t := teller(s)
+	say := func(text string) {
+		logf("消息：%s", strings.ReplaceAll(text, "\n", " ／ "))
+		if err := t.Say(text); err != nil {
+			logf("%v", err)
+		}
+	}
 	f := &flow.Flow{
 		Claude: runner(), Lead: env("AGENTQ_LEAD", "opus"), Code: env("AGENTQ_CODE", "sonnet"), Last: env("AGENTQ_LAST", "fable"),
-		Codex: codex.Auditor{Path: env("AGENTQ_CODEX", claude.Find("codex")), Model: env("AGENTQ_AUDIT", "gpt-6.2-astra"), Effort: "xhigh", Timeout: 3 * time.Hour, Env: claude.Env()},
-		Log:   logf,
-		Say: func(text string) {
-			logf("消息：%s", strings.ReplaceAll(text, "\n", " ／ "))
-			if err := t.Say(text); err != nil {
-				logf("%v", err)
+		Codex:  codex.Auditor{Path: env("AGENTQ_CODEX", claude.Find("codex")), Model: env("AGENTQ_AUDIT", "gpt-6.2-astra"), Effort: "xhigh", Timeout: 3 * time.Hour, Env: claude.Env()},
+		Log:    logf,
+		Say:    say,
+		Source: source(), Upgrade: func(o *order.Order) {
+			if err := upgrade(); err != nil {
+				say(fmt.Sprintf("🔴 没换上新的 agentq · %s\n\n%s\n%s", time.Now().Format("1月2日"), err, "修好了，但新程序没编出来，还在用旧的"))
+			} else {
+				say(fmt.Sprintf("🔧 agentq 换上新的了 · %s\n\n%s\n提交 %s", time.Now().Format("1月2日"), flow.Title(o), o.Commit))
 			}
 		},
 		Next: func(o *order.Order) {
@@ -442,6 +453,9 @@ func brief(s *order.Store, now time.Time) string {
 			text += "\n\n" + k + parts[k]
 		}
 	}
+	if mine := selfIssues(s, now.Add(-24*time.Hour)); len(mine) > 0 {
+		text += "\n\n🔧 agentq 自己\n" + strings.Join(mine, "\n") + "\n回「修」就交给 agentq 修"
+	}
 	if len(used) == 0 && len(parts) == 0 {
 		return text + "\n\n昨天没有派活"
 	}
@@ -451,6 +465,80 @@ func brief(s *order.Store, now time.Time) string {
 	}
 	return text
 }
+
+// source 是 agentq 自己的源码：AGENTQ_SOURCE，没设就看 ~/projects/agentq 是不是。
+func source() string {
+	home, _ := os.UserHomeDir()
+	dir := env("AGENTQ_SOURCE", filepath.Join(home, "projects", "agentq"))
+	if b, err := os.ReadFile(filepath.Join(dir, "go.mod")); err != nil || !strings.HasPrefix(string(b), "module agentq\n") {
+		return ""
+	}
+	return dir
+}
+
+// selfIssues 是 since 以后 agentq 自己的毛病，每条带编号；交出去修过的不再算。
+func selfIssues(s *order.Store, since time.Time) []string {
+	sent, _ := os.ReadFile(filepath.Join(s.Root, "self-sent"))
+	var out []string
+	for _, o := range s.All() {
+		for _, x := range o.Self {
+			line := o.ID + " " + o.Project + "：" + x
+			if !o.Started.Before(since) || !o.Ended.IsZero() && o.Ended.After(since) {
+				if !strings.Contains(string(sent), line) {
+					out = append(out, line)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// fixSelf 把 agentq 自己的毛病交给 agentq 修：和别的需求一样走一遍，合进去后 Upgrade 换上新程序。
+func fixSelf(s *order.Store, out io.Writer) error {
+	dir := source()
+	if dir == "" {
+		return errors.New("没找到 agentq 的源码：设 AGENTQ_SOURCE 指到它")
+	}
+	mine := selfIssues(s, time.Now().AddDate(0, 0, -7))
+	if len(mine) == 0 {
+		fmt.Fprintln(out, "最近 7 天没有记下 agentq 自己的毛病")
+		return nil
+	}
+	text := "修 agentq 自己运行中记下的这些毛病。每条先到 " + s.Root + "/orders/<编号>/ 看 run.log、HANDOFF.md 和会话输出，核对是不是 agentq 的问题、根因在哪；不是的不改，写清为什么。走直路，不加新功能，产品代码不超过上限。\n- " + strings.Join(mine, "\n- ")
+	if err := begin(s, dir, text, "", false, out); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filepath.Join(s.Root, "self-sent"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString(strings.Join(mine, "\n") + "\n")
+	return errors.Join(err, f.Close())
+}
+
+// upgrade 从源码编一份新程序换掉自己。正在跑的需求是各自的进程，换文件不影响它们；后台服务下次起来就是新的。
+func upgrade() error {
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", self+".new", ".")
+	cmd.Dir, cmd.Env = source(), claude.Env()
+	if b, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("go build：%w %s", err, claude.Short(string(b), 300))
+	}
+	if err := os.Rename(self+".new", self); err != nil {
+		return err
+	}
+	if _, plist, dom := job("listen"); fileExists(plist) { // 收消息的常驻着，换成新的
+		_ = exec.Command("launchctl", "kickstart", "-k", dom+"/cc.agentq.listen").Run()
+	}
+	return nil
+}
+
+func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
 
 // show 打印交接单：谁接到什么、交回什么、在哪被打回。
 func show(_ *order.Store, o *order.Order, out io.Writer) error {

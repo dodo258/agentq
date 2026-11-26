@@ -41,6 +41,9 @@ type Flow struct {
 	Codex codex.Auditor
 	Say   func(string)
 	Log   func(string, ...any)
+	// Source 是 agentq 自己的源码目录；在那里合进主分支后调 Upgrade 换上新程序。
+	Source  string
+	Upgrade func(*order.Order)
 	// Next 接着做这个项目待办里能做的。
 	Next func(*order.Order)
 	// Locks 放各仓库合主分支用的锁。
@@ -54,6 +57,9 @@ func (f *Flow) Run(ctx context.Context, o *order.Order) error {
 	err := f.line(ctx, o)
 	if err == nil || ctx.Err() != nil { // 被停或机器关机：留在这一步，下次接着
 		return err
+	}
+	if why := err.Error(); !strings.HasPrefix(why, "要你定") && !strings.Contains(why, "出手一次还没过") && !strings.HasPrefix(why, "审计的 bug 没修好") {
+		f.self(o, "卡住："+why) // 要你定、测试修不好是项目的事，其余是 agentq 自己没跑顺
 	}
 	if serr := o.Update(func() { o.State, o.Why, o.Ended = order.Stuck, err.Error(), time.Now() }); serr != nil {
 		return errors.Join(err, serr)
@@ -398,6 +404,7 @@ func (f *Flow) audit(ctx context.Context, o *order.Order) error {
 		}
 		if err != nil { // 没装、没登录、没额度：换 Claude 审，不为它停下
 			f.hand(o, "审计", "%v，换 Claude 审", err)
+			f.self(o, "Codex 审计没跑成："+err.Error())
 			rep, err := f.ask(ctx, o, "audit", claude.Req{Dir: dir, Prompt: auditPrompt(o), Schema: auditSchema, Effort: "xhigh"})
 			if err != nil {
 				return err
@@ -547,12 +554,27 @@ func (f *Flow) landed(o *order.Order) error {
 	if o.Chain {
 		f.Next(o)
 	}
+	if f.Upgrade != nil && o.Dir == f.Source {
+		f.Upgrade(o)
+	}
 	for _, m := range append(o.Plan.Modules, order.Module{}) { // 最后那个没名字的是合到一起的
 		if err := repo.Remove(o.Dir, f.tree(o, m.Name), branch(o, m.Name), o.Main); err != nil {
 			f.Log("%v", err)
 		}
 	}
 	return nil
+}
+
+// self 记一条 agentq 自己的毛病，同一条只记一次。
+func (f *Flow) self(o *order.Order, what string) {
+	what = claude.Short(what, 200)
+	if err := o.Update(func() {
+		if !slices.Contains(o.Self, what) {
+			o.Self = append(o.Self, what)
+		}
+	}); err != nil {
+		f.Log("状态没存下：%v", err)
+	}
 }
 
 // writer 是写这一块的模型。
@@ -571,6 +593,7 @@ func (f *Flow) tick(o *order.Order) (bool, error) {
 	all := f.tree(o, "")
 	if ok, err := todo.Tick(all, o.Todo, oneLine(how(o))); err != nil || !ok {
 		f.hand(o, "待办", "没找到「%s」，没打勾", o.Todo)
+		f.self(o, "待办没打上勾：「"+o.Todo+"」")
 		return false, err
 	}
 	_, err := repo.Git(all, "commit", "-q", "-m", "待办：做完「"+o.Todo+"」", "--", todo.File)

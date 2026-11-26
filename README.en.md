@@ -62,7 +62,7 @@ The old agentq (v0.1–v0.3) was a scheduler: queues, slots, five gates, patrols
 - 286 of 324 tasks were started by the scheduler itself.
 - 13% of the usage quota went into agentq changing itself.
 
-This version is written from scratch and does one thing: carry one request from start to finish. No queue, no slots, no chain of gates, no evaluation, no self-evolution. Product code is capped at 2,650 lines, enforced by a test. The reasoning is in [docs/DESIGN.md](docs/DESIGN.md) (Chinese).
+This version is written from scratch and does one thing: carry one request from start to finish. No queue, no slots, no chain of gates, no evaluation, and it never starts work on itself on its own. Product code is capped at 5,000 lines, enforced by a test. The reasoning is in [docs/DESIGN.md](docs/DESIGN.md) (Chinese).
 
 ## One straight line
 
@@ -147,7 +147,8 @@ To upgrade, run the install command again, then `agentq install` again. There is
 | `agentq stop <id>` | Stop it; branches and worktrees stay |
 | `agentq retry <id>` | Continue a stuck or stopped one from that step |
 | `agentq resume` | Continue interrupted ones (runs every 5 minutes once the services are installed) |
-| `agentq brief` | Send the morning brief: done yesterday, stuck, tokens used |
+| `agentq self` | Hand the "agentq itself" items from the brief to agentq; once merged into its own source, build a new binary and replace itself. Source defaults to `~/projects/agentq`; set `AGENTQ_SOURCE` otherwise |
+| `agentq brief` | Send the morning brief: done yesterday, stuck, tokens used, and where agentq itself got in the way |
 | `agentq install` | Install the dispatch skill, auto-resume, the 8:00 brief, and message receiving if Telegram is set up |
 | `agentq uninstall` | Remove what `install` installed |
 | `agentq version` | Version; `dev` if you built it yourself |
@@ -255,6 +256,7 @@ There is no config file, only environment variables:
 | `AGENTQ_CODE` | `sonnet` | ordinary modules, chat |
 | `AGENTQ_LAST` | `fable` | the one last try |
 | `AGENTQ_AUDIT` | `gpt-6.2-astra` | model for the Codex audit |
+| `AGENTQ_SOURCE` | `~/projects/agentq` | agentq's own source; `agentq self` fixes it there and builds the new binary from it |
 
 The services use `AGENTQ_*` and `PATH` as they were when you ran `agentq install`; `agentq do` uses those of its terminal. To change one, put it in your shell config and run `agentq install` again so both agree.
 

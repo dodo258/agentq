@@ -56,7 +56,7 @@ agentq 的旧版（v0.1–v0.3）是一个调度器：排队、分名额、过�
 - 324 次任务里 286 次由调度器自己挑起来。
 - 13% 的额度花在 agentq 改自己。
 
-这一版从头重写，只把一件事从头交接到尾：没有队列、名额、多道门、评测、自我进化。产品代码上限 2,650 行，测试卡着。理由和取舍在 [docs/DESIGN.md](docs/DESIGN.md)。
+这一版从头重写，只把一件事从头交接到尾：没有队列、名额、多道门、评测，也不自己开工改自己。产品代码上限 5,000 行，测试卡着。理由和取舍在 [docs/DESIGN.md](docs/DESIGN.md)。
 
 ## 一条直线
 
@@ -141,7 +141,8 @@ agentq install
 | `agentq stop <编号>` | 停掉，分支和 worktree 留着 |
 | `agentq retry <编号>` | 卡住、停了的从那一步接着做 |
 | `agentq resume` | 把被打断的接着做（装了服务每 5 分钟自动跑一次） |
-| `agentq brief` | 发早报：昨天做好的、卡住的、用了多少 token |
+| `agentq self` | 把早报里「agentq 自己」那几条交给 agentq 修；合进它的源码后编新程序换掉自己。源码默认 `~/projects/agentq`，别处用 `AGENTQ_SOURCE` |
+| `agentq brief` | 发早报：昨天做好的、卡住的、用了多少 token，还有 agentq 自己没跑顺的 |
 | `agentq install` | 装上：派活技能、自动接着做、早上 8 点早报，配了 Telegram 就收消息 |
 | `agentq uninstall` | 卸掉 `install` 装的 |
 | `agentq version` | 版本号，自己编的是 `dev` |
@@ -247,6 +248,7 @@ npm test
 | `AGENTQ_CODE` | `sonnet` | 普通模块、对话 |
 | `AGENTQ_LAST` | `fable` | 最后出手一次的 |
 | `AGENTQ_AUDIT` | `gpt-6.2-astra` | Codex 审计用的模型 |
+| `AGENTQ_SOURCE` | `~/projects/agentq` | agentq 自己的源码，`agentq self` 在这里修，修完从这里编新程序 |
 
 服务用的是 `agentq install` 那一刻的 `AGENTQ_*` 和 `PATH`，`agentq do` 用的是当时终端里的。要改就写进 shell 配置，再跑一次 `agentq install`，两边才一样。
 

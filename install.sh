@@ -116,7 +116,7 @@ main() {
 	chmod 755 "$tmp/x/agentq"
 	ver=$("$tmp/x/agentq" version </dev/null 2>/dev/null) || die "解出来的程序跑不起来。"
 	[ -n "$ver" ] || die "解出来的程序没有版本号。"
-	is_this "$tmp/x/agentq" || die "下载到的是 $ver，不是这一版 agentq（旧版 v0.1–v0.3 换不了），没有改动任何东西。"
+	is_this "$tmp/x/agentq" || die "下载到的是 ${ver}，不是这一版 agentq（旧版 v0.1–v0.3 换不了），没有改动任何东西。"
 
 	mkdir -p "$bin" || die "建不了 $bin。"
 	newbin=$bin/.agentq.new.$$
@@ -125,11 +125,11 @@ main() {
 	mv -f "$newbin" "$bin/agentq" || die "装不进 $bin。"
 	newbin=
 
-	echo "已装好 agentq $ver：$bin/agentq"
+	echo "已装好 agentq ${ver}：${bin}/agentq"
 	case ":$PATH:" in
 	*":$bin:"*) ;;
 	*)
-		echo "$bin 不在 PATH 里，把这一行加到你的 shell 配置里："
+		echo "${bin} 不在 PATH 里，把这一行加到你的 shell 配置里："
 		# shellcheck disable=SC2016
 		echo '  export PATH="$HOME/.local/bin:$PATH"'
 		;;
