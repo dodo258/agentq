@@ -79,7 +79,7 @@ small   ─→ product manager ─→ one session ─→ run tests ─→ merge 
 6. **Fix**: each finding is checked, the real ones are fixed in one go, tests run again, no second audit. Lessons go into the project's `LESSONS.md`.
 7. **Deliver**: merged into your local main branch, one message sent. The program does not push.
 
-It stops for you when: failing tests or audit bugs cannot be fixed; a conflict cannot be resolved; sessions are not logged in, will not run or produce nothing; or the product manager decides you are needed (spending money, publishing, deleting data, accounts). If uncommitted changes in the directory where main is checked out are in the way, it sends one message, waits until you commit or move them, then merges by itself.
+It stops for you when: failing tests or audit bugs cannot be fixed (audit findings that would need a new feature do not stop it: they go into the backlog for later and the message tells you); a conflict cannot be resolved; sessions are not logged in, will not run or produce nothing; or the product manager decides you are needed (spending money, publishing, deleting data, accounts). If uncommitted changes in the directory where main is checked out are in the way, it sends one message, waits until you commit or move them, then merges by itself.
 
 Every step is on the handoff sheet: `agentq log <id>`. If you look at the result and want something changed, say so; that is a new request.
 
@@ -95,7 +95,7 @@ Every step is on the handoff sheet: `agentq log <id>`. If you look at the result
 | Reading Telegram messages, finding the project | Sonnet | medium |
 | Ticking off, morning brief, merging, running tests | the program, no model | |
 
-The product manager decides which modules are hard. All models can be changed, see [environment variables](#data-and-environment-variables).
+The product manager marks each module hard or not, following [internal/flow/difficulty.md](internal/flow/difficulty.md) (Chinese): foundations, money, stored data, security, concurrency, recovery, algorithms, hot paths, external systems, platform internals, wiring pieces together, complex interaction, overall visual direction and places that keep breaking are hard; pages built on agreed interfaces, forms, copy and tests are not. All models can be changed, see [environment variables](#data-and-environment-variables).
 
 ## Requirements and installation
 

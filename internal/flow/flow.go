@@ -31,6 +31,9 @@ const (
 	landWait      = time.Minute      // 主目录挡着时隔多久再试
 )
 
+// errFinished：不用往下做了（整件事要用户本人做，已经说了）。
+var errFinished = errors.New("不用往下做了")
+
 // Flow 做一条需求。
 type Flow struct {
 	Claude claude.Runner
@@ -55,6 +58,9 @@ type Flow struct {
 // Run 从现在这一步做到底。
 func (f *Flow) Run(ctx context.Context, o *order.Order) error {
 	err := f.line(ctx, o)
+	if errors.Is(err, errFinished) {
+		return nil
+	}
 	if err == nil || ctx.Err() != nil { // 被停或机器关机：留在这一步，下次接着
 		return err
 	}
@@ -117,8 +123,17 @@ func (f *Flow) plan(ctx context.Context, o *order.Order) error {
 	if err := o.Update(func() { o.Plan, o.Base = p, base }); err != nil {
 		return err
 	}
-	if p.Stop != "" {
-		return errors.New("要你定：" + p.Stop)
+	if p.Stop != "" && len(p.Modules) == 0 { // 整件事都得用户本人做：说一声就算完，不挂着等
+		if err := o.Update(func() { o.State, o.Why, o.Ended = order.Done, "要你本人做："+p.Stop, time.Now() }); err != nil {
+			return err
+		}
+		f.Say(fmt.Sprintf("🙋 要你本人做 · %s\n\n%s　%s\n%s", day(), o.Project, Title(o), p.Stop))
+		return errFinished
+	}
+	if p.Stop != "" { // 别的照做，这部分写进交付消息
+		if err := o.Update(func() { o.Risks = append(o.Risks, "要你本人做："+p.Stop) }); err != nil {
+			return err
+		}
 	}
 	f.hand(o, "产品经理", "交出方案，划成 %d 块：%s", len(p.Modules), p.Summary)
 	if !p.Small {
@@ -157,7 +172,7 @@ func parsePlan(raw json.RawMessage) (*order.Plan, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("产品经理没给出合格的方案：%w", err)
 	}
-	if p.Stop != "" {
+	if p.Stop != "" && len(p.Modules) == 0 {
 		return &p, nil
 	}
 	if len(p.Modules) == 0 {
@@ -450,11 +465,14 @@ func (f *Flow) audit(ctx context.Context, o *order.Order) error {
 		return errors.New("修审计的 bug，会话没逐条说清结果")
 	}
 	invalid, left := 0, ""
+	var later []string
 	for i, r := range got.Results {
 		f.hand(o, "修", "%s：%s（%s）", o.Bugs[i].Where, r.Note, r.Result)
 		switch r.Result {
 		case "invalid":
 			invalid++
+		case "later": // 不为它停下：记进待办，用户在消息里看得到
+			later = append(later, r.Note)
 		case "failed":
 			left += "\n" + o.Bugs[i].Where + "：" + r.Note
 		}
@@ -462,7 +480,19 @@ func (f *Flow) audit(ctx context.Context, o *order.Order) error {
 	if left != "" {
 		return errors.New("审计的 bug 没修好：" + left)
 	}
-	if invalid < len(o.Bugs) && !changed(all, before) {
+	if len(later) > 0 {
+		if err := errors.Join(todo.Add(all, later), repo.Commit(all, "待办：审计提到、这次不做的")); err != nil {
+			return err
+		}
+		if err := o.Update(func() {
+			for _, x := range later {
+				o.Risks = append(o.Risks, "记进待办以后做："+todo.Title(x))
+			}
+		}); err != nil {
+			return err
+		}
+	}
+	if invalid+len(later) < len(o.Bugs) && !changed(all, before) {
 		return errors.New("会话说修了审计的 bug，但什么都没提交")
 	}
 	if err := f.green(ctx, o); err != nil {

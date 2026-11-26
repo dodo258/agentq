@@ -107,6 +107,7 @@ func run(args []string, out io.Writer) error {
 			logf("%v", err)
 		}
 		for _, o := range s.All() {
+			settle(o)
 			if !o.Over() && !o.Running() {
 				if err := spawn(s, o, out); err != nil {
 					return err
@@ -464,6 +465,20 @@ func brief(s *order.Store, now time.Time) string {
 		text += fmt.Sprintf("\n%s：%.1fM", p, used[p])
 	}
 	return text
+}
+
+// settle：卡住的需求，用户自己把它的分支合进了主分支，就算做完，不再挂着报。
+func settle(o *order.Order) {
+	br := "refs/heads/agentq/" + o.ID + "/all"
+	if o.State != order.Stuck || o.Running() {
+		return
+	}
+	if _, err := repo.Git(o.Dir, "merge-base", "--is-ancestor", br, "refs/heads/"+o.Main); err != nil {
+		return
+	}
+	if err := o.Update(func() { o.State, o.Why, o.Ended = order.Done, "你手动合进主分支了", time.Now() }); err != nil {
+		logf("%v", err)
+	}
 }
 
 // source 是 agentq 自己的源码：AGENTQ_SOURCE，没设就看 ~/projects/agentq 是不是。

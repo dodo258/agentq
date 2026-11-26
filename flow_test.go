@@ -381,13 +381,22 @@ func TestStop(t *testing.T) {
 	r.wait(order.Done)
 }
 
-// 必须用户出面的停下来，不开工。
+// 要用户本人做的：整件都是就说一声算完，不挂着等；只有一部分的，别的照做，交付消息里写上。
 func TestNeedsUser(t *testing.T) {
-	r := newRig(t, `{"small":true,"title":"付钱","summary":"","spec":"","stop":"要付款","modules":[]}`, "true")
-	r.agentq("do", "买个域名")
-	if o := r.wait(order.Stuck); !strings.Contains(o.Why, "要付款") || r.count("plan") != 1 {
-		t.Errorf("%s", o.Why)
-	}
+	t.Run("整件都是", func(t *testing.T) {
+		r := newRig(t, `{"small":true,"title":"付钱","summary":"","spec":"","stop":"要付款","later":[],"modules":[]}`, "true")
+		r.agentq("do", "买个域名")
+		if o := r.wait(order.Done); !strings.Contains(o.Why, "要你本人做：要付款") || r.count("plan") != 1 {
+			t.Errorf("%s", o.Why)
+		}
+	})
+	t.Run("只有一部分", func(t *testing.T) {
+		r := newRig(t, strings.Replace(plan(true, mod("a")), `"stop":""`, `"stop":"上架要你登录账号"`, 1), "true")
+		r.agentq("do", "做")
+		if o := r.wait(order.Done); !strings.Contains(strings.Join(o.Risks, " "), "要你本人做：上架要你登录账号") || !r.has("a.txt") {
+			t.Errorf("%+v", o.Risks)
+		}
+	})
 }
 
 // 会话没收干净、什么都没做，都说得出来。
@@ -727,6 +736,29 @@ func TestAuditRegressions(t *testing.T) {
 		r.agentq("do", "做")
 		if o := r.wait(order.Stuck); !strings.Contains(o.Why, "修不动") {
 			t.Errorf("%s", o.Why)
+		}
+	})
+	t.Run("超出这次的记进待办不停下", func(t *testing.T) {
+		r := newRig(t, plan(false, mod("a")), "true")
+		r.script("audit", bugs)
+		r.script("fix", `say 以后做 '{"results":[{"result":"later","note":"安卓全屏 —— 局域网要 https，验收：安卓能全屏打开"}]}'`)
+		r.agentq("do", "做")
+		o := r.wait(order.Done)
+		b, _ := os.ReadFile(filepath.Join(r.dir, "docs", "BACKLOG.md"))
+		if !strings.Contains(string(b), "- [ ] 安卓全屏 —— 局域网要 https") || len(o.Risks) == 0 || !strings.Contains(o.Risks[len(o.Risks)-1], "安卓全屏") {
+			t.Errorf("%s %v", b, o.Risks)
+		}
+	})
+	t.Run("卡住后用户自己合了就算做完", func(t *testing.T) {
+		r := newRig(t, plan(true, mod("a")), "exit 1")
+		r.script("red", `say 试了`)
+		r.script("last", `say 试了`)
+		r.agentq("do", "做")
+		o := r.wait(order.Stuck)
+		r.git(r.dir, "merge", "-q", "--no-edit", "agentq/"+o.ID+"/all")
+		r.agentq("resume")
+		if o = r.order(); o.State != order.Done || o.Why != "你手动合进主分支了" {
+			t.Errorf("%s %s", o.State, o.Why)
 		}
 	})
 	t.Run("不成立的照实说", func(t *testing.T) {

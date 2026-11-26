@@ -11,6 +11,9 @@ import (
 //go:embed standards.md
 var standards string
 
+//go:embed difficulty.md
+var difficulty string
+
 // 每个会话都带的底线。
 const ground = `
 规矩：
@@ -33,13 +36,13 @@ func planPrompt(o *order.Order) string {
 2. 大活：上网看 3 到 5 个同类怎么做、用户抱怨什么，归纳出我们做成什么样、凭什么比它们好用，再定方案。带出处，不堆资料。
 3. spec 用 markdown 写给做的人看：给谁用、要什么、不做什么、技术选型、模块划分、模块之间的接口（写到类型和函数签名）、怎么验收。有界面的写清设计语言，不要模板脸。需求里已经指了方案文件的就照它来，不另写一套。
    需求里写着做到一半的分支（进行中：agent/…、接着做：分支 …、卡住说明里的分支）的，先看那条分支做到哪了，照它接着做；第一块的 goal 写明先把那条分支合进来，再做剩下的。
-4. modules 按模块划，每块只动自己的目录（paths 不重叠），能单独测试、单独替换。name 用英文短名。needs 写必须等哪几块先做完，能靠接口先约好的就不要等。多块都要用的公共接口、骨架单独划成第一块。一般 2 到 6 块，不为拆而拆。accept 写能看到的结果，几分钟内验得出来；除非用户原话要，不写“实跑多少分钟”。公共接口和骨架、并发、算法、钱和数据安全、牵动全局的 hard 写 true，交给最强的写；照接口实现的普通活写 false。
+4. modules 按模块划，每块只动自己的目录（paths 不重叠），能单独测试、单独替换。name 用英文短名。needs 写必须等哪几块先做完，能靠接口先约好的就不要等。多块都要用的公共接口、骨架单独划成第一块。一般 2 到 6 块，不为拆而拆。accept 写能看到的结果，几分钟内验得出来；除非用户原话要，不写“实跑多少分钟”。hard 照下面「难易」逐块判。
 5. 项目没有可执行的 .agentq/verify（一条命令跑全部检查，退出码 0 算过），就在第一块里要求补上。
-6. 只有必须用户出面才能做的（付款、发布、删用户数据、要账号密码）才在 stop 写一句要用户定什么，其余 stop 留空，自己定。
+6. 用户不在，别等他：方向、取舍、默认值都自己定，写进方案。只有必须用户本人动手的（付款、对外发布、删用户数据、登录账号、填密码）才在 stop 写一句要他做什么；能做的其余部分照常划块做完。整件事全是这一类、一点都做不了，modules 才留空。
 7. 一次做不完的大项目分期：spec 写全貌和分期，modules 只划第一期（第一期做完就要能用），后面每期在 later 写一条「标题 —— 要什么、验收（依赖：前一期标题）」，会写进项目待办。做得完的 later 留空。
 8. title 十几个字，summary 两三句人话：做什么、分几块、怎么算做好。
 
-%s%s`, o.Text, standards, ground)
+%s\n%s%s`, o.Text, standards, difficulty, ground)
 }
 
 func buildPrompt(o *order.Order, m order.Module) string {
@@ -79,7 +82,7 @@ risks 放现在不会出事、以后要留意的，一句一条，最多 5 条�
 `, o.Text, o.Base) + ground
 }
 
-const fixSchema = `{"type":"object","properties":{"results":{"type":"array","items":{"type":"object","properties":{"result":{"type":"string","enum":["fixed","invalid","failed"]},"note":{"type":"string"}},"required":["result","note"]}}},"required":["results"]}`
+const fixSchema = `{"type":"object","properties":{"results":{"type":"array","items":{"type":"object","properties":{"result":{"type":"string","enum":["fixed","invalid","later","failed"]},"note":{"type":"string"}},"required":["result","note"]}}},"required":["results"]}`
 
 func fixPrompt(o *order.Order) string {
 	var b strings.Builder
@@ -87,7 +90,7 @@ func fixPrompt(o *order.Order) string {
 	for i, x := range o.Bugs {
 		fmt.Fprintf(&b, "\n%d. [%s] %s\n   %s\n   复现：%s\n", i+1, x.Module, x.Where, x.What, x.How)
 	}
-	b.WriteString("\n修完在项目 LESSONS.md 里记一下为什么会犯：每类一行，「以后怎么做 —— 因为出过什么」，已经有的不重复写。\n最后照编号逐条给结果：fixed 修好并验证过，invalid 核对后不成立，failed 没修好；note 一句话说明。如实写。\n")
+	b.WriteString("\n修完在项目 LESSONS.md 里记一下为什么会犯：每类一行，「以后怎么做 —— 因为出过什么」，已经有的不重复写。\n最后照编号逐条给结果：fixed 修好并验证过；invalid 核对后不成立；later 成立，但要做成新功能或换方案、超出这次需求，不在这次硬做，note 写成一条待办「标题 —— 要什么、验收」，会记进项目待办；failed 这次该修却没修好；note 一句话说明。如实写，能修的不写 later。\n")
 	return b.String() + ground
 }
 
